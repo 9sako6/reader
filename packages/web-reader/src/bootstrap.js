@@ -1,0 +1,1 @@
+globalThis.ReaderOverlay.install();

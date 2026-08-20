@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Reader",
+  "version": "0.1.1",
+  "description": "閲覧中の文章を読みやすいReaderへ切り替えます。",
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "defuddle.js",
+        "core.js",
+        "page-extractor.js",
+        "session.js",
+        "icons.js",
+        "reader-overlay.js",
+        "bootstrap.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

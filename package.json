@@ -1,0 +1,10 @@
+{
+  "name": "reader",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check packages/reader-core/src/core.js && node --check packages/web-reader/src/page-extractor.js && node --check packages/web-reader/src/session.js && node --check packages/web-reader/src/icons.js && node --check packages/web-reader/src/reader-overlay.js && node --check packages/web-reader/src/bootstrap.js"
+  }
+}
