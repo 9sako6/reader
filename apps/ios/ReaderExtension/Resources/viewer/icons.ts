@@ -1,10 +1,12 @@
-(function installMobileIcons(root, factory) {
+(function installMobileIcons(root: typeof globalThis, factory: () => ReaderMobileIcons) {
   const api = factory();
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (!root.MobileIcons) root.MobileIcons = api;
-})(typeof globalThis !== "undefined" ? globalThis : this, function createMobileIcons() {
+})(globalThis, function createMobileIcons(): ReaderMobileIcons {
+  type IconName = "previous" | "play" | "pause" | "close";
+  type IconPart = readonly [keyof SVGElementTagNameMap, Readonly<Record<string, string>>];
   const namespace = "http://www.w3.org/2000/svg";
-  const icons = {
+  const icons: Record<IconName, readonly IconPart[]> = {
     previous: [
       ["path", { d: "M10.9 5.2a1.25 1.25 0 0 1 2.05.97v11.66a1.25 1.25 0 0 1-2.05.97l-7.3-5.83a1.25 1.25 0 0 1 0-1.94z" }],
       ["path", { d: "M20.15 5.2a1.25 1.25 0 0 1 2.05.97v11.66a1.25 1.25 0 0 1-2.05.97l-7.3-5.83a1.25 1.25 0 0 1 0-1.94z" }],
@@ -22,8 +24,8 @@
     ],
   };
 
-  function create(document, name, size = 24) {
-    if (!icons[name]) throw new TypeError(`Unknown Reader icon: ${name}`);
+  function create(document: Document, name: IconName, size = 24): SVGSVGElement {
+    if (!(name in icons)) throw new TypeError(`Unknown Reader icon: ${name}`);
     const svg = document.createElementNS(namespace, "svg");
     svg.setAttribute("width", String(size));
     svg.setAttribute("height", String(size));

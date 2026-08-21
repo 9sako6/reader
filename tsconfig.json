@@ -2,10 +2,12 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "commonjs",
+    "types": ["chrome"],
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "rootDir": ".",
     "outDir": ".build",
-    "strict": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
     "noEmitOnError": true,
     "skipLibCheck": true
   },

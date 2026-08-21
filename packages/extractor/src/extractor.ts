@@ -1,15 +1,18 @@
-(function installExtractor(root, factory) {
+(function installExtractor(root: typeof globalThis, factory: () => ReaderExtractor) {
   const api = factory();
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Extractor = api;
-})(typeof globalThis !== "undefined" ? globalThis : this, function createExtractor() {
-  function fromText(text, readingContext = {}) {
+})(globalThis, function createExtractor(): ReaderExtractor {
+  function fromText(text: string, readingContext: Partial<ReadingContext> | null = {}): ReaderContent | null {
     const value = typeof text === "string" ? text.trim() : "";
     if (!value) return null;
     return { text: value, readingContext: normalizeReadingContext(readingContext) };
   }
 
-  function fromPage(sourceDocument = document, DefuddleClass = globalThis.Defuddle) {
+  function fromPage(
+    sourceDocument: Document = document,
+    DefuddleClass: typeof import("defuddle").default = globalThis.Defuddle,
+  ): ReaderContent | null {
     if (typeof DefuddleClass !== "function" || typeof sourceDocument.createRange !== "function") return null;
 
     const result = new DefuddleClass(sourceDocument, {
@@ -74,26 +77,39 @@
     };
   }
 
-  function normalizeReadingContext(value) {
+  function normalizeReadingContext(value: Partial<ReadingContext> | null): ReadingContext {
     return {
       title: typeof value?.title === "string" ? value.title : "",
       blocks: Array.isArray(value?.blocks) ? value.blocks : [],
       headings: Array.isArray(value?.headings) ? value.headings : [],
       sectionOffsets: Array.isArray(value?.sectionOffsets) ? value.sectionOffsets : [],
       sectionTransitions: Array.isArray(value?.sectionTransitions) ? value.sectionTransitions : [],
-      initialHeadingIndex: Number.isInteger(value?.initialHeadingIndex) ? value.initialHeadingIndex : -1,
+      initialHeadingIndex: typeof value?.initialHeadingIndex === "number" && Number.isInteger(value.initialHeadingIndex)
+        ? value.initialHeadingIndex
+        : -1,
       figures: Array.isArray(value?.figures) ? value.figures : [],
     };
   }
 
-  function offsetBefore(sourceDocument, contentRoot, element, textLength, leadingWhitespaceLength) {
+  function offsetBefore(
+    sourceDocument: Document,
+    contentRoot: HTMLElement,
+    element: Node,
+    textLength: number,
+    leadingWhitespaceLength: number,
+  ): number {
     const prefixRange = sourceDocument.createRange();
     prefixRange.selectNodeContents(contentRoot);
     prefixRange.setEndBefore(element);
     return Math.min(textLength, Math.max(0, prefixRange.toString().length - leadingWhitespaceLength));
   }
 
-  function extractBlocks(sourceDocument, contentRoot, text, leadingWhitespaceLength) {
+  function extractBlocks(
+    sourceDocument: Document,
+    contentRoot: HTMLElement,
+    text: string,
+    leadingWhitespaceLength: number,
+  ): ReaderBlock[] {
     if (typeof contentRoot.querySelectorAll !== "function") return [];
     const blockSelector = "h1, h2, h3, h4, h5, h6, p, blockquote, pre, li";
     return [...contentRoot.querySelectorAll(blockSelector)]
@@ -112,13 +128,18 @@
           end: Math.min(text.length, start + blockText.length),
         };
       })
-      .filter(Boolean);
+      .filter((block): block is ReaderBlock => block !== null);
   }
 
-  function extractReferencedFigures(sourceDocument, contentRoot, text, leadingWhitespaceLength) {
+  function extractReferencedFigures(
+    sourceDocument: Document,
+    contentRoot: HTMLElement,
+    text: string,
+    leadingWhitespaceLength: number,
+  ): ReaderFigure[] {
     if (typeof contentRoot.querySelectorAll !== "function") return [];
-    const figures = [];
-    const seenContainers = new Set();
+    const figures: ReaderFigure[] = [];
+    const seenContainers = new Set<Element>();
     for (const image of contentRoot.querySelectorAll("img")) {
       const container = image.closest?.("figure") || image;
       if (seenContainers.has(container)) continue;
@@ -140,7 +161,7 @@
     return figures.sort((left, right) => left.referenceEnd - right.referenceEnd);
   }
 
-  function findFigureReference(text, figureOffset, caption) {
+  function findFigureReference(text: string, figureOffset: number, caption: string): { sentence: string; end: number } | null {
     const prefix = text.slice(0, figureOffset);
     const captionLabel = caption.match(/(?:図|表)\s*[A-Za-zＡ-Ｚａ-ｚ]?\s*\d+/iu)?.[0] || "";
     const patterns = [
@@ -152,19 +173,20 @@
       const escapedLabel = captionLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       patterns.unshift(new RegExp(escapedLabel, "giu"));
     }
-    let latestMatch = null;
+    let latestMatch: RegExpMatchArray | null = null;
     for (const pattern of patterns) {
       for (const match of prefix.matchAll(pattern)) {
-        if (!latestMatch || match.index > latestMatch.index) latestMatch = match;
+        if (!latestMatch || (match.index ?? -1) > (latestMatch.index ?? -1)) latestMatch = match;
       }
     }
     if (!latestMatch) return null;
-    const beforeMatch = prefix.slice(0, latestMatch.index);
+    const matchIndex = latestMatch.index ?? 0;
+    const beforeMatch = prefix.slice(0, matchIndex);
     const sentenceStart = Math.max(...["。", "！", "？", "!", "?", "\n"].map((mark) => beforeMatch.lastIndexOf(mark))) + 1;
-    const afterMatch = prefix.slice(latestMatch.index + latestMatch[0].length);
+    const afterMatch = prefix.slice(matchIndex + latestMatch[0].length);
     const ending = afterMatch.match(/[。！？.!?][」』）)\]]?/u);
     const sentenceEnd = ending
-      ? latestMatch.index + latestMatch[0].length + ending.index + ending[0].length
+      ? matchIndex + latestMatch[0].length + (ending.index ?? 0) + ending[0].length
       : prefix.trimEnd().length;
     const sentence = prefix.slice(sentenceStart, sentenceEnd).trim();
     return sentence ? { sentence, end: sentenceEnd } : null;

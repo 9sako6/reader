@@ -1,8 +1,8 @@
-(function installEngine(root, factory) {
+(function installEngine(root: typeof globalThis, factory: () => ReaderEngine) {
   const api = factory();
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Engine = api;
-})(typeof globalThis !== "undefined" ? globalThis : this, function createEngine() {
+})(globalThis, function createEngine(): ReaderEngine {
   const MAX_WORDS_PER_UNIT = 7;
   const MAX_GRAPHEMES_PER_UNIT = 12;
   const MIN_WORDS_BEFORE_BOUNDARY = 3;
@@ -19,20 +19,21 @@
   const SENTENCE_PAUSE_MS = 360;
   const SECTION_PAUSE_MS = 240;
 
-  function graphemeCount(text, locale = "ja") {
+  function graphemeCount(text: string, locale = "ja"): number {
     return [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(text)].length;
   }
 
-  function splitStructuralSpans(text) {
-    const spans = [];
+  function splitStructuralSpans(text: string): Array<{ text: string; kind: ReaderUnitKind; start: number }> {
+    const spans: Array<{ text: string; kind: ReaderUnitKind; start: number }> = [];
     let normalStart = 0;
     let index = 0;
     while (index < text.length) {
       const opener = text[index];
+      if (opener === undefined) break;
       const quoteCloser = QUOTE_PAIRS.get(opener);
       const asideCloser = ASIDE_PAIRS.get(opener);
       if (!quoteCloser && !asideCloser) { index += 1; continue; }
-      const kind = quoteCloser ? "quote" : "aside";
+      const kind: ReaderUnitKind = quoteCloser ? "quote" : "aside";
       const closer = quoteCloser || asideCloser;
       let depth = 1;
       let end = index + 1;
@@ -54,10 +55,17 @@
     return spans;
   }
 
-  function segmentFlowSpan(text, sentenceIndex, absoluteStart, locale, kind, trackSentenceEnds) {
+  function segmentFlowSpan(
+    text: string,
+    sentenceIndex: number,
+    absoluteStart: number,
+    locale: string,
+    kind: ReaderUnitKind,
+    trackSentenceEnds: boolean,
+  ): { units: ReaderUnit[]; sentenceIndex: number } {
     if (!text) return { units: [], sentenceIndex };
     const pieces = [...new Intl.Segmenter(locale, { granularity: "word" }).segment(text)];
-    const units = [];
+    const units: ReaderUnit[] = [];
     let currentSentenceIndex = sentenceIndex;
     let unitText = "";
     let unitStart = absoluteStart;
@@ -69,8 +77,7 @@
       unitText = "";
       wordLikeCount = 0;
     }
-    for (let index = 0; index < pieces.length; index += 1) {
-      const piece = pieces[index];
+    for (const [index, piece] of pieces.entries()) {
       const next = pieces[index + 1];
       if (!unitText) unitStart = absoluteStart + piece.index;
       unitText += piece.segment;
@@ -88,11 +95,11 @@
     return { units, sentenceIndex: currentSentenceIndex };
   }
 
-  function mergeDanglingPunctuation(units) {
-    const merged = [];
+  function mergeDanglingPunctuation(units: ReaderUnit[]): ReaderUnit[] {
+    const merged: ReaderUnit[] = [];
     for (const unit of units) {
-      if (merged.length > 0 && unit.sentenceIndex === merged[merged.length - 1].sentenceIndex && !/[\p{L}\p{N}]/u.test(unit.text)) {
-        const previous = merged[merged.length - 1];
+      const previous = merged.at(-1);
+      if (previous && unit.sentenceIndex === previous.sentenceIndex && !/[\p{L}\p{N}]/u.test(unit.text)) {
         previous.text += unit.text;
         previous.end = unit.end;
       } else merged.push({ ...unit });
@@ -100,11 +107,11 @@
     return merged;
   }
 
-  function splitLongUnits(units, locale = "ja", maxGraphemes = MAX_GRAPHEMES_PER_UNIT) {
+  function splitLongUnits(units: ReaderUnit[], locale = "ja", maxGraphemes = MAX_GRAPHEMES_PER_UNIT): ReaderUnit[] {
     const limit = Math.max(1, Number.isInteger(maxGraphemes) ? maxGraphemes : MAX_GRAPHEMES_PER_UNIT);
     const graphemeSegmenter = new Intl.Segmenter(locale, { granularity: "grapheme" });
     const wordSegmenter = new Intl.Segmenter(locale, { granularity: "word" });
-    const result = [];
+    const result: ReaderUnit[] = [];
     for (const unit of units) {
       const graphemes = [...graphemeSegmenter.segment(unit.text)];
       if (graphemes.length <= limit) { result.push({ ...unit }); continue; }
@@ -134,9 +141,9 @@
     return result;
   }
 
-  function segmentText(text, locale = "ja") {
+  function segmentText(text: string, locale = "ja"): ReaderUnit[] {
     if (!text) return [];
-    const units = [];
+    const units: ReaderUnit[] = [];
     let sentenceIndex = 0;
     for (const span of splitStructuralSpans(text)) {
       if (span.kind === "quote") {
@@ -157,16 +164,18 @@
     return splitLongUnits(mergeDanglingPunctuation(units), locale);
   }
 
-  function findPreviousSentenceStart(units, currentUnitIndex) {
+  function findPreviousSentenceStart(units: ReaderUnit[], currentUnitIndex: number): number {
     if (!Array.isArray(units) || units.length === 0) return 0;
     const safeIndex = Math.min(Math.max(Number.isInteger(currentUnitIndex) ? currentUnitIndex : 0, 0), units.length - 1);
-    const currentSentenceIndex = units[safeIndex].sentenceIndex;
+    const currentUnit = units[safeIndex];
+    if (!currentUnit) return 0;
+    const currentSentenceIndex = currentUnit.sentenceIndex;
     const targetSentenceIndex = Math.max(0, currentSentenceIndex - 1);
     const targetIndex = units.findIndex((unit) => unit.sentenceIndex === targetSentenceIndex);
     return targetIndex === -1 ? 0 : targetIndex;
   }
 
-  function findActiveHeadingIndex(transitions, currentOffset, fallbackIndex = -1) {
+  function findActiveHeadingIndex(transitions: ReaderSectionTransition[], currentOffset: number, fallbackIndex = -1): number {
     let activeIndex = fallbackIndex;
     if (!Array.isArray(transitions)) return activeIndex;
     for (const transition of transitions) {
@@ -175,41 +184,52 @@
     return activeIndex;
   }
 
-  function calculateReadingProgress(currentEnd, sourceLength) {
+  function calculateReadingProgress(currentEnd: number, sourceLength: number): number {
     if (!Number.isFinite(currentEnd) || !Number.isFinite(sourceLength) || sourceLength <= 0) return 0;
     return Math.min(100, Math.max(0, Math.round((currentEnd / sourceLength) * 100)));
   }
 
-  function findUnitIndex(units, offset) {
+  function findUnitIndex(units: ReaderUnit[], offset: number): number {
     if (!Array.isArray(units) || units.length === 0) return 0;
     const safeOffset = Number.isFinite(offset) ? Math.max(0, offset) : 0;
     const containingIndex = units.findIndex((unit) => unit.start <= safeOffset && unit.end > safeOffset);
     if (containingIndex >= 0) return containingIndex;
     for (let index = units.length - 1; index >= 0; index -= 1) {
-      if (units[index].start <= safeOffset) return index;
+      const unit = units[index];
+      if (unit && unit.start <= safeOffset) return index;
     }
     return 0;
   }
 
-  function surroundingSentences(units, currentIndex) {
+  function surroundingSentences(units: ReaderUnit[], currentIndex: number): { previous: string; next: string } {
     if (!Array.isArray(units) || units.length === 0) return { previous: "", next: "" };
     const safeIndex = Math.min(Math.max(Number.isInteger(currentIndex) ? currentIndex : 0, 0), units.length - 1);
-    const sentenceOrder = [];
-    const sentenceTexts = new Map();
+    const sentenceOrder: number[] = [];
+    const sentenceTexts = new Map<number, string>();
     for (const unit of units) {
       if (!sentenceTexts.has(unit.sentenceIndex)) sentenceOrder.push(unit.sentenceIndex);
       sentenceTexts.set(unit.sentenceIndex, `${sentenceTexts.get(unit.sentenceIndex) || ""}${unit.text}`);
     }
-    const sentencePosition = sentenceOrder.indexOf(units[safeIndex].sentenceIndex);
+    const currentUnit = units[safeIndex];
+    if (!currentUnit) return { previous: "", next: "" };
+    const sentencePosition = sentenceOrder.indexOf(currentUnit.sentenceIndex);
+    const previousSentenceIndex = sentenceOrder[sentencePosition - 1];
+    const nextSentenceIndex = sentenceOrder[sentencePosition + 1];
     return {
-      previous: sentencePosition > 0 ? sentenceTexts.get(sentenceOrder[sentencePosition - 1]).trim() : "",
-      next: sentencePosition >= 0 && sentencePosition < sentenceOrder.length - 1
-        ? sentenceTexts.get(sentenceOrder[sentencePosition + 1]).trim()
+      previous: sentencePosition > 0 && previousSentenceIndex !== undefined
+        ? sentenceTexts.get(previousSentenceIndex)?.trim() ?? ""
+        : "",
+      next: sentencePosition >= 0 && nextSentenceIndex !== undefined
+        ? sentenceTexts.get(nextSentenceIndex)?.trim() ?? ""
         : "",
     };
   }
 
-  function displayDuration(unit, nextUnit, sectionBreak = false) {
+  function displayDuration(
+    unit: Pick<ReaderUnit, "text" | "sentenceIndex">,
+    nextUnit?: Pick<ReaderUnit, "sentenceIndex">,
+    sectionBreak = false,
+  ): number {
     const graphemes = graphemeCount(unit?.text || "");
     let duration = Math.min(MAX_UNIT_MS, Math.max(MIN_UNIT_MS, BASE_UNIT_MS + graphemes * MS_PER_GRAPHEME));
     if (/[、，;；:：]\s*$/u.test(unit?.text || "")) duration += CLAUSE_PAUSE_MS;
@@ -218,9 +238,10 @@
     return duration;
   }
 
-  function sourceOffsetAtViewportCenter(blocks, viewportCenter) {
+  function sourceOffsetAtViewportCenter(blocks: ReaderOffsetBlock[], viewportCenter: number): number {
     if (!Array.isArray(blocks) || blocks.length === 0 || !Number.isFinite(viewportCenter)) return 0;
     let closest = blocks[0];
+    if (!closest) return 0;
     let closestDistance = Infinity;
     for (const block of blocks) {
       const top = Number(block.top);
@@ -236,16 +257,17 @@
         closestDistance = distance;
       }
     }
-    return viewportCenter < closest.top ? closest.start : closest.end;
+    return viewportCenter < Number(closest.top) ? closest.start : closest.end;
   }
 
-  function findBlockIndexForOffset(blocks, offset) {
+  function findBlockIndexForOffset(blocks: ReaderOffsetBlock[], offset: number): number {
     if (!Array.isArray(blocks) || blocks.length === 0) return -1;
     const safeOffset = Number.isFinite(offset) ? Math.max(0, offset) : 0;
     const containingIndex = blocks.findIndex((block) => block.start <= safeOffset && block.end >= safeOffset);
     if (containingIndex >= 0) return containingIndex;
     for (let index = blocks.length - 1; index >= 0; index -= 1) {
-      if (blocks[index].start <= safeOffset) return index;
+      const block = blocks[index];
+      if (block && block.start <= safeOffset) return index;
     }
     return 0;
   }

@@ -1,37 +1,52 @@
 (() => {
+  type PlaybackState = "idle" | "paused" | "playing" | "figure";
+  type ReaderMessage =
+    | { type: "SHOW_RSVP_LOADING"; requestId: string }
+    | { type: "START_RSVP"; requestId: string; text: string; readingContext?: Partial<ReadingContext> | null }
+    | { type: "RSVP_ERROR"; requestId: string };
+
   if (globalThis.__rsvpReaderInstalled) return;
   globalThis.__rsvpReaderInstalled = true;
 
   const ROOT_ID = "__rsvp-reader-root";
   const DISPLAY_FONT_SIZE = "clamp(36px, 4.5vw, 64px)";
 
-  let units = [];
+  let units: ReaderUnit[] = [];
   let currentUnitIndex = 0;
-  let playbackState = "idle";
-  let timerId = null;
-  let root = null;
-  let rootStyle = null;
-  let loadingLayer = null;
-  let display = null;
-  let playPauseButton = null;
-  let headings = [];
-  let headingNodes = [];
-  let sectionTransitions = [];
+  let playbackState: PlaybackState = "idle";
+  let timerId: number | null = null;
+  let root: HTMLDivElement | null = null;
+  let rootStyle: HTMLStyleElement | null = null;
+  let loadingLayer: HTMLDivElement | null = null;
+  let display: HTMLDivElement | null = null;
+  let playPauseButton: HTMLButtonElement | null = null;
+  let headings: ReaderHeading[] = [];
+  let headingNodes: HTMLButtonElement[] = [];
+  let sectionTransitions: ReaderSectionTransition[] = [];
   let initialHeadingIndex = -1;
-  let activeRequestId = null;
-  let progressLabel = null;
-  let progressBar = null;
-  let displayResizeObserver = null;
-  let figures = [];
+  let activeRequestId: string | null = null;
+  let progressLabel: HTMLSpanElement | null = null;
+  let progressBar: HTMLDivElement | null = null;
+  let displayResizeObserver: ResizeObserver | null = null;
+  let figures: ReaderFigure[] = [];
   let nextFigureIndex = 0;
-  let figurePanel = null;
-  let readerMain = null;
-  let readerControls = null;
+  let figurePanel: HTMLElement | null = null;
+  let readerMain: HTMLDivElement | null = null;
+  let readerControls: HTMLDivElement | null = null;
   let sourceText = "";
-  let blocks = [];
+  let blocks: ReaderBlock[] = [];
   let currentOffset = 0;
 
-  chrome.runtime.onMessage.addListener((message) => {
+  function isReaderMessage(value: unknown): value is ReaderMessage {
+    if (typeof value !== "object" || value === null || !("type" in value)) return false;
+    const message = value as Record<string, unknown>;
+    if (typeof message.requestId !== "string") return false;
+    if (message.type === "SHOW_RSVP_LOADING" || message.type === "RSVP_ERROR") return true;
+    return message.type === "START_RSVP" && typeof message.text === "string";
+  }
+
+  chrome.runtime.onMessage.addListener((message: unknown) => {
+    if (!isReaderMessage(message)) return;
     if (message?.type === "SHOW_RSVP_LOADING" && typeof message.requestId === "string") {
       showLoading(message.requestId);
       return;
@@ -47,13 +62,17 @@
     }
   });
 
-  function showLoading(requestId) {
+  function showLoading(requestId: string): void {
     close();
     activeRequestId = requestId;
     createLoadingOverlay();
   }
 
-  function start(text, requestId, suppliedReadingContext) {
+  function start(
+    text: string,
+    requestId: string,
+    suppliedReadingContext: Partial<ReadingContext> | null | undefined,
+  ): void {
     if (requestId !== activeRequestId) return;
 
     stopTimer();
@@ -140,7 +159,7 @@
     document.documentElement.append(root);
   }
 
-  function showError(requestId) {
+  function showError(requestId: string): void {
     if (requestId !== activeRequestId || !root) return;
     root.replaceChildren();
 
@@ -165,7 +184,7 @@
     root.append(status, closeButton);
   }
 
-  function collectReadingContext(sourceText) {
+  function collectReadingContext(sourceText: string): Partial<ReadingContext> {
     const headingEntries = [...document.querySelectorAll("h1, h2, h3, h4, h5, h6")]
       .map((element) => ({
         element,
@@ -174,7 +193,12 @@
       }))
       .filter((entry) => entry.text.length > 0);
 
-    const context = {
+    const context: Partial<ReadingContext> & {
+      headings: ReaderHeading[];
+      sectionTransitions: ReaderSectionTransition[];
+      initialHeadingIndex: number;
+      figures: ReaderFigure[];
+    } = {
       headings: [],
       sectionTransitions: [],
       initialHeadingIndex: -1,
@@ -188,7 +212,7 @@
 
     const range = selection.getRangeAt(0);
     let precedingHeadingIndex = -1;
-    const transitions = [];
+    const transitions: ReaderSectionTransition[] = [];
 
     headingEntries.forEach(({ element }, headingIndex) => {
       try {
@@ -219,16 +243,18 @@
       relevantHeadingIndexes.map((headingIndex, index) => [headingIndex, index]),
     );
 
-    context.headings = relevantHeadingIndexes.map((headingIndex) => {
-      const { text, level } = headingEntries[headingIndex];
-      return { text, level };
+    context.headings = relevantHeadingIndexes.flatMap((headingIndex) => {
+      const heading = headingEntries[headingIndex];
+      return heading ? [{ text: heading.text, level: heading.level }] : [];
     });
     context.initialHeadingIndex = remappedIndexes.get(precedingHeadingIndex) ?? -1;
     context.sectionTransitions = transitions
-      .map(({ offset, headingIndex }) => ({
-        offset: Math.min(offset, sourceText.length),
-        headingIndex: remappedIndexes.get(headingIndex),
-      }))
+      .flatMap(({ offset, headingIndex }) => {
+        const mappedHeadingIndex = remappedIndexes.get(headingIndex);
+        return mappedHeadingIndex === undefined
+          ? []
+          : [{ offset: Math.min(offset, sourceText.length), headingIndex: mappedHeadingIndex }];
+      })
       .sort((left, right) => left.offset - right.offset);
     return context;
   }
@@ -358,7 +384,8 @@
     return element;
   }
 
-  function revealReader(stage) {
+  function revealReader(stage: HTMLDivElement): void {
+    if (!root || !rootStyle) return;
     if (!loadingLayer) {
       root.append(stage);
       return;
@@ -486,7 +513,7 @@
     return minimap;
   }
 
-  function createButton(label, onClick) {
+  function createButton(label: string, onClick: () => void): HTMLButtonElement {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = label;
@@ -620,6 +647,7 @@
   }
 
   function clearRenderedView() {
+    if (!root || !rootStyle) return;
     document.removeEventListener("keydown", handleKeyDown);
     displayResizeObserver?.disconnect();
     displayResizeObserver = null;
@@ -633,8 +661,8 @@
     readerControls = null;
   }
 
-  function fallbackBlocks(text) {
-    const result = [];
+  function fallbackBlocks(text: string): ReaderBlock[] {
+    const result: ReaderBlock[] = [];
     let searchFrom = 0;
     for (const rawValue of text.split(/\n\s*\n|\n(?=\s*[\p{L}\p{N}「『（(])/u)) {
       const value = rawValue.trim();
@@ -646,7 +674,7 @@
     return result;
   }
 
-  function createTextBlock(block) {
+  function createTextBlock(block: ReaderBlock): HTMLElement {
     let tagName = "p";
     if (block.kind === "heading") tagName = `h${Math.min(6, Math.max(1, block.level || 2))}`;
     if (block.kind === "quote") tagName = "blockquote";
@@ -670,13 +698,14 @@
     return element;
   }
 
-  function restoreTextPosition(scroller, blockElements, readableBlocks) {
+  function restoreTextPosition(scroller: HTMLElement, blockElements: HTMLElement[], readableBlocks: ReaderBlock[]): void {
     const blockIndex = globalThis.Engine.findBlockIndexForOffset(readableBlocks, currentOffset);
     const target = blockElements[blockIndex];
     if (!target) return;
     const targetRect = target.getBoundingClientRect();
     const scrollerRect = scroller.getBoundingClientRect();
     const block = readableBlocks[blockIndex];
+    if (!block) return;
     const ratio = block.end > block.start ? (currentOffset - block.start) / (block.end - block.start) : 0;
     const targetY = targetRect.top - scrollerRect.top + scroller.scrollTop + targetRect.height * Math.min(1, Math.max(0, ratio));
     scroller.scrollTop = Math.max(0, targetY - scroller.clientHeight / 2);
@@ -686,6 +715,7 @@
     if (!display || units.length === 0) return;
 
     const unit = units[currentUnitIndex];
+    if (!unit) return;
     currentOffset = unit.start;
     display.textContent = unit.text;
     fitDisplayText();
@@ -711,46 +741,50 @@
     }
   }
 
-  function measureDisplayTextWidth(horizontalPadding) {
-    let range = null;
-    const alignment = display.style.justifyContent;
+  function measureDisplayTextWidth(horizontalPadding: number): number {
+    const displayNode = display;
+    if (!displayNode) return 0;
+    let range: Range | null = null;
+    const alignment = displayNode.style.justifyContent;
     try {
-      display.style.justifyContent = "flex-start";
+      displayNode.style.justifyContent = "flex-start";
       range = document.createRange?.();
-      range?.selectNodeContents(display);
+      range?.selectNodeContents(displayNode);
       const rangeWidth = range?.getBoundingClientRect().width;
-      const overflowWidth = Math.max(0, display.scrollWidth - horizontalPadding);
+      const overflowWidth = Math.max(0, displayNode.scrollWidth - horizontalPadding);
       if (Number.isFinite(rangeWidth)) return Math.max(overflowWidth, rangeWidth);
       return overflowWidth;
     } catch {
-      return Math.max(0, display.scrollWidth - horizontalPadding);
+      return Math.max(0, displayNode.scrollWidth - horizontalPadding);
     } finally {
-      display.style.justifyContent = alignment;
+      displayNode.style.justifyContent = alignment;
       range?.detach?.();
     }
   }
 
-  function applyUnitStyle(kind) {
-    Object.assign(display.style, {
+  function applyUnitStyle(kind: ReaderUnitKind): void {
+    const displayNode = display;
+    if (!displayNode) return;
+    Object.assign(displayNode.style, {
       color: "#ffffff",
       backgroundColor: "transparent",
       opacity: "1",
     });
 
     if (kind === "aside") {
-      Object.assign(display.style, {
+      Object.assign(displayNode.style, {
         color: "rgba(255,255,255,0.58)",
         backgroundColor: "rgba(255,255,255,0.025)",
       });
     } else if (kind === "quote") {
-      Object.assign(display.style, {
+      Object.assign(displayNode.style, {
         color: "rgba(255,255,255,0.90)",
         backgroundColor: "rgba(255,255,255,0.04)",
       });
     }
   }
 
-  function updateMinimap(currentOffset, currentEnd) {
+  function updateMinimap(currentOffset: number, currentEnd: number): void {
     if (headingNodes.length === 0) return;
 
     const activeHeadingIndex = globalThis.Engine.findActiveHeadingIndex(
@@ -767,11 +801,12 @@
     if (progressBar) progressBar.style.width = `${progress}%`;
     headingNodes.forEach((node, index) => {
       const active = index === activeHeadingIndex;
+      const heading = headings[index];
       Object.assign(node.style, {
         color: active ? "rgba(255,255,255,0.98)" : "rgba(235,235,235,0.58)",
         background: active ? "rgba(118,118,118,0.18)" : "transparent",
         boxShadow: "none",
-        fontWeight: active ? "600" : headings[index].level === 1 ? "600" : "450",
+        fontWeight: active ? "600" : heading?.level === 1 ? "600" : "450",
       });
       node.setAttribute("aria-current", active ? "location" : "false");
     });
@@ -781,11 +816,23 @@
     stopTimer();
     if (playbackState !== "playing") return;
 
+    const currentUnit = units[currentUnitIndex];
+    if (!currentUnit) {
+      pause();
+      return;
+    }
+    const followingUnit = units[currentUnitIndex + 1];
+
     timerId = globalThis.setTimeout(() => {
       if (playbackState !== "playing") return;
 
       const nextFigure = figures[nextFigureIndex];
-      if (nextFigure && nextFigure.referenceEnd <= units[currentUnitIndex].end) {
+      const displayedUnit = units[currentUnitIndex];
+      if (!displayedUnit) {
+        pause();
+        return;
+      }
+      if (nextFigure && nextFigure.referenceEnd <= displayedUnit.end) {
         nextFigureIndex += 1;
         showFigure(nextFigure);
         return;
@@ -796,19 +843,18 @@
         return;
       }
 
-      const nextUnit = units[currentUnitIndex + 1];
       currentUnitIndex += 1;
       renderCurrentUnit();
       scheduleNext();
     }, globalThis.Engine.displayDuration(
-      units[currentUnitIndex],
-      units[currentUnitIndex + 1],
-      Boolean(units[currentUnitIndex + 1])
-        && activeHeadingAt(units[currentUnitIndex].start) !== activeHeadingAt(units[currentUnitIndex + 1].start),
+      currentUnit,
+      followingUnit,
+      Boolean(followingUnit)
+        && activeHeadingAt(currentUnit.start) !== activeHeadingAt(followingUnit?.start ?? currentUnit.start),
     ));
   }
 
-  function activeHeadingAt(offset) {
+  function activeHeadingAt(offset: number): number {
     return globalThis.Engine.findActiveHeadingIndex(
       sectionTransitions,
       offset,
@@ -816,7 +862,7 @@
     );
   }
 
-  function showFigure(figure) {
+  function showFigure(figure: ReaderFigure): void {
     if (!readerMain || !display) return;
     stopTimer();
     playbackState = "figure";
@@ -999,7 +1045,7 @@
     if (playbackState === "playing") scheduleNext();
   }
 
-  function jumpToHeading(headingIndex) {
+  function jumpToHeading(headingIndex: number): void {
     if (units.length === 0) return;
     dismissFigurePanel();
     const transition = sectionTransitions.find((entry) => entry.headingIndex === headingIndex);
@@ -1017,7 +1063,7 @@
     playPauseButton.textContent = playbackState === "playing" ? "一時停止" : "再生";
   }
 
-  function handleKeyDown(event) {
+  function handleKeyDown(event: KeyboardEvent): void {
     if (!display || event.repeat || isEditableTarget(event.target)) return;
     if (event.code === "Space" || event.key === " ") {
       event.preventDefault();
@@ -1028,16 +1074,18 @@
     }
   }
 
-  function isEditableTarget(target) {
-    const tagName = target?.tagName?.toLowerCase();
-    return target?.isContentEditable || tagName === "input" || tagName === "textarea" || tagName === "select";
+  function isEditableTarget(target: EventTarget | null): boolean {
+    if (typeof target !== "object" || target === null) return false;
+    const candidate = target as { tagName?: unknown; isContentEditable?: unknown };
+    const tagName = typeof candidate.tagName === "string" ? candidate.tagName.toLowerCase() : "";
+    return candidate.isContentEditable === true || tagName === "input" || tagName === "textarea" || tagName === "select";
   }
 
   function prefersReducedMotion() {
     return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
   }
 
-  function animateOpacity(element, from, to, duration) {
+  function animateOpacity(element: HTMLElement, from: number, to: number, duration: number): Animation | null {
     element.style.opacity = String(to);
     if (prefersReducedMotion()) return null;
     return element.animate(
@@ -1049,7 +1097,7 @@
     );
   }
 
-  function afterAnimation(animation, callback) {
+  function afterAnimation(animation: Animation | null, callback: () => void): void {
     if (!animation?.finished) {
       callback();
       return;

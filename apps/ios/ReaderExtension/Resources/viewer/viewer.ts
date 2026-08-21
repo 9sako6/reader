@@ -1,35 +1,53 @@
-(function installMobileViewer(root, factory) {
+(function installMobileViewer(root: typeof globalThis, factory: (global: typeof globalThis) => ReaderMobileViewer) {
   if (root.MobileViewer) return;
   root.MobileViewer = factory(root);
-})(typeof globalThis !== "undefined" ? globalThis : this, function createMobileViewer(global) {
+})(globalThis, function createMobileViewer(global: typeof globalThis): ReaderMobileViewer {
+  type ReadingMode = "rsvp" | "text";
+  type MobileIconName = "previous" | "play" | "pause" | "close";
+  interface MobileNodes {
+    content: HTMLElement;
+    controlbar: HTMLElement;
+    modeButton: HTMLButtonElement;
+    progress: HTMLElement;
+    previousUnit: HTMLElement | null;
+    unit: HTMLElement | null;
+    nextUnit: HTMLElement | null;
+    play: HTMLButtonElement | null;
+  }
+
   const HOST_ID = "__reader-host";
   const RSVP_FONT_SIZE = 40;
-  let host;
-  let shadow;
-  let handle;
-  let overlay;
-  let scrollFadeTimer;
+  let shadow: ShadowRoot | null = null;
+  let handle: HTMLButtonElement | null = null;
+  let overlay: HTMLElement | null = null;
+  let scrollFadeTimer: number | null = null;
   let sourceScrollY = 0;
-  let sourceOverflow = null;
-  let sourceBodyOverflow = null;
-  let content = null;
-  let units = [];
+  let sourceOverflow: string | null = null;
+  let sourceBodyOverflow: string | null = null;
+  let content: ReaderContent | null = null;
+  let units: ReaderUnit[] = [];
   let unitIndex = 0;
   let currentOffset = 0;
-  let contextSentenceIndex = null;
-  let playbackTimer = null;
+  let contextSentenceIndex: number | null = null;
+  let playbackTimer: number | null = null;
   let playing = false;
-  let mode = "rsvp";
-  let nodes: Record<string, any> = {};
+  let mode: ReadingMode = "rsvp";
+  let nodes: MobileNodes | null = null;
+
+  function getNodes(): MobileNodes {
+    if (!nodes) throw new Error("Reader shell is not available");
+    return nodes;
+  }
 
   function install() {
     if (!global.document?.documentElement || global.document.getElementById(HOST_ID)) return;
-    host = global.document.createElement("div");
+    const host = global.document.createElement("div");
     host.id = HOST_ID;
-    shadow = host.attachShadow({ mode: "closed" });
-    shadow.append(createStyles());
+    const root = host.attachShadow({ mode: "closed" });
+    shadow = root;
+    root.append(createStyles());
     handle = createHandle();
-    shadow.append(handle);
+    root.append(handle);
     global.document.documentElement.append(host);
     global.addEventListener("scroll", fadeHandleDuringScroll, { passive: true });
     global.addEventListener("resize", handleViewportChange, { passive: true });
@@ -103,7 +121,7 @@
   }
 
   async function open() {
-    if (overlay) return;
+    if (overlay || !handle || !shadow) return;
     sourceScrollY = global.scrollY || 0;
     sourceOverflow = global.document.documentElement.style.overflow;
     sourceBodyOverflow = global.document.body?.style.overflow ?? null;
@@ -146,11 +164,20 @@
     const content = global.document.createElement("main");
     content.className = "content";
     reader.append(topbar, content, controlbar);
-    nodes = { content, controlbar, modeButton, progress };
+    nodes = {
+      content,
+      controlbar,
+      modeButton,
+      progress,
+      previousUnit: null,
+      unit: null,
+      nextUnit: null,
+      play: null,
+    };
     return reader;
   }
 
-  function iconButton(icon, accessibilityLabel, action) {
+  function iconButton(icon: MobileIconName, accessibilityLabel: string, action: () => void): HTMLButtonElement {
     const button = global.document.createElement("button");
     button.className = "icon-button";
     button.type = "button";
@@ -168,11 +195,11 @@
     const label = global.document.createElement("div");
     label.textContent = "文章を準備しています";
     loading.append(mark, label);
-    nodes.content.replaceChildren(loading);
+    getNodes().content.replaceChildren(loading);
   }
 
   function showError() {
-    nodes.controlbar.replaceChildren();
+    getNodes().controlbar.replaceChildren();
     const error = global.document.createElement("div");
     error.className = "error";
     const label = global.document.createElement("div");
@@ -183,7 +210,7 @@
     const closeButton = transportButton("元に戻る", close);
     actions.append(retryButton, closeButton);
     error.append(label, actions);
-    nodes.content.replaceChildren(error);
+    getNodes().content.replaceChildren(error);
   }
 
   function retry() {
@@ -198,6 +225,7 @@
   }
 
   function renderTextView() {
+    if (!content) return;
     pause();
     const scroller = global.document.createElement("div");
     scroller.className = "text-view";
@@ -212,16 +240,16 @@
       articleNode.append(heading);
     }
     const readableBlocks = blocks.length > 0 ? blocks : fallbackBlocks(content.text);
-    const blockElements = [];
+    const blockElements: HTMLElement[] = [];
     for (const block of readableBlocks) {
       const element = createArticleBlock(block);
       articleNode.append(element);
       blockElements.push(element);
     }
     scroller.append(articleNode);
-    nodes.content.replaceChildren(scroller);
+    getNodes().content.replaceChildren(scroller);
     renderTextControls();
-    const updatePosition = () => updateTextPosition(scroller, blockElements, nodes.progress);
+    const updatePosition = () => updateTextPosition(scroller, blockElements, getNodes().progress);
     scroller.addEventListener("scroll", updatePosition, { passive: true });
     global.requestAnimationFrame(() => {
       restoreTextPosition(scroller, blockElements, readableBlocks);
@@ -229,8 +257,8 @@
     });
   }
 
-  function fallbackBlocks(text) {
-    const blocks = [];
+  function fallbackBlocks(text: string): ReaderBlock[] {
+    const blocks: ReaderBlock[] = [];
     let searchFrom = 0;
     for (const rawValue of text.split(/\n\s*\n|\n(?=\s*[\p{L}\p{N}「『（(])/u)) {
       const value = rawValue.trim();
@@ -242,7 +270,7 @@
     return blocks;
   }
 
-  function createArticleBlock(block) {
+  function createArticleBlock(block: ReaderBlock): HTMLElement {
     let tagName = "p";
     if (block.kind === "heading") tagName = `h${Math.min(6, Math.max(1, block.level || 2))}`;
     if (block.kind === "quote") tagName = "blockquote";
@@ -256,7 +284,8 @@
     return element;
   }
 
-  function updateTextPosition(scroller, blockElements, progress) {
+  function updateTextPosition(scroller: HTMLElement, blockElements: HTMLElement[], progress: HTMLElement): void {
+    if (!content) return;
     const scrollerRect = scroller.getBoundingClientRect();
     const viewportCenter = scrollerRect.top + scroller.clientHeight / 2;
     const measurements = blockElements.map((element) => {
@@ -272,14 +301,16 @@
     progress.textContent = `${global.Engine.calculateReadingProgress(currentOffset, content.text.length)}%`;
   }
 
-  function restoreTextPosition(scroller, blockElements, readableBlocks) {
+  function restoreTextPosition(scroller: HTMLElement, blockElements: HTMLElement[], readableBlocks: ReaderBlock[]): void {
     const blockIndex = global.Engine.findBlockIndexForOffset(readableBlocks, currentOffset);
     const target = blockElements[blockIndex];
     if (!target) return;
     const targetRect = target.getBoundingClientRect();
     const scrollerRect = scroller.getBoundingClientRect();
-    const offsetWithinBlock = readableBlocks[blockIndex].end > readableBlocks[blockIndex].start
-      ? (currentOffset - readableBlocks[blockIndex].start) / (readableBlocks[blockIndex].end - readableBlocks[blockIndex].start)
+    const block = readableBlocks[blockIndex];
+    if (!block) return;
+    const offsetWithinBlock = block.end > block.start
+      ? (currentOffset - block.start) / (block.end - block.start)
       : 0;
     const targetY = targetRect.top - scrollerRect.top + scroller.scrollTop + targetRect.height * Math.min(1, Math.max(0, offsetWithinBlock));
     scroller.scrollTop = Math.max(0, targetY - scroller.clientHeight / 2);
@@ -300,15 +331,15 @@
     nextUnit.setAttribute("aria-hidden", "true");
     focusArea.append(previousUnit, unit, nextUnit);
     view.append(focusArea);
-    nodes.content.replaceChildren(view);
-    Object.assign(nodes, { previousUnit, unit, nextUnit });
+    getNodes().content.replaceChildren(view);
+    Object.assign(getNodes(), { previousUnit, unit, nextUnit });
     renderRsvpControls();
     contextSentenceIndex = null;
     play();
     renderUnit();
   }
 
-  function transportButton(label, action) {
+  function transportButton(label: string, action: () => void): HTMLButtonElement {
     const button = global.document.createElement("button");
     button.type = "button";
     button.textContent = label;
@@ -317,7 +348,7 @@
   }
 
   function renderRsvpControls() {
-    nodes.controlbar.classList.remove("text-mode");
+    getNodes().controlbar.classList.remove("text-mode");
     const dock = global.document.createElement("div");
     dock.className = "control-dock";
     const previous = transportButton("", previousSentence);
@@ -329,14 +360,14 @@
     playButton.setAttribute("aria-label", "再生");
     playButton.append(global.MobileIcons.create(global.document, "play", 34));
     dock.append(previous, playButton);
-    nodes.controlbar.replaceChildren(dock, nodes.progress);
-    nodes.play = playButton;
+    getNodes().controlbar.replaceChildren(dock, getNodes().progress);
+    getNodes().play = playButton;
   }
 
   function renderTextControls() {
-    nodes.controlbar.classList.add("text-mode");
-    nodes.controlbar.replaceChildren(nodes.progress);
-    nodes.play = null;
+    getNodes().controlbar.classList.add("text-mode");
+    getNodes().controlbar.replaceChildren(getNodes().progress);
+    getNodes().play = null;
   }
 
   function toggleMode() {
@@ -344,33 +375,35 @@
   }
 
   function updateModeButton() {
-    nodes.modeButton.textContent = mode === "rsvp" ? "文章で読む" : "RSVPで読む";
+    getNodes().modeButton.textContent = mode === "rsvp" ? "文章で読む" : "RSVPで読む";
   }
 
   function renderUnit() {
+    if (!content) return;
     const value = units[unitIndex];
-    if (!value || !nodes.unit) return;
-    nodes.unit.textContent = value.text;
-    nodes.unit.className = `rsvp-unit ${value.kind || "body"}`;
+    const { unit, previousUnit, nextUnit, progress } = getNodes();
+    if (!value || !unit || !previousUnit || !nextUnit) return;
+    unit.textContent = value.text;
+    unit.className = `rsvp-unit ${value.kind}`;
     if (contextSentenceIndex !== value.sentenceIndex) {
       const context = global.Engine.surroundingSentences(units, unitIndex);
-      nodes.previousUnit.textContent = context.previous;
-      nodes.nextUnit.textContent = context.next;
+      previousUnit.textContent = context.previous;
+      nextUnit.textContent = context.next;
       contextSentenceIndex = value.sentenceIndex;
-      fadeContext(nodes.previousUnit);
-      fadeContext(nodes.nextUnit);
+      fadeContext(previousUnit);
+      fadeContext(nextUnit);
     }
     currentOffset = value.start;
-    nodes.progress.textContent = `${global.Engine.calculateReadingProgress(value.end, content.text.length)}%`;
+    progress.textContent = `${global.Engine.calculateReadingProgress(value.end, content.text.length)}%`;
     updatePlayButton();
   }
 
-  function fadeContext(element) {
+  function fadeContext(element: HTMLElement): void {
     if (!element.textContent || global.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
     element.animate?.([{ opacity: 0.12 }, { opacity: 0.26 }], { duration: 120, easing: "ease-out" });
   }
 
-  function switchMode(nextMode) {
+  function switchMode(nextMode: ReadingMode): void {
     if (nextMode === mode) return;
     if (nextMode === "rsvp") unitIndex = global.Engine.findUnitIndex(units, currentOffset);
     mode = nextMode;
@@ -416,17 +449,24 @@
   }
 
   function updatePlayButton() {
-    if (!nodes.play) return;
+    const playButton = getNodes().play;
+    if (!playButton) return;
     const state = playing ? "pause" : "play";
-    if (nodes.play.dataset.state !== state) {
-      nodes.play.replaceChildren(global.MobileIcons.create(global.document, state, state === "pause" ? 30 : 34));
-      nodes.play.dataset.state = state;
+    if (playButton.dataset.state !== state) {
+      playButton.replaceChildren(global.MobileIcons.create(global.document, state, state === "pause" ? 30 : 34));
+      playButton.dataset.state = state;
     }
-    nodes.play.setAttribute("aria-label", playing ? "一時停止" : "再生");
+    playButton.setAttribute("aria-label", playing ? "一時停止" : "再生");
   }
 
   function scheduleNext() {
     if (!playing) return;
+    const currentUnit = units[unitIndex];
+    if (!currentUnit) {
+      pause();
+      return;
+    }
+    const nextUnit = units[unitIndex + 1];
     playbackTimer = global.setTimeout(() => {
       if (unitIndex >= units.length - 1) {
         pause();
@@ -437,13 +477,13 @@
       renderUnit();
       scheduleNext();
     }, global.Engine.displayDuration(
-      units[unitIndex],
-      units[unitIndex + 1],
-      crossesSectionBoundary(units[unitIndex], units[unitIndex + 1]),
+      currentUnit,
+      nextUnit,
+      crossesSectionBoundary(currentUnit, nextUnit),
     ));
   }
 
-  function crossesSectionBoundary(unit, nextUnit) {
+  function crossesSectionBoundary(unit: ReaderUnit | undefined, nextUnit: ReaderUnit | undefined): boolean {
     if (!unit || !nextUnit) return false;
     const offsets = content?.readingContext?.sectionOffsets || [];
     return offsets.some((offset) => offset > unit.start && offset <= nextUnit.start);
@@ -467,21 +507,21 @@
     content = null;
     units = [];
     mode = "rsvp";
-    nodes = {};
+    nodes = null;
     global.document.documentElement.style.overflow = sourceOverflow ?? "";
     if (global.document.body && sourceBodyOverflow !== null) global.document.body.style.overflow = sourceBodyOverflow;
-    handle.hidden = false;
+    if (handle) handle.hidden = false;
     global.scrollTo({ top: sourceScrollY, left: 0, behavior: "auto" });
   }
 
   function fadeHandleDuringScroll() {
     if (!handle || handle.hidden) return;
     handle.classList.add("scrolling");
-    global.clearTimeout(scrollFadeTimer);
+    if (scrollFadeTimer !== null) global.clearTimeout(scrollFadeTimer);
     scrollFadeTimer = global.setTimeout(() => handle?.classList.remove("scrolling"), 320);
   }
 
-  function nextPaint() {
+  function nextPaint(): Promise<void> {
     return new Promise<void>((resolve) => global.requestAnimationFrame(() => resolve()));
   }
 

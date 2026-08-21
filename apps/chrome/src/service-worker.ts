@@ -31,10 +31,11 @@ chrome.action.onClicked.addListener(async (tab) => {
       target: { tabId: tab.id },
       files: ["vendor/defuddle/defuddle.js", "extractor.js"],
     });
-    const [{ result }] = await chrome.scripting.executeScript({
+    const extraction = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => globalThis.Extractor.fromPage(),
     });
+    const result = extraction[0]?.result;
     if (!result?.text) throw new Error("No readable page content found");
     await sendReaderContent(tab.id, requestId, result.text, result.readingContext);
   } catch (error) {
@@ -43,7 +44,7 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-async function startReader(tabId, text, readingContext = null) {
+async function startReader(tabId: number, text: string, readingContext: ReadingContext | null = null): Promise<void> {
   let requestId = null;
   try {
     requestId = await openReader(tabId);
@@ -54,7 +55,7 @@ async function startReader(tabId, text, readingContext = null) {
   }
 }
 
-async function openReader(tabId) {
+async function openReader(tabId: number): Promise<string> {
   const requestId = `${Date.now()}-${requestSequence += 1}`;
   await chrome.scripting.executeScript({
     target: { tabId },
@@ -67,7 +68,12 @@ async function openReader(tabId) {
   return requestId;
 }
 
-async function sendReaderContent(tabId, requestId, text, readingContext) {
+async function sendReaderContent(
+  tabId: number,
+  requestId: string,
+  text: string,
+  readingContext: ReadingContext | null,
+): Promise<void> {
   await chrome.tabs.sendMessage(tabId, {
     type: "START_RSVP",
     text,
@@ -76,7 +82,7 @@ async function sendReaderContent(tabId, requestId, text, readingContext) {
   });
 }
 
-async function showReaderError(tabId, requestId) {
+async function showReaderError(tabId: number, requestId: string): Promise<void> {
   await chrome.tabs.sendMessage(tabId, {
     type: "RSVP_ERROR",
     requestId,

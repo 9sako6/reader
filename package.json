@@ -5,18 +5,19 @@
   "license": "Apache-2.0",
   "packageManager": "pnpm@11.18.0",
   "scripts": {
-    "compile": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "build": "pnpm run compile && node scripts/build-chrome.js && node scripts/build-ios.js",
-    "build:chrome": "pnpm run compile && node scripts/build-chrome.js",
-    "build:ios": "pnpm run compile && node scripts/build-ios.js",
-    "test": "pnpm run build && node --test",
-    "check": "pnpm run typecheck"
+    "compile": "mise run compile",
+    "typecheck": "mise run typecheck",
+    "build": "mise run build",
+    "build:chrome": "mise run build:chrome",
+    "build:ios": "mise run build:ios",
+    "test": "mise run test",
+    "check": "mise run check"
   },
   "dependencies": {
     "defuddle": "0.19.2"
   },
   "devDependencies": {
+    "@types/chrome": "0.2.6",
     "typescript": "7.0.2"
   }
 }

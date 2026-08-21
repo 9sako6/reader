@@ -41,11 +41,11 @@ test("mobile controls keep the primary reading actions at the bottom", () => {
   assert.doesNotMatch(overlay, /\.control-dock \{[^}]*box-shadow:/s);
   assert.match(overlay, /\.progress \{ position: absolute; right:/);
   assert.match(overlay, /controlbar\.append\(progress\)/);
-  assert.match(overlay, /nodes\.controlbar\.replaceChildren\(dock, nodes\.progress\)/);
-  assert.match(overlay, /nodes\.controlbar\.replaceChildren\(nodes\.progress\)/);
+  assert.match(overlay, /getNodes\(\)\.controlbar\.replaceChildren\(dock, getNodes\(\)\.progress\)/);
+  assert.match(overlay, /getNodes\(\)\.controlbar\.replaceChildren\(getNodes\(\)\.progress\)/);
   assert.match(overlay, /\.controlbar\.text-mode \{ min-height: calc\(44px \+ env\(safe-area-inset-bottom\)\)/);
-  assert.match(overlay, /nodes\.controlbar\.classList\.add\("text-mode"\)/);
-  assert.match(overlay, /nodes\.controlbar\.classList\.remove\("text-mode"\)/);
+  assert.match(overlay, /getNodes\(\)\.controlbar\.classList\.add\("text-mode"\)/);
+  assert.match(overlay, /getNodes\(\)\.controlbar\.classList\.remove\("text-mode"\)/);
   assert.doesNotMatch(overlay, /\.controlbar \{ position: absolute/);
   assert.match(overlay, /RSVPで読む/);
   assert.match(overlay, /文章で読む/);

@@ -245,7 +245,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "cd \"$SRCROOT/../..\"\nmise exec -- pnpm run build:ios\n";
+			shellScript = "cd \"$SRCROOT/../..\"\nmise run build:ios\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

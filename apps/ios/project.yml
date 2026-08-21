@@ -16,6 +16,8 @@ targets:
     platform: iOS
     sources:
       - path: ReaderApp
+        excludes:
+          - README.md
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(READER_BUNDLE_ID)
@@ -33,6 +35,7 @@ targets:
       - path: ReaderExtension
         excludes:
           - Resources
+          - README.md
       - path: ReaderExtension/Resources/manifest.json
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/defuddle.js
@@ -55,7 +58,7 @@ targets:
       - name: Build web resources
         script: |
           cd "$SRCROOT/../.."
-          mise exec -- pnpm run build:ios
+          mise run build:ios
         basedOnDependencyAnalysis: false
     settings:
       base:
