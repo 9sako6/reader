@@ -4,15 +4,6 @@
   "private": true,
   "license": "Apache-2.0",
   "packageManager": "pnpm@11.18.0",
-  "scripts": {
-    "compile": "mise run compile",
-    "typecheck": "mise run typecheck",
-    "build": "mise run build",
-    "build:chrome": "mise run build:chrome",
-    "build:ios": "mise run build:ios",
-    "test": "mise run test",
-    "check": "mise run check"
-  },
   "dependencies": {
     "defuddle": "0.19.2"
   },
