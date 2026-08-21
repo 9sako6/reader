@@ -20,7 +20,7 @@
   let playbackTimer = null;
   let playing = false;
   let mode = "rsvp";
-  let nodes = {};
+  let nodes: Record<string, any> = {};
 
   function install() {
     if (!global.document?.documentElement || global.document.getElementById(HOST_ID)) return;
@@ -482,7 +482,7 @@
   }
 
   function nextPaint() {
-    return new Promise((resolve) => global.requestAnimationFrame(() => resolve()));
+    return new Promise<void>((resolve) => global.requestAnimationFrame(() => resolve()));
   }
 
   return { install, open, close };

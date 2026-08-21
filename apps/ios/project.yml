@@ -35,18 +35,28 @@ targets:
           - Resources
       - path: ReaderExtension/Resources/manifest.json
         buildPhase: resources
-      - path: ../../packages/engine/src/engine.js
+      - path: ReaderExtension/Resources/generated/defuddle.js
         buildPhase: resources
-      - path: ../../packages/extractor/src/extractor.js
+      - path: ReaderExtension/Resources/generated/engine.js
         buildPhase: resources
-      - path: ReaderExtension/Resources/viewer/icons.js
+      - path: ReaderExtension/Resources/generated/extractor.js
         buildPhase: resources
-      - path: ReaderExtension/Resources/viewer/viewer.js
+      - path: ReaderExtension/Resources/generated/icons.js
         buildPhase: resources
-      - path: ReaderExtension/Resources/viewer/bootstrap.js
+      - path: ReaderExtension/Resources/generated/viewer.js
         buildPhase: resources
-      - path: ../../vendor/defuddle/defuddle.js
+      - path: ReaderExtension/Resources/generated/bootstrap.js
         buildPhase: resources
+      - path: ReaderExtension/Resources/generated/defuddle-LICENSE.txt
+        buildPhase: resources
+      - path: ReaderExtension/Resources/generated/lucide-LICENSE.txt
+        buildPhase: resources
+    preBuildScripts:
+      - name: Build web resources
+        script: |
+          cd "$SRCROOT/../.."
+          mise exec -- pnpm run build:ios
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(READER_EXTENSION_BUNDLE_ID)

@@ -4,23 +4,31 @@ SafariまたはChromeで表示している文章を、通常表示またはRSVP�
 
 ## 開発
 
-JavaScriptのテストと静的検査を実行します。
+miseでNode.js、pnpm、XcodeGenを揃え、依存パッケージをインストールします。
 
 ```sh
-npm test
-npm run check
+mise install
+pnpm install --frozen-lockfile
+```
+
+TypeScriptの型検査とテストを実行します。
+
+```sh
+pnpm check
+pnpm test
 ```
 
 Chrome拡張の配布用ファイルを生成します。
 
 ```sh
-npm run build:chrome
+pnpm build:chrome
 ```
 
 iOSプロジェクトを再生成する場合はXcodeGenを使います。生成済みのプロジェクトを使うだけならXcodeGenは不要です。
 
 ```sh
-xcodegen generate --spec apps/ios/project.yml
+pnpm build:ios
+mise exec -- xcodegen generate --spec apps/ios/project.yml
 ```
 
 ## iPhoneで試す
@@ -38,7 +46,7 @@ xcodegen generate --spec apps/ios/project.yml
 
 ## Chromeで試す
 
-1. `npm run build:chrome`を実行する
+1. `pnpm build:chrome`を実行する
 2. `chrome://extensions`を開く
 3. デベロッパーモードを有効にする
 4. 「パッケージ化されていない拡張機能を読み込む」から`apps/chrome/dist`を選ぶ
@@ -50,4 +58,4 @@ xcodegen generate --spec apps/ios/project.yml
 - `apps/ios`: iOSホストアプリ、Safari Web Extension、Mobile Viewer
 - `packages/extractor`: ページまたは文字列から共通のContentを生成
 - `packages/engine`: 入力元と表示先に依存しない文章分割、表示時間、読書位置の計算
-- `vendor/defuddle`: 固定したDefuddleブラウザバンドル
+- `package.json`: DefuddleとTypeScriptを含むJavaScript依存関係

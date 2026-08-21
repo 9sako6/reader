@@ -61,7 +61,7 @@ test("service worker registers selection and whole-page entry points", async () 
       },
     },
   };
-  const source = fs.readFileSync(path.join(__dirname, "..", "src", "service-worker.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "service-worker.js"), "utf8");
   assert.doesNotMatch(source, /KAGOME|Kagome|kagome|WebAssembly|wasm/);
   assert.doesNotMatch(source, /PREPARE_RSVP/);
 

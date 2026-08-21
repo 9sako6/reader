@@ -1,0 +1,4 @@
+[tools]
+node = "26.5.1"
+pnpm = "11.18.0"
+xcodegen = "2.46.0"

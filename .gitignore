@@ -1,5 +1,8 @@
 .DS_Store
+.build/
+node_modules/
 DerivedData/
 *.xcuserstate
 xcuserdata/
 apps/chrome/dist/
+apps/ios/ReaderExtension/Resources/generated/

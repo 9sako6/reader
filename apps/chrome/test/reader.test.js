@@ -3,8 +3,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const Engine = require("../../../packages/engine/src/engine.js");
-const Extractor = require("../../../packages/extractor/src/extractor.js");
+const Engine = require("../../../.build/packages/engine/src/engine.js");
+const Extractor = require("../../../.build/packages/extractor/src/extractor.js");
 
 class FakeElement {
   constructor(tagName, textContent = "") {
@@ -61,7 +61,7 @@ class FakeElement {
 }
 
 test("desktop viewer owns its text layout without the mobile viewer", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   assert.match(source, /function showTextView\(\)/);
   assert.match(source, /文章で読む/);
   assert.match(source, /RSVPで読む/);
@@ -211,7 +211,7 @@ test("reader shows the article outline beside the focal point", () => {
     },
   };
   context.globalThis = context;
-  const source = fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   assert.doesNotMatch(source, /#0a84ff/i);
   assert.doesNotMatch(source, /let playing|let figureActive/);
   assert.doesNotMatch(source, /PREPARE_RSVP|preparedText|preparedReadingContext/);
@@ -376,7 +376,7 @@ test("reader shows the article outline beside the focal point", () => {
 });
 
 test("reader varies linguistic timing while preserving baseline effective WPM", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   assert.doesNotMatch(source, /BLINK|blinkIndicator|beginBlinkBreak/);
 
   const documentElement = new FakeElement("html");
@@ -585,7 +585,7 @@ test("reader crossfades to a referenced figure and resumes with Space", async ()
     },
   };
   context.globalThis = context;
-  const source = fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   vm.runInNewContext(source, context);
 
   const referenceSentence = "結果を図1に示します。";

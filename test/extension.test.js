@@ -31,7 +31,7 @@ test("Xcode project embeds every manifest script in the extension", () => {
 });
 
 test("mobile controls keep the primary reading actions at the bottom", () => {
-  const overlay = fs.readFileSync(path.join(root, "apps", "ios", "ReaderExtension", "Resources", "viewer", "viewer.js"), "utf8");
+  const overlay = fs.readFileSync(path.join(root, "apps", "ios", "ReaderExtension", "Resources", "viewer", "viewer.ts"), "utf8");
   assert.match(overlay, /reader\.append\(topbar, content, controlbar\)/);
   assert.match(overlay, /context-unit previous/);
   assert.match(overlay, /context-unit next/);

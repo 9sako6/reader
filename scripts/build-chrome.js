@@ -5,13 +5,13 @@ const root = path.join(__dirname, "..");
 const output = path.join(root, "apps", "chrome", "dist");
 const files = [
   ["apps/chrome/manifest.json", "manifest.json"],
-  ["apps/chrome/src/service-worker.js", "service-worker.js"],
-  ["apps/chrome/src/viewer/viewer.js", "viewer.js"],
-  ["packages/engine/src/engine.js", "engine.js"],
-  ["packages/extractor/src/extractor.js", "extractor.js"],
-  ["vendor/defuddle/defuddle.js", "vendor/defuddle/defuddle.js"],
-  ["vendor/defuddle/LICENSE", "vendor/defuddle/LICENSE"],
-  ["vendor/defuddle/SHA256SUMS", "vendor/defuddle/SHA256SUMS"],
+  [".build/apps/chrome/src/service-worker.js", "service-worker.js"],
+  [".build/apps/chrome/src/viewer/viewer.js", "viewer.js"],
+  [".build/packages/engine/src/engine.js", "engine.js"],
+  [".build/packages/extractor/src/extractor.js", "extractor.js"],
+  ["node_modules/defuddle/dist/index.js", "vendor/defuddle/defuddle.js"],
+  ["node_modules/defuddle/LICENSE", "vendor/defuddle/LICENSE"],
+  ["LICENSES/lucide.txt", "LICENSES/lucide.txt"],
 ];
 
 fs.rmSync(output, { recursive: true, force: true });

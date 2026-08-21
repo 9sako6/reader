@@ -3,9 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
+  "packageManager": "pnpm@11.18.0",
   "scripts": {
-    "build:chrome": "node scripts/build-chrome.js",
-    "test": "npm run build:chrome && node --test",
-    "check": "node --check packages/engine/src/engine.js && node --check packages/extractor/src/extractor.js && node --check apps/chrome/src/service-worker.js && node --check apps/chrome/src/viewer/viewer.js && node --check apps/ios/ReaderExtension/Resources/viewer/icons.js && node --check apps/ios/ReaderExtension/Resources/viewer/viewer.js && node --check apps/ios/ReaderExtension/Resources/viewer/bootstrap.js"
+    "compile": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "pnpm run compile && node scripts/build-chrome.js && node scripts/build-ios.js",
+    "build:chrome": "pnpm run compile && node scripts/build-chrome.js",
+    "build:ios": "pnpm run compile && node scripts/build-ios.js",
+    "test": "pnpm run build && node --test",
+    "check": "pnpm run typecheck"
+  },
+  "dependencies": {
+    "defuddle": "0.19.2"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
   }
 }
