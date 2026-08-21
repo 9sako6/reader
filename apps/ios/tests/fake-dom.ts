@@ -14,6 +14,8 @@ export class FakeElement {
     this.hidden = false;
     this.className = "";
     this.listeners = new Map();
+    this.animations = [];
+    this.rect = null;
     const classes = new Set<string>();
     this.classList = {
       add: (...names: string[]) => names.forEach((name) => classes.add(name)),
@@ -51,7 +53,9 @@ export class FakeElement {
   }
 
   animate(keyframes: any, options: any) {
-    return { keyframes, options, finished: Promise.resolve() };
+    const animation = { keyframes, options, finished: Promise.resolve() };
+    this.animations.push(animation);
+    return animation;
   }
 
   remove() {
@@ -66,7 +70,11 @@ export class FakeElement {
   }
 
   getBoundingClientRect() {
-    return { top: 0, bottom: 100, height: 100 };
+    return this.rect || { top: 0, bottom: 100, left: 0, right: 390, width: 390, height: 100 };
+  }
+
+  get parentElement() {
+    return this.parent;
   }
 }
 
@@ -81,4 +89,14 @@ export function findElement(
     if (match) return match;
   }
   return null;
+}
+
+export function findElements(
+  root: FakeElement | null,
+  predicate: (element: FakeElement) => boolean,
+): FakeElement[] {
+  if (!root) return [];
+  const matches = predicate(root) ? [root] : [];
+  for (const child of root.children) matches.push(...findElements(child, predicate));
+  return matches;
 }
