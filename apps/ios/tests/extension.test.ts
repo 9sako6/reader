@@ -138,6 +138,8 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   );
   vm.runInNewContext(source, context);
   context.MobileViewer.install();
+  const readerStyle = createdElements.find((element) => element.tagName === "STYLE");
+  assert.match(readerStyle.textContent, /\.rsvp-unit \{[^}]*display: grid;[^}]*place-items: center;/u);
   await context.MobileViewer.open();
 
   assert.ok(launchFeedbackDuringExtraction);
