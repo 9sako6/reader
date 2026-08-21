@@ -296,6 +296,9 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(prevented, true);
   assert.equal(playPauseButton.attributes["aria-label"], "再生");
   assert.equal(playPauseButton.style.width, "56px");
+  backButton.dispatchEvent({ type: "click" });
+  assert.equal(playPauseButton.attributes["aria-label"], "再生");
+  assert.equal(timers.size, 0);
 
   document.dispatchEvent({
     type: "keydown",
@@ -688,13 +691,8 @@ test("reader pauses on an article image and keeps it in the text view", async ()
   await Promise.resolve();
   assert.equal(findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像"), null);
   assert.match(display.textContent, /結果を/);
-
-  document.dispatchEvent({
-    type: "keydown",
-    code: "Space",
-    target: documentElement,
-    preventDefault() {},
-  });
+  assert.ok(findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止"));
+  assert.ok(timers.size > 0);
   figurePanel = null;
   for (let step = 0; step < 10 && !figurePanel; step += 1) {
     const [timerId, timer] = [...timers.entries()][0];

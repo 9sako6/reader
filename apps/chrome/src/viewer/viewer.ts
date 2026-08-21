@@ -1290,6 +1290,7 @@
       currentUnitIndex = globalThis.Engine.findSentenceStart(units, unitBeforeFigure);
       syncNextFigureIndex();
       renderCurrentUnit();
+      play();
       return;
     }
     dismissFigurePanel();

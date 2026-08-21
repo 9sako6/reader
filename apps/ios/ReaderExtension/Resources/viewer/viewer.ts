@@ -539,6 +539,7 @@
     }
     pause();
     playing = true;
+    updatePlayButton();
     scheduleNext();
   }
 
@@ -673,6 +674,7 @@
       const unitBeforeFigure = global.Engine.findUnitIndex(units, Math.max(0, figureOffset - 1));
       seekToUnit(global.Engine.findSentenceStart(units, unitBeforeFigure));
       renderUnit();
+      play();
       return;
     }
     seekToUnit(global.Engine.findPreviousSentenceStart(units, unitIndex));

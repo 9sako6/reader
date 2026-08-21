@@ -35,7 +35,7 @@ test("Xcode project embeds every manifest script in the extension", () => {
   assert.match(project, /reader-extension\.appex in Embed Foundation Extensions/);
 });
 
-test("Safari reader shows an image again after returning to the preceding sentence", async () => {
+test("Safari reader resumes from the preceding sentence and pauses on the same image again", async () => {
   const documentElement = new FakeElement("html");
   documentElement.lang = "ja";
   const body = new FakeElement("body");
@@ -135,12 +135,10 @@ test("Safari reader shows an image again after returning to the preceding senten
   };
 
   assert.ok(runUntilFigure());
-  findElement(documentElement, (element) => element.attributes["aria-label"] === "再生")
-    .dispatchEvent({ type: "click" });
   findElement(documentElement, (element) => element.attributes["aria-label"] === "1文戻る")
     .dispatchEvent({ type: "click" });
-  findElement(documentElement, (element) => element.attributes["aria-label"] === "再生")
-    .dispatchEvent({ type: "click" });
+  assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
+  assert.ok(timers.size > 0);
 
   assert.ok(runUntilFigure());
 });
