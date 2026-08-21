@@ -1,6 +1,6 @@
-# Reader
+# reader
 
-SafariとChromeで、文章表示とRSVPを切り替えて読めるReaderです。
+SafariとChromeで、文章表示とRSVPを切り替えて読めるreaderです。
 
 ## 開発
 

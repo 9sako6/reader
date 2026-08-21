@@ -1,4 +1,6 @@
 [tools]
+gh = "2.97.0"
+jq = "1.8.2"
 node = "26.5.1"
 pnpm = "11.18.0"
 xcodegen = "2.46.0"
@@ -27,6 +29,32 @@ cp node_modules/defuddle/LICENSE apps/chrome/dist/vendor/defuddle/LICENSE
 cp LICENSES/lucide.txt apps/chrome/dist/LICENSES/lucide.txt
 '''
 
+[tasks."package:chrome"]
+description = "Package the Chrome extension"
+depends = ["build:chrome"]
+run = '''
+version="$(jq -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' apps/chrome/manifest.json)"
+archive_name="reader-chrome-${version}.zip"
+archive_path="$PWD/artifacts/chrome/$archive_name"
+rm -rf artifacts/chrome
+install -d artifacts/chrome
+(cd apps/chrome/dist && zip -X -q -r "$archive_path" .)
+(cd artifacts/chrome && shasum -a 256 "$archive_name" > SHA256SUMS)
+'''
+
+[tasks."verify:chrome-release"]
+description = "Verify the Chrome release tag and package"
+depends = ["package:chrome"]
+run = '''
+version="$(jq -er '.version' apps/chrome/manifest.json)"
+expected_tag="chrome-v${version}"
+release_tag="${RELEASE_TAG:-$expected_tag}"
+test "$release_tag" = "$expected_tag"
+test -f "artifacts/chrome/reader-chrome-${version}.zip"
+test -f artifacts/chrome/SHA256SUMS
+(cd artifacts/chrome && shasum -a 256 -c SHA256SUMS)
+'''
+
 [tasks."build:ios"]
 description = "Build the Safari extension resources"
 depends = ["compile"]
@@ -52,6 +80,26 @@ description = "Run static checks"
 run = [{ task = "typecheck" }]
 
 [tasks.test]
-description = "Build and test the Reader"
+description = "Build and test reader"
 depends = ["build"]
 run = "pnpm exec vitest run"
+
+[tasks."release:chrome"]
+description = "Release the current Chrome version"
+run = '''
+mise run check
+mise run test
+mise run verify:chrome-release
+version="$(jq -er '.version' apps/chrome/manifest.json)"
+tag="chrome-v${version}"
+test "$(git branch --show-current)" = "main"
+test -z "$(git status --porcelain)"
+git fetch origin main --tags
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+  echo "$tag already exists" >&2
+  exit 1
+fi
+git tag -a "$tag" -m "reader Chrome ${version}"
+git push origin "$tag"
+'''

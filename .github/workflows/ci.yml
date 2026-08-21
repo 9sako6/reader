@@ -58,8 +58,8 @@ jobs:
       - name: Build for iOS Simulator
         run: >-
           xcodebuild
-          -project apps/ios/Reader.xcodeproj
-          -scheme Reader
+          -project apps/ios/reader.xcodeproj
+          -scheme reader
           -destination 'generic/platform=iOS Simulator'
           -configuration Debug
           -derivedDataPath DerivedData

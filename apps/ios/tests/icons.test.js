@@ -35,5 +35,5 @@ test("playback controls use consistently sized vector icons", () => {
     assert.ok(icon.children.length > 0);
   }
   assert.equal(create(document, "previous", 28).children.length, 2);
-  assert.throws(() => create(document, "missing", 28), /Unknown Reader icon/);
+  assert.throws(() => create(document, "missing", 28), /Unknown reader icon/);
 });

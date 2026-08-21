@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Reader",
-  "version": "0.2.0",
+  "name": "reader",
+  "version": "0.0.1",
   "description": "表示中または選択した文章を通常表示またはRSVPで読みやすくします。",
   "permissions": ["contextMenus", "activeTab", "scripting"],
   "action": {
-    "default_title": "ページをReaderで読む"
+    "default_title": "ページをreaderで読む"
   },
   "background": {
     "service_worker": "service-worker.js"

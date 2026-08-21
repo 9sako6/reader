@@ -11,7 +11,7 @@ struct ContentView: View {
                     Image(systemName: "text.viewfinder")
                         .font(.system(size: 44, weight: .semibold))
                         .foregroundStyle(.cyan)
-                    Text("Reader")
+                    Text("reader")
                         .font(.largeTitle.bold())
                     Text("Safariで開いている文章を、その場で読みやすい表示へ切り替えます。")
                         .font(.title3)
@@ -20,7 +20,7 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 18) {
                     instruction("1", "設定を開く", "アプリ › Safari › 拡張機能へ進みます。")
-                    instruction("2", "Readerを許可", "Readerをオンにして、Webサイトへのアクセスを許可します。")
+                    instruction("2", "readerを許可", "readerをオンにして、Webサイトへのアクセスを許可します。")
                     instruction("3", "Safariで読む", "ページ右端の青い取っ手を押します。")
                 }
 

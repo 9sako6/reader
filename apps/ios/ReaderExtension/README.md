@@ -1,6 +1,6 @@
-# ReaderExtension
+# Safari Web Extension
 
-ReaderのSafari Web Extensionターゲットです。SwiftのハンドラーがSafariと接続し、Webリソースが文章の抽出とMobile Viewerの表示を行います。
+readerのSafari Web Extensionターゲットです。SwiftのハンドラーがSafariと接続し、Webリソースが文章の抽出とMobile Viewerの表示を行います。
 
 - `SafariWebExtensionHandler.swift`: Safari Web Extensionのネイティブ側ハンドラー
 - `Info.plist`: 拡張ターゲットのメタデータ
