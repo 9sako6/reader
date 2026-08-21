@@ -201,6 +201,280 @@ test("extractPage keeps every article image at its source offset", () => {
   ]);
 });
 
+test("extractPage preserves a sentence boundary between adjacent blocks", () => {
+  const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+  const firstText = "First sentence.";
+  const secondText = "Second sentence.";
+  const first = {
+    nodeType: 1,
+    tagName: "P",
+    textContent: firstText,
+    childNodes: [textNode(firstText)],
+    parentElement: { closest() { return null; } },
+  };
+  const second = {
+    nodeType: 1,
+    tagName: "P",
+    textContent: secondText,
+    childNodes: [textNode(secondText)],
+    parentElement: { closest() { return null; } },
+  };
+  const contentRoot = {
+    nodeType: 1,
+    childNodes: [first, second],
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector === "h1, h2, h3, h4, h5, h6" || selector === "img") return [];
+      return [first, second];
+    },
+  };
+  const document = {
+    createElement() { return contentRoot; },
+    createRange() {
+      let endElement = null;
+      return {
+        selectNodeContents() {},
+        setEndBefore(element) { endElement = element; },
+        toString() { return endElement === second ? firstText : `${firstText}${secondText}`; },
+      };
+    },
+  };
+  class FakeDefuddle {
+    parse() { return { content: `<p>${firstText}</p><p>${secondText}</p>` }; }
+  }
+
+  const result = extractPage(document, FakeDefuddle);
+
+  assert.equal(result.text, `${firstText}\n${secondText}`);
+  assert.equal(result.readingContext.blocks[1].start, firstText.length + 1);
+});
+
+test("extractPage indexes many blocks and figures without rescanning the full prefix", () => {
+  const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+  const paragraphs = [];
+  const images = [];
+  const children = [];
+  for (let index = 0; index < 12; index += 1) {
+    const paragraphText = `段落${index}です。`;
+    const paragraph = {
+      nodeType: 1,
+      tagName: "P",
+      textContent: paragraphText,
+      childNodes: [textNode(paragraphText)],
+      parentElement: { closest() { return null; } },
+    };
+    const captionText = `図${index}`;
+    const caption = {
+      nodeType: 1,
+      tagName: "FIGCAPTION",
+      textContent: captionText,
+      childNodes: [textNode(captionText)],
+    };
+    const figure = {
+      nodeType: 1,
+      tagName: "FIGURE",
+      textContent: captionText,
+      childNodes: [caption],
+      querySelector(selector) { return selector === "figcaption" ? caption : null; },
+    };
+    const image = {
+      currentSrc: `https://example.com/${index}.png`,
+      src: `https://example.com/${index}.png`,
+      closest() { return figure; },
+      getAttribute(name) { return name === "alt" ? `画像${index}` : null; },
+    };
+    paragraphs.push(paragraph);
+    images.push(image);
+    children.push(paragraph, textNode("\n"), figure, textNode("\n"));
+  }
+  const rawText = children.map((node) => node.nodeType === 3 ? node.nodeValue : node.textContent).join("");
+  const contentRoot = {
+    nodeType: 11,
+    childNodes: children,
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector === "h1, h2, h3, h4, h5, h6") return [];
+      if (selector === "img") return images;
+      return paragraphs;
+    },
+  };
+  const article = { ...contentRoot, nodeType: 1, innerHTML: "" };
+  const template = { content: contentRoot, innerHTML: "" };
+  let rangeCalls = 0;
+  const document = {
+    createElement(tagName) { return tagName === "template" ? template : article; },
+    createRange() {
+      rangeCalls += 1;
+      let endElement = null;
+      return {
+        selectNodeContents() {},
+        setEndBefore(element) { endElement = element; },
+        toString() {
+          if (!endElement) return rawText;
+          const index = children.indexOf(endElement);
+          return children.slice(0, index).map((node) => (
+            node.nodeType === 3 ? node.nodeValue : node.textContent
+          )).join("");
+        },
+      };
+    },
+  };
+  class FakeDefuddle {
+    parse() { return { content: "<p>many blocks and figures</p>" }; }
+  }
+
+  const result = extractPage(document, FakeDefuddle);
+
+  assert.ok(result);
+  assert.equal(result.readingContext.blocks.length, paragraphs.length);
+  assert.equal(result.readingContext.figures.length, images.length);
+  assert.equal(rangeCalls, 0);
+});
+
+test("extractPage bypasses full-page parsing for one dominant semantic article", () => {
+  const paragraphText = "すぐに読み始められる本文です。";
+  const paragraph = {
+    tagName: "P",
+    textContent: paragraphText,
+    parentElement: { closest() { return null; } },
+  };
+  const parsedRoot = {
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector === "h1, h2, h3, h4, h5, h6" || selector === "img") return [];
+      return [paragraph];
+    },
+  };
+  const longArticleText = paragraphText.repeat(80);
+  const article = {
+    innerHTML: `<p>${paragraphText}</p>`,
+    textContent: longArticleText,
+    querySelector() { return null; },
+    querySelectorAll(selector) { return selector === "p, li, blockquote, pre" ? [paragraph, paragraph, paragraph] : []; },
+    cloneNode() {
+      return {
+        innerHTML: this.innerHTML,
+        querySelector: this.querySelector,
+        querySelectorAll() { return []; },
+      };
+    },
+  };
+  const rawText = paragraphText;
+  const document = {
+    title: "高速な記事",
+    body: { textContent: `${longArticleText}サイトナビ` },
+    querySelectorAll(selector) { return selector === "article" ? [article] : []; },
+    createElement() { return parsedRoot; },
+    createRange() {
+      let endElement = null;
+      return {
+        selectNodeContents() {},
+        setEndBefore(element) { endElement = element; },
+        toString() { return endElement ? "" : rawText; },
+      };
+    },
+  };
+  let defuddleCalls = 0;
+  class FakeDefuddle {
+    constructor() { defuddleCalls += 1; }
+    parse() { return { content: article.innerHTML }; }
+  }
+
+  const result = extractPage(document, FakeDefuddle);
+
+  assert.equal(defuddleCalls, 0);
+  assert.equal(result.text, paragraphText);
+  assert.equal(result.readingContext.blocks[0].text, paragraphText);
+});
+
+test("extractPage excludes responsive article branches hidden by active CSS", () => {
+  const paragraphText = "表示中の本文です。";
+  const paragraphNode = { nodeType: 3, nodeValue: paragraphText, childNodes: [] };
+  const paragraph = {
+    nodeType: 1,
+    tagName: "P",
+    textContent: paragraphText,
+    childNodes: [paragraphNode],
+    parentElement: { closest() { return null; } },
+  };
+  const visibleImage = {
+    currentSrc: "https://example.com/visible.png",
+    src: "https://example.com/visible.png",
+    closest() { return null; },
+    getAttribute() { return "表示画像"; },
+  };
+  const hiddenImage = {
+    currentSrc: "https://example.com/hidden.png",
+    src: "https://example.com/hidden.png",
+    closest() { return null; },
+    getAttribute() { return "非表示画像"; },
+  };
+  let hiddenCloneRemoved = false;
+  const parsedRoot = {
+    nodeType: 1,
+    childNodes: [paragraph],
+    innerHTML: "",
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector === "h1, h2, h3, h4, h5, h6") return [];
+      if (selector === "img") return hiddenCloneRemoved ? [visibleImage] : [visibleImage, hiddenImage];
+      return [paragraph];
+    },
+  };
+  const visibleSource = { parentElement: null };
+  const hiddenSource = { parentElement: null };
+  const visibleClone = { remove() {} };
+  const hiddenClone = { remove() { hiddenCloneRemoved = true; } };
+  const longArticleText = paragraphText.repeat(100);
+  const article = {
+    textContent: longArticleText,
+    parentElement: { closest() { return null; } },
+    querySelectorAll(selector) {
+      if (selector === "p, li, blockquote, pre") return [paragraph, paragraph, paragraph];
+      if (selector === "*") return [visibleSource, hiddenSource];
+      return [];
+    },
+    cloneNode() {
+      return {
+        innerHTML: `<p>${paragraphText}</p>`,
+        querySelector() { return null; },
+        querySelectorAll(selector) {
+          return selector === "*" ? [visibleClone, hiddenClone] : [];
+        },
+      };
+    },
+  };
+  visibleSource.parentElement = article;
+  hiddenSource.parentElement = article;
+  const document = {
+    title: "レスポンシブ記事",
+    body: { textContent: `${longArticleText}ナビゲーション` },
+    defaultView: {
+      getComputedStyle(element) {
+        return { display: element === hiddenSource ? "none" : "block" };
+      },
+    },
+    querySelectorAll(selector) { return selector === "article" ? [article] : []; },
+    createElement() { return parsedRoot; },
+    createRange() {
+      let endElement = null;
+      return {
+        selectNodeContents() {},
+        setEndBefore(element) { endElement = element; },
+        toString() { return endElement ? "" : paragraphText; },
+      };
+    },
+  };
+  class FakeDefuddle {
+    constructor() { throw new Error("dominant article should bypass Defuddle"); }
+  }
+
+  const result = extractPage(document, FakeDefuddle);
+
+  assert.equal(hiddenCloneRemoved, true);
+  assert.deepEqual(result.readingContext.figures.map((figure) => figure.src), [visibleImage.src]);
+});
+
 test("extractPage returns no content when the page body is unavailable", () => {
   assert.equal(extractPage({ querySelector() { return null; }, body: null }), null);
 });

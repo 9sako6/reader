@@ -3,6 +3,10 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Extractor = api;
 })(globalThis, function createExtractor(): ReaderExtractor {
+  const TEXT_BOUNDARY_TAGS = new Set([
+    "ADDRESS", "BLOCKQUOTE", "BR", "DD", "DT", "FIGCAPTION", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "LI", "P", "PRE", "TR",
+  ]);
+
   function fromText(text: string, readingContext: Partial<ReadingContext> | null = {}): ReaderContent | null {
     const value = typeof text === "string" ? text.trim() : "";
     if (!value) return null;
@@ -15,7 +19,7 @@
   ): ReaderContent | null {
     if (typeof DefuddleClass !== "function" || typeof sourceDocument.createRange !== "function") return null;
 
-    const result = new DefuddleClass(sourceDocument, {
+    const result = extractDominantArticle(sourceDocument) || new DefuddleClass(sourceDocument, {
       markdown: false,
       useAsync: false,
       removeExactSelectors: true,
@@ -28,17 +32,27 @@
     }).parse();
     if (typeof result?.content !== "string" || !result.content.trim()) return null;
 
-    const contentRoot = sourceDocument.createElement("article");
-    contentRoot.innerHTML = result.content;
+    const stagingRoot = sourceDocument.createElement("template");
+    const usesTemplate = "content" in stagingRoot;
+    const contentRoot = usesTemplate
+      ? (stagingRoot as HTMLTemplateElement).content
+      : sourceDocument.createElement("article");
+    if (usesTemplate) stagingRoot.innerHTML = result.content;
+    else (contentRoot as HTMLElement).innerHTML = result.content;
     contentRoot.querySelector?.("#__reader-host")?.remove();
     contentRoot.querySelector?.("#__rsvp-reader-root")?.remove();
 
-    const fullRange = sourceDocument.createRange();
-    fullRange.selectNodeContents(contentRoot);
-    const rawText = fullRange.toString();
+    const indexedSource = indexSourceOffsets(contentRoot);
+    let rawText = indexedSource.rawText;
+    if (!rawText) {
+      const fullRange = sourceDocument.createRange();
+      fullRange.selectNodeContents(contentRoot);
+      rawText = fullRange.toString();
+    }
     const leadingWhitespaceLength = rawText.length - rawText.trimStart().length;
     const text = rawText.trim();
     if (!text) return null;
+    const sourceOffsets = indexedSource.offsets;
 
     const headingEntries = [...contentRoot.querySelectorAll("h1, h2, h3, h4, h5, h6")]
       .map((element) => ({
@@ -55,6 +69,7 @@
       element,
       text.length,
       leadingWhitespaceLength,
+      sourceOffsets,
     ));
     const headings = headingEntries.map(({ text: headingText, level }) => ({ text: headingText, level }));
     if (includeTitle) headings.unshift({ text: title, level: 1 });
@@ -67,14 +82,57 @@
       text,
       readingContext: {
         title: title || headingEntries[0]?.text || "",
-        blocks: extractBlocks(sourceDocument, contentRoot, text, leadingWhitespaceLength),
+        blocks: extractBlocks(sourceDocument, contentRoot, text, leadingWhitespaceLength, sourceOffsets),
         headings,
         sectionOffsets,
         sectionTransitions,
         initialHeadingIndex: includeTitle ? 0 : -1,
-        figures: extractFigures(sourceDocument, contentRoot, text, leadingWhitespaceLength),
+        figures: extractFigures(sourceDocument, contentRoot, text, leadingWhitespaceLength, sourceOffsets),
       },
     };
+  }
+
+  function extractDominantArticle(sourceDocument: Document): { content: string; title: string } | null {
+    if (typeof sourceDocument.querySelectorAll !== "function") return null;
+    const articles = [...sourceDocument.querySelectorAll("article")]
+      .filter((article) => !article.parentElement?.closest?.("article"));
+    if (articles.length !== 1) return null;
+    const article = articles[0];
+    if (!article || typeof article.cloneNode !== "function") return null;
+    const articleText = (article.textContent || "").trim();
+    const bodyText = (sourceDocument.body?.textContent || "").trim();
+    const blockCount = article.querySelectorAll?.("p, li, blockquote, pre").length || 0;
+    if (articleText.length < 800 || blockCount < 3) return null;
+    if (bodyText.length > 0 && articleText.length / bodyText.length < 0.6) return null;
+    const clone = article.cloneNode(true) as Element;
+    removeCssHiddenCloneElements(sourceDocument, article, clone);
+    for (const element of clone.querySelectorAll(
+      "script, style, noscript, template, nav, footer, form, button, [hidden], [aria-hidden='true']",
+    )) element.remove();
+    const content = clone.innerHTML.trim();
+    if (!content) return null;
+    const title = (clone.querySelector("h1")?.textContent || sourceDocument.title || "").trim();
+    return { content, title };
+  }
+
+  function removeCssHiddenCloneElements(sourceDocument: Document, sourceRoot: Element, cloneRoot: Element): void {
+    const view = sourceDocument.defaultView;
+    if (!view || typeof view.getComputedStyle !== "function") return;
+    const sourceElements = [...sourceRoot.querySelectorAll("*")];
+    const cloneElements = [...cloneRoot.querySelectorAll("*")];
+    const hiddenElements = new Set<Element>();
+    for (const [index, sourceElement] of sourceElements.entries()) {
+      const parentHidden = sourceElement.parentElement
+        ? hiddenElements.has(sourceElement.parentElement)
+        : false;
+      if (parentHidden) {
+        hiddenElements.add(sourceElement);
+        continue;
+      }
+      if (view.getComputedStyle(sourceElement).display !== "none") continue;
+      hiddenElements.add(sourceElement);
+      cloneElements[index]?.remove();
+    }
   }
 
   function normalizeReadingContext(value: Partial<ReadingContext> | null): ReadingContext {
@@ -93,22 +151,47 @@
 
   function offsetBefore(
     sourceDocument: Document,
-    contentRoot: HTMLElement,
+    contentRoot: DocumentFragment | HTMLElement,
     element: Node,
     textLength: number,
     leadingWhitespaceLength: number,
+    sourceOffsets: Map<Node, number>,
   ): number {
+    const indexedOffset = sourceOffsets.get(element);
+    if (indexedOffset !== undefined) {
+      return Math.min(textLength, Math.max(0, indexedOffset - leadingWhitespaceLength));
+    }
     const prefixRange = sourceDocument.createRange();
     prefixRange.selectNodeContents(contentRoot);
     prefixRange.setEndBefore(element);
     return Math.min(textLength, Math.max(0, prefixRange.toString().length - leadingWhitespaceLength));
   }
 
+  function indexSourceOffsets(
+    contentRoot: DocumentFragment | HTMLElement,
+  ): { rawText: string; offsets: Map<Node, number> } {
+    const offsets = new Map<Node, number>();
+    let rawText = "";
+    const visit = (node: Node): void => {
+      offsets.set(node, rawText.length);
+      if (node.nodeType === 3) {
+        rawText += node.nodeValue || "";
+        return;
+      }
+      for (const child of node.childNodes || []) visit(child);
+      const tagName = String((node as Element).tagName || "").toUpperCase();
+      if (TEXT_BOUNDARY_TAGS.has(tagName) && !rawText.endsWith("\n")) rawText += "\n";
+    };
+    visit(contentRoot);
+    return { rawText, offsets };
+  }
+
   function extractBlocks(
     sourceDocument: Document,
-    contentRoot: HTMLElement,
+    contentRoot: DocumentFragment | HTMLElement,
     text: string,
     leadingWhitespaceLength: number,
+    sourceOffsets: Map<Node, number>,
   ): ReaderBlock[] {
     if (typeof contentRoot.querySelectorAll !== "function") return [];
     const blockSelector = "h1, h2, h3, h4, h5, h6, p, blockquote, pre, li";
@@ -118,7 +201,7 @@
         if (parentBlock && parentBlock !== contentRoot) return null;
         const blockText = (element.textContent || "").trim();
         if (!blockText) return null;
-        const start = offsetBefore(sourceDocument, contentRoot, element, text.length, leadingWhitespaceLength);
+        const start = offsetBefore(sourceDocument, contentRoot, element, text.length, leadingWhitespaceLength, sourceOffsets);
         const tagName = String(element.tagName || "p").toLowerCase();
         return {
           text: blockText,
@@ -133,9 +216,10 @@
 
   function extractFigures(
     sourceDocument: Document,
-    contentRoot: HTMLElement,
+    contentRoot: DocumentFragment | HTMLElement,
     text: string,
     leadingWhitespaceLength: number,
+    sourceOffsets: Map<Node, number>,
   ): ReaderFigure[] {
     if (typeof contentRoot.querySelectorAll !== "function") return [];
     const figures: ReaderFigure[] = [];
@@ -143,7 +227,7 @@
       const container = image.closest?.("figure") || image;
       const src = String(image.currentSrc || image.src || image.getAttribute?.("src") || "").trim();
       if (!src || /^javascript:/iu.test(src)) continue;
-      const figureOffset = offsetBefore(sourceDocument, contentRoot, container, text.length, leadingWhitespaceLength);
+      const figureOffset = offsetBefore(sourceDocument, contentRoot, container, text.length, leadingWhitespaceLength, sourceOffsets);
       const caption = (container.querySelector?.("figcaption")?.textContent || "").trim();
       const containerTextLength = (container.textContent || caption).length;
       figures.push({
