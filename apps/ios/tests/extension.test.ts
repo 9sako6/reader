@@ -337,20 +337,20 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   assert.match(laterUnit.textContent, /さらに後/u);
 
   modeButton.dispatchEvent({ type: "click" });
-  const unchangedScroller = findElement(documentElement, (element) => element.className === "text-view");
-  const unchangedAnchors = findElements(
-    unchangedScroller,
+  const completeSentenceScroller = findElement(documentElement, (element) => element.className === "text-view");
+  const completeSentenceAnchors = findElements(
+    completeSentenceScroller,
     (element) => element.attributes["data-reader-text-anchor"] === "true",
   );
-  unchangedScroller.rect = { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
-  unchangedAnchors[0].rect = { top: 320, bottom: 420, left: 20, right: 370, width: 350, height: 100 };
-  unchangedAnchors[1].rect = { top: -24, bottom: 76, left: 20, right: 370, width: 350, height: 100 };
-  unchangedAnchors[2].rect = { top: 520, bottom: 620, left: 20, right: 370, width: 350, height: 100 };
-  const unchangedFigure = findElement(unchangedScroller, (element) => element.className === "article-figure");
-  unchangedFigure.rect = { top: 640, bottom: 940, left: 20, right: 370, width: 350, height: 300 };
+  completeSentenceScroller.rect = { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
+  completeSentenceAnchors[0].rect = { top: -320, bottom: -220, left: 20, right: 370, width: 350, height: 100 };
+  completeSentenceAnchors[1].rect = { top: -24, bottom: 76, left: 20, right: 370, width: 350, height: 100 };
+  completeSentenceAnchors[2].rect = { top: 112, bottom: 212, left: 20, right: 370, width: 350, height: 100 };
+  const completeSentenceFigure = findElement(completeSentenceScroller, (element) => element.className === "article-figure");
+  completeSentenceFigure.rect = { top: 640, bottom: 940, left: 20, right: 370, width: 350, height: 300 };
   modeButton.dispatchEvent({ type: "click" });
-  const visuallyFirstUnit = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
-  assert.match(visuallyFirstUnit.textContent, /画像の後/u);
+  const firstCompleteUnit = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
+  assert.match(firstCompleteUnit.textContent, /さらに後/u);
 
   context.MobileViewer.close();
   await context.MobileViewer.open();

@@ -33,6 +33,8 @@
   const LAUNCH_PROGRESS_REVEAL_DELAY_MS = 100;
   const LAUNCH_PROGRESS_DURATION_MS = 1200;
   const LAUNCH_PROGRESS_PRECOMPLETION = 0.94;
+  const TEXT_VIEW_READABLE_TOP_PX = 72;
+  const TEXT_VIEW_READABLE_BOTTOM_PX = 96;
   const RSVP_FONT_SIZE = 40;
   let shadow: ShadowRoot | null = null;
   let handle: HTMLButtonElement | null = null;
@@ -114,7 +116,7 @@
       .error { position: absolute; inset: 0; display: grid; place-content: center; gap: 16px; padding: 32px; text-align: center; color: var(--reader-secondary); }
       .error-actions { display: flex; justify-content: center; gap: 10px; }
       .error-actions button { min-width: 112px; min-height: 44px; border: 0; border-radius: 14px; background: var(--reader-surface); color: var(--reader-text); }
-      .text-view { height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 56px max(20px, env(safe-area-inset-right)) 96px max(20px, env(safe-area-inset-left)); -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.3) 24px, #000 72px, #000 calc(100% - 96px), rgba(0,0,0,.3) calc(100% - 24px), transparent 100%); mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.3) 24px, #000 72px, #000 calc(100% - 96px), rgba(0,0,0,.3) calc(100% - 24px), transparent 100%); }
+      .text-view { height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 56px max(20px, env(safe-area-inset-right)) 96px max(20px, env(safe-area-inset-left)); -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.3) 24px, #000 ${TEXT_VIEW_READABLE_TOP_PX}px, #000 calc(100% - ${TEXT_VIEW_READABLE_BOTTOM_PX}px), rgba(0,0,0,.3) calc(100% - 24px), transparent 100%); mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.3) 24px, #000 ${TEXT_VIEW_READABLE_TOP_PX}px, #000 calc(100% - ${TEXT_VIEW_READABLE_BOTTOM_PX}px), rgba(0,0,0,.3) calc(100% - 24px), transparent 100%); }
       .article { max-width: 32em; margin: 0 auto; font-size: var(--reader-font-size, 18px); line-height: var(--reader-line-height, 1.82); letter-spacing: .01em; }
       .article-title { margin: 0 0 1.5em; font-size: 1.58em; line-height: 1.3; letter-spacing: -.02em; }
       .paragraph { margin: 0 0 1.35em; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -517,8 +519,12 @@
     const scrollerRect = scroller.getBoundingClientRect();
     const visibleTop = scrollerRect.top;
     const visibleBottom = scrollerRect.bottom;
+    const readableTop = Math.min(visibleBottom, visibleTop + TEXT_VIEW_READABLE_TOP_PX);
+    const readableBottom = Math.max(readableTop, visibleBottom - TEXT_VIEW_READABLE_BOTTOM_PX);
     let firstVisible: HTMLElement | undefined;
     let firstVisibleTop = Number.POSITIVE_INFINITY;
+    let firstReadable: HTMLElement | undefined;
+    let firstReadableTop = Number.POSITIVE_INFINITY;
     for (const element of positionMarkers) {
       const rect = element.getBoundingClientRect();
       if (rect.bottom <= visibleTop || rect.top >= visibleBottom) continue;
@@ -530,7 +536,15 @@
         firstVisible = element;
         firstVisibleTop = rect.top;
       }
+      const isFigure = element.dataset.readerPositionKind === "figure";
+      const isReadableFigure = isFigure && rect.bottom > readableTop && rect.top < readableBottom;
+      const isCompleteSentence = !isFigure && rect.top >= readableTop && rect.bottom <= readableBottom;
+      if ((isReadableFigure || isCompleteSentence) && rect.top < firstReadableTop) {
+        firstReadable = element;
+        firstReadableTop = rect.top;
+      }
     }
+    if (preferVisualTop && firstReadable) firstVisible = firstReadable;
     if (firstVisible) {
       currentOffset = Number(firstVisible.dataset.sourceStart);
       textFigureOffset = firstVisible.dataset.readerPositionKind === "figure" ? currentOffset : null;
