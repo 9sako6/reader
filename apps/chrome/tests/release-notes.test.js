@@ -35,4 +35,8 @@ test("Chrome release notes list commit titles between Chrome tags without pull r
   assert.doesNotMatch(notes, /以前の変更/);
   assert.match(notes, /## 変更/);
   assert.ok(notes.indexOf("画像を本文位置に表示する") < notes.indexOf("暗幕で夜間の眩しさを抑える"));
+
+  const outputPath = path.join(repository, "release-notes.md");
+  execFileSync("bash", [script, "chrome-v0.0.2", outputPath], { cwd: repository });
+  assert.equal(fs.readFileSync(outputPath, "utf8"), notes);
 });
