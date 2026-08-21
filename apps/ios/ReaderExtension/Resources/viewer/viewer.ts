@@ -9,6 +9,7 @@
     | { kind: "figure"; figureIndex: number; sourceOffset: number };
   interface LaunchProgress {
     element: HTMLElement;
+    loader: HTMLElement;
     indicator: HTMLElement;
     animation: Animation | null;
     startedAt: number;
@@ -29,7 +30,7 @@
   }
 
   const HOST_ID = "__reader-host";
-  const LAUNCH_PROGRESS_REVEAL_DELAY_MS = 400;
+  const LAUNCH_PROGRESS_REVEAL_DELAY_MS = 100;
   const LAUNCH_PROGRESS_DURATION_MS = 1200;
   const LAUNCH_PROGRESS_PRECOMPLETION = 0.94;
   const RSVP_FONT_SIZE = 40;
@@ -217,10 +218,12 @@
     track.append(indicator);
     loader.append(track);
     feedback.append(loader);
-    return { element: feedback, indicator, animation, startedAt: Date.now() };
+    return { element: feedback, loader, indicator, animation, startedAt: Date.now() };
   }
 
   async function completeLaunchProgress(progress: LaunchProgress): Promise<void> {
+    progress.loader.style.animation = "none";
+    progress.loader.style.opacity = "1";
     const reducedMotion = global.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const elapsedRatio = Math.min(1, Math.max(
       0,

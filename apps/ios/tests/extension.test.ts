@@ -99,7 +99,7 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
     Extractor: {
       fromPage: () => {
         extractionCount += 1;
-        now = 1100;
+        now = 120;
         launchFeedbackDuringExtraction = findElement(
           documentElement,
           (element) => element.className === "launch-feedback",
@@ -160,14 +160,16 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   );
   assert.ok(progressTrack);
   assert.ok(progressIndicator);
-  assert.equal(launchLoader.style.animationDelay, "400ms");
+  assert.equal(launchLoader.style.animationDelay, "100ms");
+  assert.equal(launchLoader.style.opacity, "1");
   assert.equal(progressIndicator.animations.length, 2);
   assert.equal(progressIndicator.animations[0].options.iterations, 1);
   assert.equal(progressIndicator.animations[0].options.duration, 1200);
   assert.equal(progressIndicator.animations[0].keyframes[0].transform, "scaleX(0)");
   assert.equal(progressIndicator.animations[0].keyframes[1].transform, "scaleX(.94)");
   const completionFrames = progressIndicator.animations[1].keyframes;
-  assert.ok(Number.parseFloat(completionFrames[0].transform.slice(7)) >= 0.85);
+  const completionStart = Number.parseFloat(completionFrames[0].transform.slice(7));
+  assert.ok(completionStart > 0.09 && completionStart < 0.1);
   assert.equal(completionFrames[completionFrames.length - 1].transform, "scaleX(1)");
   assert.ok(launchFeedbackDuringExtraction.animations.length > 0);
 
@@ -357,6 +359,11 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
     cachedLaunchFeedback,
     (element) => element.className === "launch-progress-indicator",
   );
+  const cachedLaunchLoader = findElement(
+    cachedLaunchFeedback,
+    (element) => element.className === "launch-loader",
+  );
   assert.equal(cachedProgressIndicator.animations.length, 1);
+  assert.notEqual(cachedLaunchLoader.style.opacity, "1");
   assert.equal(cachedLaunchFeedback.animations.length, 0);
 });
