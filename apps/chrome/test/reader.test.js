@@ -3,7 +3,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const RsvpCore = require("../core.js");
+const Engine = require("../../../packages/engine/src/engine.js");
+const Extractor = require("../../../packages/extractor/src/extractor.js");
 
 class FakeElement {
   constructor(tagName, textContent = "") {
@@ -58,6 +59,14 @@ class FakeElement {
     this.append(...children);
   }
 }
+
+test("desktop viewer owns its text layout without the mobile viewer", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.js"), "utf8");
+  assert.match(source, /function showTextView\(\)/);
+  assert.match(source, /文章で読む/);
+  assert.match(source, /RSVPで読む/);
+  assert.doesNotMatch(source, /MobileViewer|mobile-viewer|mobile-styles/);
+});
 
 function findElement(root, predicate) {
   if (predicate(root)) return root;
@@ -178,7 +187,8 @@ test("reader shows the article outline beside the focal point", () => {
         paddingRight: "12px",
       };
     },
-    RsvpCore,
+    Engine,
+    Extractor,
     Intl,
     console,
     ResizeObserver: class {
@@ -201,7 +211,7 @@ test("reader shows the article outline beside the focal point", () => {
     },
   };
   context.globalThis = context;
-  const source = fs.readFileSync(path.join(__dirname, "..", "reader.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.js"), "utf8");
   assert.doesNotMatch(source, /#0a84ff/i);
   assert.doesNotMatch(source, /let playing|let figureActive/);
   assert.doesNotMatch(source, /PREPARE_RSVP|preparedText|preparedReadingContext/);
@@ -366,7 +376,7 @@ test("reader shows the article outline beside the focal point", () => {
 });
 
 test("reader varies linguistic timing while preserving baseline effective WPM", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "reader.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.js"), "utf8");
   assert.doesNotMatch(source, /BLINK|blinkIndicator|beginBlinkBreak/);
 
   const documentElement = new FakeElement("html");
@@ -410,7 +420,8 @@ test("reader varies linguistic timing while preserving baseline effective WPM", 
     getComputedStyle() {
       return { fontSize: "64px" };
     },
-    RsvpCore,
+    Engine,
+    Extractor,
     Intl,
     console,
     setTimeout(callback, delay) {
@@ -559,7 +570,8 @@ test("reader crossfades to a referenced figure and resumes with Space", async ()
     getComputedStyle() {
       return { fontSize: "64px" };
     },
-    RsvpCore,
+    Engine,
+    Extractor,
     Intl,
     console,
     setTimeout(callback, delay) {
@@ -573,7 +585,7 @@ test("reader crossfades to a referenced figure and resumes with Space", async ()
     },
   };
   context.globalThis = context;
-  const source = fs.readFileSync(path.join(__dirname, "..", "reader.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.js"), "utf8");
   vm.runInNewContext(source, context);
 
   const referenceSentence = "結果を図1に示します。";

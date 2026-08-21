@@ -13,11 +13,10 @@ test("Safari extension loads Reader resources in dependency order", () => {
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);
   assert.deepEqual(manifest.content_scripts[0].js, [
     "defuddle.js",
-    "core.js",
-    "page-extractor.js",
-    "session.js",
+    "engine.js",
+    "extractor.js",
     "icons.js",
-    "reader-overlay.js",
+    "viewer.js",
     "bootstrap.js",
   ]);
 });
@@ -32,7 +31,7 @@ test("Xcode project embeds every manifest script in the extension", () => {
 });
 
 test("mobile controls keep the primary reading actions at the bottom", () => {
-  const overlay = fs.readFileSync(path.join(root, "packages", "web-reader", "src", "reader-overlay.js"), "utf8");
+  const overlay = fs.readFileSync(path.join(root, "apps", "ios", "ReaderExtension", "Resources", "viewer", "viewer.js"), "utf8");
   assert.match(overlay, /reader\.append\(topbar, content, controlbar\)/);
   assert.match(overlay, /context-unit previous/);
   assert.match(overlay, /context-unit next/);
@@ -62,4 +61,5 @@ test("mobile controls keep the primary reading actions at the bottom", () => {
   assert.doesNotMatch(overlay, /\.rsvp-unit\.quote \{[^}]*padding:/s);
   assert.match(overlay, /\.text-view \{[^}]*-webkit-mask-image: linear-gradient\(to bottom, transparent/s);
   assert.match(overlay, /\.text-view \{[^}]*mask-image: linear-gradient\(to bottom, transparent/s);
+  assert.doesNotMatch(overlay, /desktop-viewer|DesktopViewer|記事の構成/);
 });

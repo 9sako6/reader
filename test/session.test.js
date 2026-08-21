@@ -6,7 +6,7 @@ const {
   displayDuration,
   sourceOffsetAtViewportCenter,
   findBlockIndexForOffset,
-} = require("../packages/web-reader/src/session.js");
+} = require("../packages/engine/src/engine.js");
 
 const units = [
   { text: "最初です。", start: 0, end: 5, sentenceIndex: 0 },

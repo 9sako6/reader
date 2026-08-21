@@ -2,16 +2,8 @@
   if (globalThis.__rsvpReaderInstalled) return;
   globalThis.__rsvpReaderInstalled = true;
 
-  const BASE_UNIT_MS = 180;
-  const MS_PER_GRAPHEME = 24;
-  const MIN_UNIT_MS = 240;
-  const MAX_UNIT_MS = 600;
-  const CLAUSE_PAUSE_MS = 120;
-  const SENTENCE_PAUSE_MS = 360;
-  const SECTION_PAUSE_MS = 240;
   const ROOT_ID = "__rsvp-reader-root";
   const DISPLAY_FONT_SIZE = "clamp(36px, 4.5vw, 64px)";
-  const graphemeSegmenter = new Intl.Segmenter("ja", { granularity: "grapheme" });
 
   let units = [];
   let currentUnitIndex = 0;
@@ -35,6 +27,9 @@
   let figurePanel = null;
   let readerMain = null;
   let readerControls = null;
+  let sourceText = "";
+  let blocks = [];
+  let currentOffset = 0;
 
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "SHOW_RSVP_LOADING" && typeof message.requestId === "string") {
@@ -63,7 +58,17 @@
 
     stopTimer();
 
-    const readingContext = suppliedReadingContext || collectReadingContext(text);
+    const content = globalThis.Extractor.fromText(
+      text,
+      suppliedReadingContext || collectReadingContext(text),
+    );
+    if (!content) {
+      close();
+      return;
+    }
+    const readingContext = content.readingContext;
+    sourceText = content.text;
+    blocks = Array.isArray(readingContext.blocks) ? readingContext.blocks : [];
     headings = readingContext.headings;
     sectionTransitions = readingContext.sectionTransitions;
     initialHeadingIndex = readingContext.initialHeadingIndex;
@@ -71,7 +76,7 @@
     nextFigureIndex = 0;
     playbackState = "paused";
 
-    units = globalThis.RsvpCore.segmentText(text, "ja");
+    units = globalThis.Engine.segmentText(content.text, "ja");
     if (units.length === 0) {
       close();
       return;
@@ -309,14 +314,16 @@
 
     const backButton = createButton("1文戻る", goBackOneSentence);
     playPauseButton = createButton("一時停止", togglePlayPause);
+    const modeButton = createButton("文章で読む", showTextView);
     const closeButton = createButton("閉じる", close);
     Object.assign(backButton.style, { width: "92px", flex: "0 0 92px" });
     Object.assign(playPauseButton.style, { width: "92px", flex: "0 0 92px" });
+    Object.assign(modeButton.style, { width: "104px", flex: "0 0 104px" });
     Object.assign(closeButton.style, { width: "92px", flex: "0 0 92px" });
     backButton.setAttribute("aria-keyshortcuts", "ArrowLeft");
     playPauseButton.setAttribute("aria-keyshortcuts", "Space");
 
-    controls.append(backButton, playPauseButton, closeButton);
+    controls.append(backButton, playPauseButton, modeButton, closeButton);
     main.append(display, controls);
     stage.append(main);
     revealReader(stage);
@@ -527,10 +534,159 @@
     return button;
   }
 
+  function showTextView() {
+    if (!root || !sourceText) return;
+    pause();
+    currentOffset = units[currentUnitIndex]?.start ?? currentOffset;
+    clearRenderedView();
+
+    const shell = document.createElement("div");
+    Object.assign(shell.style, {
+      width: "min(900px, calc(100% - 32px))",
+      height: "calc(100% - 32px)",
+      margin: "16px auto",
+      position: "relative",
+      boxSizing: "border-box",
+      border: "1px solid rgba(255,255,255,0.10)",
+      borderRadius: "24px",
+      background: "rgba(24,24,24,0.92)",
+      overflow: "hidden",
+    });
+
+    const scroller = document.createElement("main");
+    Object.assign(scroller.style, {
+      width: "100%",
+      height: "100%",
+      overflowY: "auto",
+      boxSizing: "border-box",
+      padding: "72px clamp(24px, 7vw, 96px) 112px",
+      scrollbarGutter: "stable",
+    });
+    const article = document.createElement("article");
+    Object.assign(article.style, {
+      maxWidth: "42rem",
+      margin: "0 auto",
+      color: "rgba(255,255,255,0.92)",
+      fontSize: "clamp(17px, 1.7vw, 20px)",
+      lineHeight: "1.9",
+      letterSpacing: "0.01em",
+    });
+
+    const readableBlocks = blocks.length > 0 ? blocks : fallbackBlocks(sourceText);
+    const blockElements = readableBlocks.map((block) => createTextBlock(block));
+    article.append(...blockElements);
+    scroller.append(article);
+
+    const controls = document.createElement("div");
+    Object.assign(controls.style, {
+      position: "absolute",
+      top: "16px",
+      right: "16px",
+      zIndex: "1",
+      display: "flex",
+      gap: "6px",
+    });
+    const rsvpButton = createButton("RSVPで読む", showRsvpView);
+    const closeButton = createButton("閉じる", close);
+    controls.append(rsvpButton, closeButton);
+    shell.append(scroller, controls);
+    root.append(shell);
+
+    const updatePosition = () => {
+      const viewportCenter = scroller.getBoundingClientRect().top + scroller.clientHeight / 2;
+      const measurements = blockElements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          top: rect.top,
+          bottom: rect.bottom,
+          start: Number(element.dataset.sourceStart),
+          end: Number(element.dataset.sourceEnd),
+        };
+      });
+      currentOffset = globalThis.Engine.sourceOffsetAtViewportCenter(measurements, viewportCenter);
+      currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentOffset);
+    };
+    scroller.addEventListener("scroll", updatePosition, { passive: true });
+    globalThis.requestAnimationFrame?.(() => restoreTextPosition(scroller, blockElements, readableBlocks));
+  }
+
+  function showRsvpView() {
+    if (!root || units.length === 0) return;
+    currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentOffset);
+    clearRenderedView();
+    createOverlay();
+    renderCurrentUnit();
+    play();
+  }
+
+  function clearRenderedView() {
+    document.removeEventListener("keydown", handleKeyDown);
+    displayResizeObserver?.disconnect();
+    displayResizeObserver = null;
+    root.replaceChildren(rootStyle);
+    display = null;
+    playPauseButton = null;
+    headingNodes = [];
+    progressLabel = null;
+    progressBar = null;
+    readerMain = null;
+    readerControls = null;
+  }
+
+  function fallbackBlocks(text) {
+    const result = [];
+    let searchFrom = 0;
+    for (const rawValue of text.split(/\n\s*\n|\n(?=\s*[\p{L}\p{N}「『（(])/u)) {
+      const value = rawValue.trim();
+      if (!value) continue;
+      const start = text.indexOf(value, searchFrom);
+      result.push({ text: value, kind: "paragraph", level: null, start, end: start + value.length });
+      searchFrom = start + value.length;
+    }
+    return result;
+  }
+
+  function createTextBlock(block) {
+    let tagName = "p";
+    if (block.kind === "heading") tagName = `h${Math.min(6, Math.max(1, block.level || 2))}`;
+    if (block.kind === "quote") tagName = "blockquote";
+    if (block.kind === "preformatted") tagName = "pre";
+    const element = document.createElement(tagName);
+    element.textContent = block.text;
+    element.dataset.sourceStart = String(block.start ?? 0);
+    element.dataset.sourceEnd = String(block.end ?? (block.start ?? 0) + block.text.length);
+    Object.assign(element.style, {
+      margin: tagName === "p" ? "0 0 1.45em" : "1.8em 0 0.8em",
+      whiteSpace: tagName === "pre" ? "pre-wrap" : "pre-line",
+      overflowWrap: "anywhere",
+    });
+    if (tagName === "blockquote") {
+      Object.assign(element.style, {
+        paddingLeft: "1em",
+        borderLeft: "2px solid rgba(255,255,255,0.28)",
+        color: "rgba(255,255,255,0.68)",
+      });
+    }
+    return element;
+  }
+
+  function restoreTextPosition(scroller, blockElements, readableBlocks) {
+    const blockIndex = globalThis.Engine.findBlockIndexForOffset(readableBlocks, currentOffset);
+    const target = blockElements[blockIndex];
+    if (!target) return;
+    const targetRect = target.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    const block = readableBlocks[blockIndex];
+    const ratio = block.end > block.start ? (currentOffset - block.start) / (block.end - block.start) : 0;
+    const targetY = targetRect.top - scrollerRect.top + scroller.scrollTop + targetRect.height * Math.min(1, Math.max(0, ratio));
+    scroller.scrollTop = Math.max(0, targetY - scroller.clientHeight / 2);
+  }
+
   function renderCurrentUnit() {
     if (!display || units.length === 0) return;
 
     const unit = units[currentUnitIndex];
+    currentOffset = unit.start;
     display.textContent = unit.text;
     fitDisplayText();
     applyUnitStyle(unit.kind);
@@ -597,13 +753,13 @@
   function updateMinimap(currentOffset, currentEnd) {
     if (headingNodes.length === 0) return;
 
-    const activeHeadingIndex = globalThis.RsvpCore.findActiveHeadingIndex(
+    const activeHeadingIndex = globalThis.Engine.findActiveHeadingIndex(
       sectionTransitions,
       currentOffset,
       initialHeadingIndex,
     );
 
-    const progress = globalThis.RsvpCore.calculateReadingProgress(
+    const progress = globalThis.Engine.calculateReadingProgress(
       currentEnd,
       units[units.length - 1]?.end || 0,
     );
@@ -644,27 +800,16 @@
       currentUnitIndex += 1;
       renderCurrentUnit();
       scheduleNext();
-    }, displayDuration(units[currentUnitIndex], units[currentUnitIndex + 1]));
-  }
-
-  function displayDuration(unit, nextUnit) {
-    const graphemeCount = [...graphemeSegmenter.segment(unit.text)].length;
-    let duration = Math.min(
-      MAX_UNIT_MS,
-      Math.max(MIN_UNIT_MS, BASE_UNIT_MS + graphemeCount * MS_PER_GRAPHEME),
-    );
-    if (/[、，;；:：]$/u.test(unit.text)) duration += CLAUSE_PAUSE_MS;
-    if (nextUnit?.sentenceIndex !== undefined && nextUnit.sentenceIndex !== unit.sentenceIndex) {
-      duration += SENTENCE_PAUSE_MS;
-    }
-    if (nextUnit && activeHeadingAt(unit.start) !== activeHeadingAt(nextUnit.start)) {
-      duration += SECTION_PAUSE_MS;
-    }
-    return duration;
+    }, globalThis.Engine.displayDuration(
+      units[currentUnitIndex],
+      units[currentUnitIndex + 1],
+      Boolean(units[currentUnitIndex + 1])
+        && activeHeadingAt(units[currentUnitIndex].start) !== activeHeadingAt(units[currentUnitIndex + 1].start),
+    ));
   }
 
   function activeHeadingAt(offset) {
-    return globalThis.RsvpCore.findActiveHeadingIndex(
+    return globalThis.Engine.findActiveHeadingIndex(
       sectionTransitions,
       offset,
       initialHeadingIndex,
@@ -848,7 +993,7 @@
   function goBackOneSentence() {
     if (units.length === 0) return;
     dismissFigurePanel();
-    currentUnitIndex = globalThis.RsvpCore.findPreviousSentenceStart(units, currentUnitIndex);
+    currentUnitIndex = globalThis.Engine.findPreviousSentenceStart(units, currentUnitIndex);
     syncNextFigureIndex();
     renderCurrentUnit();
     if (playbackState === "playing") scheduleNext();
@@ -949,5 +1094,8 @@
     figures = [];
     nextFigureIndex = 0;
     playbackState = "idle";
+    sourceText = "";
+    blocks = [];
+    currentOffset = 0;
   }
 })();

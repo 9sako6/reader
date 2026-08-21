@@ -1,6 +1,6 @@
 # Reader
 
-Safariで表示している文章を、そのページ上で通常表示またはRSVPへ切り替えるReaderです。本文、URL、読書位置は保存しません。
+SafariまたはChromeで表示している文章を、通常表示またはRSVPへ切り替えるReaderです。本文、URL、読書位置は保存しません。
 
 ## 開発
 
@@ -9,6 +9,12 @@ JavaScriptのテストと静的検査を実行します。
 ```sh
 npm test
 npm run check
+```
+
+Chrome拡張の配布用ファイルを生成します。
+
+```sh
+npm run build:chrome
 ```
 
 iOSプロジェクトを再生成する場合はXcodeGenを使います。生成済みのプロジェクトを使うだけならXcodeGenは不要です。
@@ -30,9 +36,18 @@ xcodegen generate --spec apps/ios/project.yml
 
 開発中の変更を実機へ反映するときは、アプリのコピーだけでなくXcodeのProduct > Runを使います。完了後、対象のSafariページを再読み込みします。
 
+## Chromeで試す
+
+1. `npm run build:chrome`を実行する
+2. `chrome://extensions`を開く
+3. デベロッパーモードを有効にする
+4. 「パッケージ化されていない拡張機能を読み込む」から`apps/chrome/dist`を選ぶ
+5. 読みたい文章を選択してコンテキストメニューの「RSVPで読む」を選ぶか、拡張機能のアイコンを押す
+
 ## 構成
 
-- `apps/ios`: iOSホストアプリとSafari Web Extension
-- `packages/reader-core`: 入力元に依存しないRSVP分割
-- `packages/web-reader`: Web本文抽出、セッション計算、Reader表示
+- `apps/chrome`: Chrome拡張とDesktop Viewer
+- `apps/ios`: iOSホストアプリ、Safari Web Extension、Mobile Viewer
+- `packages/extractor`: ページまたは文字列から共通のContentを生成
+- `packages/engine`: 入力元と表示先に依存しない文章分割、表示時間、読書位置の計算
 - `vendor/defuddle`: 固定したDefuddleブラウザバンドル

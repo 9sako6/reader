@@ -35,17 +35,15 @@ targets:
           - Resources
       - path: ReaderExtension/Resources/manifest.json
         buildPhase: resources
-      - path: ../../packages/reader-core/src/core.js
+      - path: ../../packages/engine/src/engine.js
         buildPhase: resources
-      - path: ../../packages/web-reader/src/page-extractor.js
+      - path: ../../packages/extractor/src/extractor.js
         buildPhase: resources
-      - path: ../../packages/web-reader/src/session.js
+      - path: ReaderExtension/Resources/viewer/icons.js
         buildPhase: resources
-      - path: ../../packages/web-reader/src/icons.js
+      - path: ReaderExtension/Resources/viewer/viewer.js
         buildPhase: resources
-      - path: ../../packages/web-reader/src/reader-overlay.js
-        buildPhase: resources
-      - path: ../../packages/web-reader/src/bootstrap.js
+      - path: ReaderExtension/Resources/viewer/bootstrap.js
         buildPhase: resources
       - path: ../../vendor/defuddle/defuddle.js
         buildPhase: resources

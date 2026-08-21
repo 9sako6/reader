@@ -9,11 +9,10 @@
       "matches": ["<all_urls>"],
       "js": [
         "defuddle.js",
-        "core.js",
-        "page-extractor.js",
-        "session.js",
+        "engine.js",
+        "extractor.js",
         "icons.js",
-        "reader-overlay.js",
+        "viewer.js",
         "bootstrap.js"
       ],
       "run_at": "document_idle"

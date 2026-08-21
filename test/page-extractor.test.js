@@ -3,7 +3,23 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const { extractPage } = require("../packages/web-reader/src/page-extractor.js");
+const { fromPage: extractPage, fromText } = require("../packages/extractor/src/extractor.js");
+
+test("fromText produces the same Content contract as page extraction", () => {
+  assert.deepEqual(fromText("  選択した文章  "), {
+    text: "選択した文章",
+    readingContext: {
+      title: "",
+      blocks: [],
+      headings: [],
+      sectionOffsets: [],
+      sectionTransitions: [],
+      initialHeadingIndex: -1,
+      figures: [],
+    },
+  });
+  assert.equal(fromText("  "), null);
+});
 
 test("vendored Defuddle bundle exposes its browser constructor", () => {
   const context = {};
@@ -80,12 +96,22 @@ test("extractPage returns article text and heading offsets", () => {
         { text: "記事タイトル", kind: "heading", level: 1, start: 0, end: 6 },
         { text: "次の節", kind: "heading", level: 2, start: 13, end: 16 },
       ],
+      headings: [
+        { text: "記事タイトル", level: 1 },
+        { text: "次の節", level: 2 },
+      ],
+      sectionTransitions: [
+        { offset: 0, headingIndex: 0 },
+        { offset: 13, headingIndex: 1 },
+      ],
+      initialHeadingIndex: -1,
+      figures: [],
     },
   });
   assert.equal(defuddleOptions.useAsync, false);
   assert.equal(defuddleOptions.removeExactSelectors, true);
   assert.equal(defuddleOptions.removeLowScoring, true);
-  assert.equal(defuddleOptions.removeImages, true);
+  assert.equal(defuddleOptions.removeImages, false);
   assert.equal(readerOverlayRemoved, true);
 });
 

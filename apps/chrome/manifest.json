@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "RSVP Reader",
+  "name": "Reader",
   "version": "0.2.0",
-  "description": "Read selected Japanese text with a fixed-gaze RSVP overlay.",
+  "description": "表示中または選択した文章を通常表示またはRSVPで読みやすくします。",
   "permissions": ["contextMenus", "activeTab", "scripting"],
   "action": {
-    "default_title": "ページ全体をRSVPで読む"
+    "default_title": "ページをReaderで読む"
   },
   "background": {
     "service_worker": "service-worker.js"

@@ -4,7 +4,8 @@
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "test": "node --test",
-    "check": "node --check packages/reader-core/src/core.js && node --check packages/web-reader/src/page-extractor.js && node --check packages/web-reader/src/session.js && node --check packages/web-reader/src/icons.js && node --check packages/web-reader/src/reader-overlay.js && node --check packages/web-reader/src/bootstrap.js"
+    "build:chrome": "node scripts/build-chrome.js",
+    "test": "npm run build:chrome && node --test",
+    "check": "node --check packages/engine/src/engine.js && node --check packages/extractor/src/extractor.js && node --check apps/chrome/src/service-worker.js && node --check apps/chrome/src/viewer/viewer.js && node --check apps/ios/ReaderExtension/Resources/viewer/icons.js && node --check apps/ios/ReaderExtension/Resources/viewer/viewer.js && node --check apps/ios/ReaderExtension/Resources/viewer/bootstrap.js"
   }
 }

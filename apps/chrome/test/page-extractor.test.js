@@ -3,13 +3,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const { extractPage } = require("../page-extractor.js");
+const { fromPage: extractPage } = require("../../../packages/extractor/src/extractor.js");
 
 test("vendored Defuddle bundle exposes its browser constructor", () => {
   const context = {};
   context.self = context;
   const source = fs.readFileSync(
-    path.join(__dirname, "..", "vendor", "defuddle", "defuddle.js"),
+    path.join(__dirname, "..", "..", "..", "vendor", "defuddle", "defuddle.js"),
     "utf8",
   );
   vm.runInNewContext(source, context);
@@ -74,10 +74,16 @@ test("extractPage returns article text and heading offsets", () => {
   assert.deepEqual(extractPage(document, FakeDefuddle), {
     text: "記事タイトル\n本文です。\n次の節\n続きです。",
     readingContext: {
+      title: "記事タイトル",
+      blocks: [
+        { text: "記事タイトル", kind: "heading", level: 1, start: 0, end: 6 },
+        { text: "次の節", kind: "heading", level: 2, start: 13, end: 16 },
+      ],
       headings: [
         { text: "記事タイトル", level: 1 },
         { text: "次の節", level: 2 },
       ],
+      sectionOffsets: [0, 13],
       sectionTransitions: [
         { offset: 0, headingIndex: 0 },
         { offset: 13, headingIndex: 1 },

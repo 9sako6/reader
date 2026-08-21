@@ -1,8 +1,8 @@
-(function installReaderIcons(root, factory) {
+(function installMobileIcons(root, factory) {
   const api = factory();
   if (typeof module !== "undefined" && module.exports) module.exports = api;
-  if (!root.ReaderIcons) root.ReaderIcons = api;
-})(typeof globalThis !== "undefined" ? globalThis : this, function createReaderIcons() {
+  if (!root.MobileIcons) root.MobileIcons = api;
+})(typeof globalThis !== "undefined" ? globalThis : this, function createMobileIcons() {
   const namespace = "http://www.w3.org/2000/svg";
   const icons = {
     previous: [

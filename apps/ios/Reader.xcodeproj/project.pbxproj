@@ -7,18 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		274720B14186541D02F59926 /* page-extractor.js in Resources */ = {isa = PBXBuildFile; fileRef = DBCE3FD66B06DD05FD21F94C /* page-extractor.js */; };
+		128811F958624CF1C922E66A /* icons.js in Resources */ = {isa = PBXBuildFile; fileRef = 124ACD94EBACFE6991EC68FB /* icons.js */; };
 		3572911CFCFF3FBBB63D3C51 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E3F6E82F9DA89FFF87A42CC /* ContentView.swift */; };
 		3A4950F747626DF94B3CCBA5 /* ReaderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D915215DC3C02C3114BBA33 /* ReaderApp.swift */; };
-		59A97F906C6ADCD597A19ABE /* icons.js in Resources */ = {isa = PBXBuildFile; fileRef = 0156D192ACB8A1ED40C4B11C /* icons.js */; };
-		79C666F41BF8361934988DFB /* bootstrap.js in Resources */ = {isa = PBXBuildFile; fileRef = 8E9899E283676E94F7A4C1BF /* bootstrap.js */; };
 		79DC250315897C41FC59A4D8 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 52ADC7E2184B6EB0A742A7D6 /* manifest.json */; };
+		7CD68CFB5F8A168A93E98123 /* viewer.js in Resources */ = {isa = PBXBuildFile; fileRef = AF4E94E0A1582D1AE049A3EC /* viewer.js */; };
+		A48156D63B8BD22043E716E2 /* engine.js in Resources */ = {isa = PBXBuildFile; fileRef = BDB1F55E085EBC10D66C13E6 /* engine.js */; };
 		A9BB56EA38BAE04857D9861D /* defuddle.js in Resources */ = {isa = PBXBuildFile; fileRef = 64F63826C4627E36ADAA26D8 /* defuddle.js */; };
-		ABF8BF444F2A99D574DC44EC /* core.js in Resources */ = {isa = PBXBuildFile; fileRef = C1E3AB7AE5AFB046239561BF /* core.js */; };
 		ACCC6792E189B4A2E2B4ED39 /* ReaderExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 57DFDD0176E47D6239FC9A89 /* ReaderExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		B33274B7454B6A5C25567EB6 /* session.js in Resources */ = {isa = PBXBuildFile; fileRef = 0BC535FB8BA66D6AC24118B2 /* session.js */; };
 		C5D84D7C3C898630E3695E5D /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 563D99132DADB6D2680AF42C /* SafariWebExtensionHandler.swift */; };
-		FDAC9155FA290A35EE63DEDB /* reader-overlay.js in Resources */ = {isa = PBXBuildFile; fileRef = B84153609ED7495D879B1B58 /* reader-overlay.js */; };
+		D40186AAD7A58C655883A0F6 /* bootstrap.js in Resources */ = {isa = PBXBuildFile; fileRef = F3456E750AFB31334575307B /* bootstrap.js */; };
+		FC4C5DBF2DFBDA0AC58ACA20 /* extractor.js in Resources */ = {isa = PBXBuildFile; fileRef = 6135B5025D8DC03B1AF1ECB9 /* extractor.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -46,35 +45,30 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		0156D192ACB8A1ED40C4B11C /* icons.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = icons.js; sourceTree = "<group>"; };
-		0BC535FB8BA66D6AC24118B2 /* session.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = session.js; sourceTree = "<group>"; };
+		124ACD94EBACFE6991EC68FB /* icons.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = icons.js; sourceTree = "<group>"; };
 		1E3F6E82F9DA89FFF87A42CC /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		4B5B7ABCDD4118F1C0A3497E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		52ADC7E2184B6EB0A742A7D6 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 		563D99132DADB6D2680AF42C /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
 		57DFDD0176E47D6239FC9A89 /* ReaderExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ReaderExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		6135B5025D8DC03B1AF1ECB9 /* extractor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = extractor.js; sourceTree = "<group>"; };
 		64F63826C4627E36ADAA26D8 /* defuddle.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = defuddle.js; sourceTree = "<group>"; };
 		7D1BE4C99722DBE37CC537AA /* Reader.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7D915215DC3C02C3114BBA33 /* ReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderApp.swift; sourceTree = "<group>"; };
-		8E9899E283676E94F7A4C1BF /* bootstrap.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = bootstrap.js; sourceTree = "<group>"; };
-		B84153609ED7495D879B1B58 /* reader-overlay.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "reader-overlay.js"; sourceTree = "<group>"; };
-		C1E3AB7AE5AFB046239561BF /* core.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = core.js; sourceTree = "<group>"; };
+		AF4E94E0A1582D1AE049A3EC /* viewer.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = viewer.js; sourceTree = "<group>"; };
+		BDB1F55E085EBC10D66C13E6 /* engine.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = engine.js; sourceTree = "<group>"; };
 		D60E267CE32F445F8FAF02E2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		DBCE3FD66B06DD05FD21F94C /* page-extractor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "page-extractor.js"; sourceTree = "<group>"; };
+		F3456E750AFB31334575307B /* bootstrap.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = bootstrap.js; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
 		3FC116609B3DDA2D0644A4E6 /* src */ = {
 			isa = PBXGroup;
 			children = (
-				8E9899E283676E94F7A4C1BF /* bootstrap.js */,
-				0156D192ACB8A1ED40C4B11C /* icons.js */,
-				DBCE3FD66B06DD05FD21F94C /* page-extractor.js */,
-				B84153609ED7495D879B1B58 /* reader-overlay.js */,
-				0BC535FB8BA66D6AC24118B2 /* session.js */,
+				6135B5025D8DC03B1AF1ECB9 /* extractor.js */,
 			);
 			name = src;
-			path = "../../packages/web-reader/src";
+			path = ../../packages/extractor/src;
 			sourceTree = "<group>";
 		};
 		5853D0C5A70868B58D033182 /* ReaderExtension */ = {
@@ -84,6 +78,17 @@
 				563D99132DADB6D2680AF42C /* SafariWebExtensionHandler.swift */,
 			);
 			path = ReaderExtension;
+			sourceTree = "<group>";
+		};
+		5DECC58269D69D82581B122B /* viewer */ = {
+			isa = PBXGroup;
+			children = (
+				F3456E750AFB31334575307B /* bootstrap.js */,
+				124ACD94EBACFE6991EC68FB /* icons.js */,
+				AF4E94E0A1582D1AE049A3EC /* viewer.js */,
+			);
+			name = viewer;
+			path = ReaderExtension/Resources/viewer;
 			sourceTree = "<group>";
 		};
 		73B2DB732908507A0C3B3243 /* Resources */ = {
@@ -104,6 +109,7 @@
 				73B2DB732908507A0C3B3243 /* Resources */,
 				E78A6F0394E68277EA7319C4 /* src */,
 				3FC116609B3DDA2D0644A4E6 /* src */,
+				5DECC58269D69D82581B122B /* viewer */,
 				A97F85522AF62C54C5BF2D39 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -139,10 +145,10 @@
 		E78A6F0394E68277EA7319C4 /* src */ = {
 			isa = PBXGroup;
 			children = (
-				C1E3AB7AE5AFB046239561BF /* core.js */,
+				BDB1F55E085EBC10D66C13E6 /* engine.js */,
 			);
 			name = src;
-			path = "../../packages/reader-core/src";
+			path = ../../packages/engine/src;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -227,14 +233,13 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				79C666F41BF8361934988DFB /* bootstrap.js in Resources */,
-				ABF8BF444F2A99D574DC44EC /* core.js in Resources */,
+				D40186AAD7A58C655883A0F6 /* bootstrap.js in Resources */,
 				A9BB56EA38BAE04857D9861D /* defuddle.js in Resources */,
-				59A97F906C6ADCD597A19ABE /* icons.js in Resources */,
+				A48156D63B8BD22043E716E2 /* engine.js in Resources */,
+				FC4C5DBF2DFBDA0AC58ACA20 /* extractor.js in Resources */,
+				128811F958624CF1C922E66A /* icons.js in Resources */,
 				79DC250315897C41FC59A4D8 /* manifest.json in Resources */,
-				274720B14186541D02F59926 /* page-extractor.js in Resources */,
-				FDAC9155FA290A35EE63DEDB /* reader-overlay.js in Resources */,
-				B33274B7454B6A5C25567EB6 /* session.js in Resources */,
+				7CD68CFB5F8A168A93E98123 /* viewer.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

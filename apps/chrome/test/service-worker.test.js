@@ -61,7 +61,7 @@ test("service worker registers selection and whole-page entry points", async () 
       },
     },
   };
-  const source = fs.readFileSync(path.join(__dirname, "..", "service-worker.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "service-worker.js"), "utf8");
   assert.doesNotMatch(source, /KAGOME|Kagome|kagome|WebAssembly|wasm/);
   assert.doesNotMatch(source, /PREPARE_RSVP/);
 
@@ -84,7 +84,7 @@ test("service worker registers selection and whole-page entry points", async () 
   while (!finishExtraction) await Promise.resolve();
   assert.equal(
     scriptCalls[0].files.join(","),
-    "core.js,reader.js",
+    "engine.js,extractor.js,viewer.js",
   );
   assert.equal(messages[0].tabId, 7);
   assert.equal(messages[0].message.type, "SHOW_RSVP_LOADING");
@@ -93,7 +93,7 @@ test("service worker registers selection and whole-page entry points", async () 
   await actionPromise;
   assert.equal(
     scriptCalls[1].files.join(","),
-    "vendor/defuddle/defuddle.js,page-extractor.js",
+    "vendor/defuddle/defuddle.js,extractor.js",
   );
   assert.equal(messages[0].tabId, 7);
   assert.equal(messages[1].message.type, "START_RSVP");

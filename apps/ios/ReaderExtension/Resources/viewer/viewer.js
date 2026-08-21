@@ -1,7 +1,7 @@
-(function installReaderOverlay(root, factory) {
-  if (root.ReaderOverlay) return;
-  root.ReaderOverlay = factory(root);
-})(typeof globalThis !== "undefined" ? globalThis : this, function createReaderOverlay(global) {
+(function installMobileViewer(root, factory) {
+  if (root.MobileViewer) return;
+  root.MobileViewer = factory(root);
+})(typeof globalThis !== "undefined" ? globalThis : this, function createMobileViewer(global) {
   const HOST_ID = "__reader-host";
   const RSVP_FONT_SIZE = 40;
   let host;
@@ -12,7 +12,7 @@
   let sourceScrollY = 0;
   let sourceOverflow = null;
   let sourceBodyOverflow = null;
-  let article = null;
+  let content = null;
   let units = [];
   let unitIndex = 0;
   let currentOffset = 0;
@@ -114,8 +114,8 @@
     showLoading();
     await nextPaint();
     try {
-      article = global.RsvpPageExtractor.extractPage(global.document, global.Defuddle);
-      if (!article?.text) throw new Error("article_not_found");
+      content = global.Extractor.fromPage(global.document, global.Defuddle);
+      if (!content?.text) throw new Error("content_not_found");
       rebuildUnits();
       if (units.length === 0) throw new Error("units_not_found");
       unitIndex = 0;
@@ -154,7 +154,7 @@
     const button = global.document.createElement("button");
     button.className = "icon-button";
     button.type = "button";
-    button.append(global.ReaderIcons.create(global.document, icon, 24));
+    button.append(global.MobileIcons.create(global.document, icon, 24));
     button.setAttribute("aria-label", accessibilityLabel);
     button.addEventListener("click", action);
     return button;
@@ -203,15 +203,15 @@
     scroller.className = "text-view";
     const articleNode = global.document.createElement("article");
     articleNode.className = "article";
-    const blocks = article.readingContext?.blocks || [];
-    const title = article.readingContext?.title || global.document.title || "";
+    const blocks = content.readingContext?.blocks || [];
+    const title = content.readingContext?.title || global.document.title || "";
     if (title && blocks[0]?.text !== title) {
       const heading = global.document.createElement("h1");
       heading.className = "article-title";
       heading.textContent = title;
       articleNode.append(heading);
     }
-    const readableBlocks = blocks.length > 0 ? blocks : fallbackBlocks(article.text);
+    const readableBlocks = blocks.length > 0 ? blocks : fallbackBlocks(content.text);
     const blockElements = [];
     for (const block of readableBlocks) {
       const element = createArticleBlock(block);
@@ -268,12 +268,12 @@
         end: Number(element.dataset.sourceEnd),
       };
     });
-    currentOffset = global.ReaderSession.sourceOffsetAtViewportCenter(measurements, viewportCenter);
-    progress.textContent = `${global.RsvpCore.calculateReadingProgress(currentOffset, article.text.length)}%`;
+    currentOffset = global.Engine.sourceOffsetAtViewportCenter(measurements, viewportCenter);
+    progress.textContent = `${global.Engine.calculateReadingProgress(currentOffset, content.text.length)}%`;
   }
 
   function restoreTextPosition(scroller, blockElements, readableBlocks) {
-    const blockIndex = global.ReaderSession.findBlockIndexForOffset(readableBlocks, currentOffset);
+    const blockIndex = global.Engine.findBlockIndexForOffset(readableBlocks, currentOffset);
     const target = blockElements[blockIndex];
     if (!target) return;
     const targetRect = target.getBoundingClientRect();
@@ -323,11 +323,11 @@
     const previous = transportButton("", previousSentence);
     previous.className = "dock-button previous";
     previous.setAttribute("aria-label", "1文戻る");
-    previous.append(global.ReaderIcons.create(global.document, "previous", 34));
+    previous.append(global.MobileIcons.create(global.document, "previous", 34));
     const playButton = transportButton("", togglePlayback);
     playButton.className = "dock-button play";
     playButton.setAttribute("aria-label", "再生");
-    playButton.append(global.ReaderIcons.create(global.document, "play", 34));
+    playButton.append(global.MobileIcons.create(global.document, "play", 34));
     dock.append(previous, playButton);
     nodes.controlbar.replaceChildren(dock, nodes.progress);
     nodes.play = playButton;
@@ -353,7 +353,7 @@
     nodes.unit.textContent = value.text;
     nodes.unit.className = `rsvp-unit ${value.kind || "body"}`;
     if (contextSentenceIndex !== value.sentenceIndex) {
-      const context = global.ReaderSession.surroundingSentences(units, unitIndex);
+      const context = global.Engine.surroundingSentences(units, unitIndex);
       nodes.previousUnit.textContent = context.previous;
       nodes.nextUnit.textContent = context.next;
       contextSentenceIndex = value.sentenceIndex;
@@ -361,7 +361,7 @@
       fadeContext(nodes.nextUnit);
     }
     currentOffset = value.start;
-    nodes.progress.textContent = `${global.RsvpCore.calculateReadingProgress(value.end, article.text.length)}%`;
+    nodes.progress.textContent = `${global.Engine.calculateReadingProgress(value.end, content.text.length)}%`;
     updatePlayButton();
   }
 
@@ -372,17 +372,17 @@
 
   function switchMode(nextMode) {
     if (nextMode === mode) return;
-    if (nextMode === "rsvp") unitIndex = global.ReaderSession.findUnitIndex(units, currentOffset);
+    if (nextMode === "rsvp") unitIndex = global.Engine.findUnitIndex(units, currentOffset);
     mode = nextMode;
     renderReader();
   }
 
   function rebuildUnits() {
-    if (!article?.text) return;
+    if (!content?.text) return;
     const locale = global.document.documentElement.lang || "ja";
-    const segmented = global.RsvpCore.segmentText(article.text, locale);
-    units = global.RsvpCore.splitLongUnits(segmented, locale, maxGraphemesForViewport());
-    unitIndex = global.ReaderSession.findUnitIndex(units, currentOffset);
+    const segmented = global.Engine.segmentText(content.text, locale);
+    units = global.Engine.splitLongUnits(segmented, locale, maxGraphemesForViewport());
+    unitIndex = global.Engine.findUnitIndex(units, currentOffset);
   }
 
   function maxGraphemesForViewport() {
@@ -391,7 +391,7 @@
   }
 
   function handleViewportChange() {
-    if (!overlay || !article) return;
+    if (!overlay || !content) return;
     rebuildUnits();
     if (mode === "rsvp") renderUnit();
   }
@@ -419,7 +419,7 @@
     if (!nodes.play) return;
     const state = playing ? "pause" : "play";
     if (nodes.play.dataset.state !== state) {
-      nodes.play.replaceChildren(global.ReaderIcons.create(global.document, state, state === "pause" ? 30 : 34));
+      nodes.play.replaceChildren(global.MobileIcons.create(global.document, state, state === "pause" ? 30 : 34));
       nodes.play.dataset.state = state;
     }
     nodes.play.setAttribute("aria-label", playing ? "一時停止" : "再生");
@@ -436,7 +436,7 @@
       unitIndex += 1;
       renderUnit();
       scheduleNext();
-    }, global.ReaderSession.displayDuration(
+    }, global.Engine.displayDuration(
       units[unitIndex],
       units[unitIndex + 1],
       crossesSectionBoundary(units[unitIndex], units[unitIndex + 1]),
@@ -445,13 +445,13 @@
 
   function crossesSectionBoundary(unit, nextUnit) {
     if (!unit || !nextUnit) return false;
-    const offsets = article?.readingContext?.sectionOffsets || [];
+    const offsets = content?.readingContext?.sectionOffsets || [];
     return offsets.some((offset) => offset > unit.start && offset <= nextUnit.start);
   }
 
   function previousSentence() {
     pause();
-    unitIndex = global.RsvpCore.findPreviousSentenceStart(units, unitIndex);
+    unitIndex = global.Engine.findPreviousSentenceStart(units, unitIndex);
     renderUnit();
   }
 
@@ -464,7 +464,7 @@
     pause();
     overlay?.remove();
     overlay = null;
-    article = null;
+    content = null;
     units = [];
     mode = "rsvp";
     nodes = {};

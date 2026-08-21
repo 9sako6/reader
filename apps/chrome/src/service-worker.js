@@ -29,11 +29,11 @@ chrome.action.onClicked.addListener(async (tab) => {
     requestId = await openReader(tab.id);
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ["vendor/defuddle/defuddle.js", "page-extractor.js"],
+      files: ["vendor/defuddle/defuddle.js", "extractor.js"],
     });
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: () => globalThis.RsvpPageExtractor.extractPage(),
+      func: () => globalThis.Extractor.fromPage(),
     });
     if (!result?.text) throw new Error("No readable page content found");
     await sendReaderContent(tab.id, requestId, result.text, result.readingContext);
@@ -58,7 +58,7 @@ async function openReader(tabId) {
   const requestId = `${Date.now()}-${requestSequence += 1}`;
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["core.js", "reader.js"],
+    files: ["engine.js", "extractor.js", "viewer.js"],
   });
   await chrome.tabs.sendMessage(tabId, {
     type: "SHOW_RSVP_LOADING",
