@@ -1,0 +1,9 @@
+{
+  "name": "chrome-rsvp-reader",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test"
+  }
+}
