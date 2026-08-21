@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "reader",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "表示中または選択した文章を通常表示またはRSVPで読みやすくします。",
   "permissions": ["contextMenus", "activeTab", "scripting"],
   "action": {

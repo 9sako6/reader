@@ -18,7 +18,10 @@
   let root: HTMLDivElement | null = null;
   let rootStyle: HTMLStyleElement | null = null;
   let loadingLayer: HTMLDivElement | null = null;
+  let previousContext: HTMLDivElement | null = null;
   let display: HTMLDivElement | null = null;
+  let nextContext: HTMLDivElement | null = null;
+  let contextSentenceIndex: number | null = null;
   let playPauseButton: HTMLButtonElement | null = null;
   let headings: ReaderHeading[] = [];
   let headingNodes: HTMLButtonElement[] = [];
@@ -291,6 +294,8 @@
     });
     readerMain = main;
 
+    previousContext = createContext("previous");
+
     display = document.createElement("div");
     Object.assign(display.style, {
       position: "absolute",
@@ -318,6 +323,9 @@
         ? "none"
         : "color 120ms ease, background-color 120ms ease",
     });
+
+    nextContext = createContext("next");
+    contextSentenceIndex = null;
 
     const controls = document.createElement("div");
     Object.assign(controls.style, {
@@ -350,7 +358,7 @@
     playPauseButton.setAttribute("aria-keyshortcuts", "Space");
 
     controls.append(backButton, playPauseButton, modeButton, closeButton);
-    main.append(display, controls);
+    main.append(previousContext, display, nextContext, controls);
     stage.append(main);
     revealReader(stage);
     document.addEventListener("keydown", handleKeyDown);
@@ -359,6 +367,32 @@
       displayResizeObserver = new globalThis.ResizeObserver(fitDisplayText);
       displayResizeObserver.observe(main);
     }
+  }
+
+  function createContext(position: "previous" | "next"): HTMLDivElement {
+    const element = document.createElement("div");
+    element.setAttribute("aria-hidden", "true");
+    Object.assign(element.style, {
+      position: "absolute",
+      left: "50%",
+      transform: "translateX(-50%)",
+      width: "min(100%, 640px)",
+      maxWidth: "calc(100% - 32px)",
+      display: "-webkit-box",
+      overflow: "hidden",
+      color: "rgba(255,255,255,0.26)",
+      fontSize: "clamp(16px, 1.5vw, 20px)",
+      fontWeight: "550",
+      lineHeight: "1.4",
+      textAlign: "center",
+      opacity: "0.26",
+      WebkitBoxOrient: "vertical",
+      WebkitLineClamp: "2",
+      ...(position === "previous"
+        ? { bottom: "calc(50% + 82px)" }
+        : { top: "calc(50% + 82px)" }),
+    });
+    return element;
   }
 
   function createRoot() {
@@ -652,7 +686,10 @@
     displayResizeObserver?.disconnect();
     displayResizeObserver = null;
     root.replaceChildren(rootStyle);
+    previousContext = null;
     display = null;
+    nextContext = null;
+    contextSentenceIndex = null;
     playPauseButton = null;
     headingNodes = [];
     progressLabel = null;
@@ -717,10 +754,30 @@
     const unit = units[currentUnitIndex];
     if (!unit) return;
     currentOffset = unit.start;
+    if (unit.sentenceIndex !== contextSentenceIndex) {
+      const context = globalThis.Engine.surroundingSentences(units, currentUnitIndex);
+      if (previousContext) {
+        previousContext.textContent = context.previous;
+        fadeContext(previousContext);
+      }
+      if (nextContext) {
+        nextContext.textContent = context.next;
+        fadeContext(nextContext);
+      }
+      contextSentenceIndex = unit.sentenceIndex;
+    }
     display.textContent = unit.text;
     fitDisplayText();
     applyUnitStyle(unit.kind);
     updateMinimap(unit.start, unit.end);
+  }
+
+  function fadeContext(element: HTMLElement): void {
+    if (!element.textContent || prefersReducedMotion()) return;
+    element.animate(
+      [{ opacity: 0.12 }, { opacity: 0.26 }],
+      { duration: 120, easing: "ease-out" },
+    );
   }
 
   function fitDisplayText() {
@@ -1120,7 +1177,10 @@
     root = null;
     rootStyle = null;
     loadingLayer = null;
+    previousContext = null;
     display = null;
+    nextContext = null;
+    contextSentenceIndex = null;
     readerMain = null;
     readerControls = null;
     playPauseButton = null;
