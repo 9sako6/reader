@@ -1,7 +1,11 @@
+export {};
+
 const assert = require("node:assert/strict");
 const { create } = require("../../../.build/packages/icons/src/icons.js");
 
 class Element {
+  [key: string]: any;
+
   constructor(tagName) {
     this.tagName = tagName;
     this.attributes = {};

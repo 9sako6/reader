@@ -1,11 +1,29 @@
+export {};
+
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const { fromPage: extractPage } = require("../../../.build/packages/extractor/src/extractor.js");
+const { fromPage: extractPage, fromText } = require("../../../.build/packages/extractor/src/extractor.js");
+
+test("fromText produces the same Content contract as page extraction", () => {
+  assert.deepEqual(fromText("  選択した文章  "), {
+    text: "選択した文章",
+    readingContext: {
+      title: "",
+      blocks: [],
+      headings: [],
+      sectionOffsets: [],
+      sectionTransitions: [],
+      initialHeadingIndex: -1,
+      figures: [],
+    },
+  });
+  assert.equal(fromText("  "), null);
+});
 
 test("installed Defuddle bundle exposes its browser constructor", () => {
-  const context = {};
+  const context: any = {};
   context.self = context;
   const source = fs.readFileSync(
     path.join(__dirname, "..", "..", "..", "node_modules", "defuddle", "dist", "index.js"),
@@ -74,6 +92,7 @@ test("extractPage returns article text and heading offsets", () => {
     text: "記事タイトル\n本文です。\n次の節\n続きです。",
     readingContext: {
       title: "記事タイトル",
+      sectionOffsets: [0, 13],
       blocks: [
         { text: "記事タイトル", kind: "heading", level: 1, start: 0, end: 6 },
         { text: "次の節", kind: "heading", level: 2, start: 13, end: 16 },
@@ -82,7 +101,6 @@ test("extractPage returns article text and heading offsets", () => {
         { text: "記事タイトル", level: 1 },
         { text: "次の節", level: 2 },
       ],
-      sectionOffsets: [0, 13],
       sectionTransitions: [
         { offset: 0, headingIndex: 0 },
         { offset: 13, headingIndex: 1 },
@@ -136,7 +154,7 @@ test("extractPage keeps every article image at its source offset", () => {
     },
   };
   const rawText = "この結果を図1に示します。\n図1 処理時間\n次の説明です。";
-  const prefixes = new Map([
+  const prefixes = new Map<any, string>([
     [figure, "この結果を図1に示します。\n"],
     [decorativeImage, ""],
   ]);
@@ -185,4 +203,38 @@ test("extractPage keeps every article image at its source offset", () => {
 
 test("extractPage returns no content when the page body is unavailable", () => {
   assert.equal(extractPage({ querySelector() { return null; }, body: null }), null);
+});
+
+test("extractPage does not duplicate blocks nested in quotes or list items", () => {
+  const quote = { tagName: "BLOCKQUOTE", textContent: "引用文" };
+  const paragraph = {
+    tagName: "P",
+    textContent: "引用文",
+    parentElement: { closest() { return quote; } },
+  };
+  const article = {
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector === "h1, h2, h3, h4, h5, h6") return [];
+      return [quote, paragraph];
+    },
+  };
+  const document = {
+    createElement() { return article; },
+    createRange() {
+      let endElement = null;
+      return {
+        selectNodeContents() {},
+        setEndBefore(element) { endElement = element; },
+        toString() { return endElement ? "" : "引用文"; },
+      };
+    },
+  };
+  class FakeDefuddle {
+    parse() { return { content: "<blockquote><p>引用文</p></blockquote>" }; }
+  }
+
+  assert.deepEqual(extractPage(document, FakeDefuddle).readingContext.blocks, [
+    { text: "引用文", kind: "quote", level: null, start: 0, end: 3 },
+  ]);
 });

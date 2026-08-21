@@ -10,8 +10,11 @@ description = "Compile the TypeScript sources"
 run = "pnpm exec tsc -p tsconfig.json"
 
 [tasks.typecheck]
-description = "Type-check the TypeScript sources"
-run = "pnpm exec tsc -p tsconfig.json --noEmit"
+description = "Type-check the TypeScript sources and tests"
+run = [
+  "pnpm exec tsc -p tsconfig.json --noEmit",
+  "pnpm exec tsc -p tsconfig.tests.json",
+]
 
 [tasks."build:chrome"]
 description = "Build the Chrome extension"

@@ -15,5 +15,6 @@
     "packages/**/*.ts",
     "apps/chrome/src/**/*.ts",
     "apps/ios/ReaderExtension/Resources/viewer/**/*.ts"
-  ]
+  ],
+  "exclude": ["**/tests/**"]
 }
