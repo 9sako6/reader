@@ -12,7 +12,6 @@
     "skipLibCheck": true
   },
   "include": [
-    "types/**/*.d.ts",
     "packages/**/*.ts",
     "apps/chrome/src/**/*.ts",
     "apps/ios/ReaderExtension/Resources/viewer/**/*.ts"

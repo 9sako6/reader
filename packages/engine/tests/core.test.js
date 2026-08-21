@@ -1,4 +1,3 @@
-const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
@@ -9,7 +8,7 @@ const {
   findPreviousSentenceStart,
   findActiveHeadingIndex,
   calculateReadingProgress,
-} = require("../.build/packages/engine/src/engine.js");
+} = require("../../../.build/packages/engine/src/engine.js");
 
 function graphemeCount(text, locale = "ja") {
   return [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(text)].length;

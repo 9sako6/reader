@@ -1,6 +1,6 @@
 # Reader
 
-SafariまたはChromeで表示している文章を、通常表示またはRSVPへ切り替えるReaderです。本文、URL、読書位置は保存しません。
+SafariとChromeで、文章表示とRSVPを切り替えて読めるReaderです。
 
 ## 開発
 

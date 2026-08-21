@@ -1,9 +1,8 @@
-const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const { fromPage: extractPage, fromText } = require("../.build/packages/extractor/src/extractor.js");
+const { fromPage: extractPage, fromText } = require("../../../.build/packages/extractor/src/extractor.js");
 
 test("fromText produces the same Content contract as page extraction", () => {
   assert.deepEqual(fromText("  選択した文章  "), {
@@ -25,7 +24,7 @@ test("installed Defuddle bundle exposes its browser constructor", () => {
   const context = {};
   context.self = context;
   const source = fs.readFileSync(
-    path.join(__dirname, "..", "node_modules", "defuddle", "dist", "index.js"),
+    path.join(__dirname, "..", "..", "..", "node_modules", "defuddle", "dist", "index.js"),
     "utf8",
   );
   vm.runInNewContext(source, context);

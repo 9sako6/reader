@@ -11,11 +11,6 @@ declare global {
     close(): void;
   }
 
-  var module: { exports: unknown };
-  var Defuddle: typeof import("defuddle").default;
-  var Engine: ReaderEngine;
-  var Extractor: ReaderExtractor;
   var MobileIcons: ReaderMobileIcons;
   var MobileViewer: ReaderMobileViewer;
-  var __rsvpReaderInstalled: boolean;
 }

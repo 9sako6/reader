@@ -54,4 +54,4 @@ run = [{ task = "typecheck" }]
 [tasks.test]
 description = "Build and test the Reader"
 depends = ["build"]
-run = "node --test"
+run = "pnpm exec vitest run"

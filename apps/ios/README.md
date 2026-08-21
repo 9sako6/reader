@@ -9,7 +9,7 @@ mise run build:ios
 mise exec -- xcodegen generate --spec apps/ios/project.yml
 ```
 
-生成済みの`Reader.xcodeproj`を使うだけならXcodeGenの再実行は不要です。Xcodeビルド時にはSafari拡張のTypeScriptリソースも再生成されます。
+`Reader.xcodeproj`は生成済みです。Xcodeでビルドすると、Safari拡張のTypeScriptリソースも更新されます。
 
 ## iPhoneで試す
 

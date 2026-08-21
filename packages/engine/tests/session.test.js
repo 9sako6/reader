@@ -1,4 +1,3 @@
-const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   findUnitIndex,
@@ -6,7 +5,7 @@ const {
   displayDuration,
   sourceOffsetAtViewportCenter,
   findBlockIndexForOffset,
-} = require("../.build/packages/engine/src/engine.js");
+} = require("../../../.build/packages/engine/src/engine.js");
 
 const units = [
   { text: "最初です。", start: 0, end: 5, sentenceIndex: 0 },

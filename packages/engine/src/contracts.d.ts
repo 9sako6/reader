@@ -38,4 +38,7 @@ declare global {
     sourceOffsetAtViewportCenter(blocks: ReaderOffsetBlock[], viewportCenter: number): number;
     findBlockIndexForOffset(blocks: ReaderOffsetBlock[], offset: number): number;
   }
+
+  var module: { exports: unknown };
+  var Engine: ReaderEngine;
 }

@@ -1,10 +1,9 @@
-const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.join(__dirname, "..");
-const manifestPath = path.join(root, "apps", "ios", "ReaderExtension", "Resources", "manifest.json");
+const manifestPath = path.join(root, "ReaderExtension", "Resources", "manifest.json");
 
 test("Safari extension loads Reader resources in dependency order", () => {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -22,7 +21,7 @@ test("Safari extension loads Reader resources in dependency order", () => {
 });
 
 test("Xcode project embeds every manifest script in the extension", () => {
-  const project = fs.readFileSync(path.join(root, "apps", "ios", "Reader.xcodeproj", "project.pbxproj"), "utf8");
+  const project = fs.readFileSync(path.join(root, "Reader.xcodeproj", "project.pbxproj"), "utf8");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   for (const script of manifest.content_scripts[0].js) {
     assert.match(project, new RegExp(`${script.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} in Resources`));
@@ -31,7 +30,7 @@ test("Xcode project embeds every manifest script in the extension", () => {
 });
 
 test("mobile controls keep the primary reading actions at the bottom", () => {
-  const overlay = fs.readFileSync(path.join(root, "apps", "ios", "ReaderExtension", "Resources", "viewer", "viewer.ts"), "utf8");
+  const overlay = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "viewer", "viewer.ts"), "utf8");
   assert.match(overlay, /reader\.append\(topbar, content, controlbar\)/);
   assert.match(overlay, /context-unit previous/);
   assert.match(overlay, /context-unit next/);

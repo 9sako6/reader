@@ -41,4 +41,8 @@ declare global {
     fromText(text: string, readingContext?: Partial<ReadingContext> | null): ReaderContent | null;
     fromPage(sourceDocument?: Document, DefuddleClass?: typeof import("defuddle").default): ReaderContent | null;
   }
+
+  var module: { exports: unknown };
+  var Defuddle: typeof import("defuddle").default;
+  var Extractor: ReaderExtractor;
 }
