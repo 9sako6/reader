@@ -238,6 +238,14 @@ test("reader shows the article outline beside the focal point", () => {
     overlay,
     (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
   );
+  const previousContext = findElement(
+    overlay,
+    (element) => element.attributes["aria-hidden"] === "true" && element.style.bottom === "calc(50% + 82px)",
+  );
+  const nextContext = findElement(
+    overlay,
+    (element) => element.attributes["aria-hidden"] === "true" && element.style.top === "calc(50% + 82px)",
+  );
 
   assert.equal(stage.style.gridTemplateColumns, "280px minmax(0, 1fr)");
   assert.deepEqual(Array.from(stage.animations[0].keyframes, ({ opacity }) => opacity), [0, 1]);
@@ -257,6 +265,12 @@ test("reader shows the article outline beside the focal point", () => {
   assert.ok(Number.parseFloat(display.style.fontSize) <= 26);
   assert.equal(rangeMeasurementCount, 3);
   assert.equal(display.style.justifyContent, "center");
+  assert.equal(previousContext.textContent, "");
+  assert.equal(nextContext.textContent, "次の節です。");
+  assert.equal(nextContext.style.opacity, "0.26");
+  assert.equal(nextContext.style.WebkitLineClamp, "2");
+  assert.deepEqual(Array.from(nextContext.animations[0].keyframes, ({ opacity }) => opacity), [0.12, 0.26]);
+  assert.equal(nextContext.animations[0].options.duration, 120);
 
   display.clientWidth = 300;
   resizeCallback();
@@ -300,6 +314,8 @@ test("reader shows the article outline beside the focal point", () => {
   timers.clear();
   firstTimer.callback();
   assert.match(display.textContent, /次の節/);
+  assert.equal(previousContext.textContent, "最初の節です。");
+  assert.equal(nextContext.textContent, "");
   document.dispatchEvent({
     type: "keydown",
     code: "ArrowLeft",
@@ -307,6 +323,8 @@ test("reader shows the article outline beside the focal point", () => {
     preventDefault() {},
   });
   assert.match(display.textContent, /最初の節/);
+  assert.equal(previousContext.textContent, "");
+  assert.equal(nextContext.textContent, "次の節です。");
 
   selection.isCollapsed = true;
   const pageReadingContext = {
