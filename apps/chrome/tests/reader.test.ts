@@ -278,6 +278,7 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(transport.style.gridTemplateColumns, "1fr 56px 1fr");
   assert.equal(transport.style.width, "min(100%, 264px)");
   assert.equal(playPauseButton.style.width, "56px");
+  assert.equal(playPauseButton.style.color, "rgba(245,245,247,0.66)");
   assert.equal(backButton.style.width, "52px");
   assert.equal(closeButton.style.width, "44px");
   assert.equal(closeButton.children[0].tagName, "SVG");

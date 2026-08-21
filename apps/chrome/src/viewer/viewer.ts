@@ -397,7 +397,7 @@
       border: "1px solid transparent",
       borderRadius: "14px",
       background: "transparent",
-      color: "rgba(245,245,245,0.72)",
+      color: "rgba(245,245,247,0.66)",
       font: "inherit",
       fontSize: "14px",
       fontWeight: "600",
@@ -407,11 +407,11 @@
       transition: "color 120ms ease, background-color 120ms ease, scale 100ms ease",
     });
     modeButton.addEventListener("pointerenter", () => {
-      modeButton.style.color = "#f5f5f7";
+      modeButton.style.color = "rgba(245,245,247,0.86)";
       modeButton.style.background = "rgba(255,255,255,0.06)";
     });
     modeButton.addEventListener("pointerleave", () => {
-      modeButton.style.color = "rgba(245,245,245,0.72)";
+      modeButton.style.color = "rgba(245,245,247,0.66)";
       modeButton.style.background = "transparent";
       modeButton.style.scale = "1";
     });
@@ -422,7 +422,7 @@
       modeButton.style.scale = "1";
     });
     modeButton.addEventListener("focus", () => {
-      modeButton.style.borderColor = "rgba(255,255,255,0.72)";
+      modeButton.style.borderColor = "rgba(255,255,255,0.52)";
     });
     modeButton.addEventListener("blur", () => {
       modeButton.style.borderColor = "transparent";
@@ -462,7 +462,7 @@
       border: "1px solid transparent",
       borderRadius: "14px",
       background: "transparent",
-      color: "#f5f5f7",
+      color: "rgba(245,245,247,0.66)",
       display: "grid",
       placeItems: "center",
       justifySelf: "center",
@@ -471,9 +471,11 @@
     });
     button.addEventListener("pointerenter", () => {
       button.style.background = "rgba(255,255,255,0.08)";
+      button.style.color = "rgba(245,245,247,0.86)";
     });
     button.addEventListener("pointerleave", () => {
       button.style.background = "transparent";
+      button.style.color = "rgba(245,245,247,0.66)";
       button.style.opacity = "1";
       button.style.scale = "1";
     });
@@ -486,7 +488,7 @@
       button.style.scale = "1";
     });
     button.addEventListener("focus", () => {
-      button.style.borderColor = "rgba(255,255,255,0.72)";
+      button.style.borderColor = "rgba(255,255,255,0.52)";
     });
     button.addEventListener("blur", () => {
       button.style.borderColor = "transparent";
