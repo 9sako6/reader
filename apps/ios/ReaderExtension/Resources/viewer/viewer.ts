@@ -181,7 +181,7 @@
     const button = global.document.createElement("button");
     button.className = "icon-button";
     button.type = "button";
-    button.append(global.MobileIcons.create(global.document, icon, 24));
+    button.append(global.ReaderIcons.create(global.document, icon, 24));
     button.setAttribute("aria-label", accessibilityLabel);
     button.addEventListener("click", action);
     return button;
@@ -354,11 +354,11 @@
     const previous = transportButton("", previousSentence);
     previous.className = "dock-button previous";
     previous.setAttribute("aria-label", "1文戻る");
-    previous.append(global.MobileIcons.create(global.document, "previous", 34));
+    previous.append(global.ReaderIcons.create(global.document, "previous", 34));
     const playButton = transportButton("", togglePlayback);
     playButton.className = "dock-button play";
     playButton.setAttribute("aria-label", "再生");
-    playButton.append(global.MobileIcons.create(global.document, "play", 34));
+    playButton.append(global.ReaderIcons.create(global.document, "play", 34));
     dock.append(previous, playButton);
     getNodes().controlbar.replaceChildren(dock, getNodes().progress);
     getNodes().play = playButton;
@@ -453,7 +453,7 @@
     if (!playButton) return;
     const state = playing ? "pause" : "play";
     if (playButton.dataset.state !== state) {
-      playButton.replaceChildren(global.MobileIcons.create(global.document, state, state === "pause" ? 30 : 34));
+      playButton.replaceChildren(global.ReaderIcons.create(global.document, state, state === "pause" ? 30 : 34));
       playButton.dataset.state = state;
     }
     playButton.setAttribute("aria-label", playing ? "一時停止" : "再生");

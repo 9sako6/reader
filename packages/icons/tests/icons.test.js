@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { create } = require("../../../.build/apps/ios/ReaderExtension/Resources/viewer/icons.js");
+const { create } = require("../../../.build/packages/icons/src/icons.js");
 
 class Element {
   constructor(tagName) {

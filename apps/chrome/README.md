@@ -16,7 +16,7 @@ mise run build:chrome
 - `src/service-worker.ts`: コンテキストメニュー、拡張アイコン、ページ本文抽出の起点
 - `src/viewer/viewer.ts`: Desktop Viewerの表示と操作
 
-`dist/`にはEngine、Extractor、Defuddle、Desktop Viewerが入ります。
+`dist/`にはEngine、Extractor、共通操作アイコン、Defuddle、Desktop Viewerが入ります。
 
 ## リリース
 

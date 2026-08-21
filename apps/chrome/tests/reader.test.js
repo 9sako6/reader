@@ -4,6 +4,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const Engine = require("../../../.build/packages/engine/src/engine.js");
 const Extractor = require("../../../.build/packages/extractor/src/extractor.js");
+const ReaderIcons = require("../../../.build/packages/icons/src/icons.js");
 
 class FakeElement {
   constructor(tagName, textContent = "") {
@@ -11,6 +12,7 @@ class FakeElement {
     this.textContent = textContent;
     this.style = {};
     this.attributes = {};
+    this.dataset = {};
     this.children = [];
     this.parent = null;
     this.clientWidth = 500;
@@ -188,6 +190,7 @@ test("reader shows the article outline beside the focal point", () => {
     },
     Engine,
     Extractor,
+    ReaderIcons,
     Intl,
     console,
     ResizeObserver: class {
@@ -248,12 +251,14 @@ test("reader shows the article outline beside the focal point", () => {
   );
 
   assert.equal(stage.style.gridTemplateColumns, "280px minmax(0, 1fr)");
+  assert.equal(stage.attributes["data-reader-stage"], "true");
   assert.deepEqual(Array.from(stage.animations[0].keyframes, ({ opacity }) => opacity), [0, 1]);
   assert.equal(stage.animations[0].options.duration, 220);
   assert.equal(stage.animations[0].options.easing, "cubic-bezier(0.22, 1, 0.36, 1)");
   assert.equal(stage.style.columnGap, "32px");
   assert.equal(stage.children[0], minimap);
   assert.equal(minimap.style.position, "relative");
+  assert.equal(minimap.attributes["data-reader-minimap"], "true");
   assert.equal(minimap.style.width, "100%");
   assert.equal(outline.children.length, 2);
   assert.equal(outline.children[0].textContent, "記事タイトル");
@@ -278,18 +283,22 @@ test("reader shows the article outline beside the focal point", () => {
   assert.ok(rangeMeasurementCount >= 5);
   assert.equal(display.style.justifyContent, "center");
 
-  const playPauseButton = findElement(overlay, (element) => element.textContent === "一時停止");
-  const backButton = findElement(overlay, (element) => element.textContent === "1文戻る");
-  const closeButton = findElement(overlay, (element) => element.textContent === "閉じる");
-  assert.equal(playPauseButton.style.width, "92px");
-  assert.equal(backButton.style.width, "92px");
-  assert.equal(closeButton.style.width, "92px");
-  assert.equal(closeButton.style.whiteSpace, "nowrap");
-  assert.equal(closeButton.style.boxSizing, "border-box");
-  assert.equal(closeButton.style.display, "inline-flex");
-  assert.equal(closeButton.style.alignItems, "center");
-  assert.equal(closeButton.style.justifyContent, "center");
-  assert.equal(closeButton.style.textAlign, "center");
+  const playPauseButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
+  const backButton = findElement(overlay, (element) => element.attributes["aria-label"] === "1文戻る");
+  const closeButton = findElement(overlay, (element) => element.attributes["aria-label"] === "readerを閉じる");
+  const modeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
+  const transport = playPauseButton.parent;
+  assert.equal(transport.style.gridTemplateColumns, "1fr 56px 1fr");
+  assert.equal(transport.style.width, "min(100%, 264px)");
+  assert.equal(playPauseButton.style.width, "56px");
+  assert.equal(backButton.style.width, "52px");
+  assert.equal(closeButton.style.width, "44px");
+  assert.equal(closeButton.children[0].tagName, "SVG");
+  assert.equal(modeButton.style.minWidth, "112px");
+  assert.equal(modeButton.parent.attributes["data-reader-topbar"], "true");
+  assert.match(source, /@media \(max-width: 1080px\)/);
+  assert.match(source, /\[data-reader-minimap\] \{ display: none !important; \}/);
+  assert.match(source, /@media \(max-width: 720px\)/);
 
   let prevented = false;
   document.dispatchEvent({
@@ -301,8 +310,8 @@ test("reader shows the article outline beside the focal point", () => {
     },
   });
   assert.equal(prevented, true);
-  assert.equal(playPauseButton.textContent, "再生");
-  assert.equal(playPauseButton.style.width, "92px");
+  assert.equal(playPauseButton.attributes["aria-label"], "再生");
+  assert.equal(playPauseButton.style.width, "56px");
 
   document.dispatchEvent({
     type: "keydown",
@@ -359,7 +368,7 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(pageOutline.children[1].style.paddingLeft, "19px");
   assert.equal(pageOutline.children[1].tagName, "BUTTON");
 
-  const pagePlayPauseButton = findElement(pageOverlay, (element) => element.textContent === "一時停止");
+  const pagePlayPauseButton = findElement(pageOverlay, (element) => element.attributes["aria-label"] === "一時停止");
   document.dispatchEvent({
     type: "keydown",
     code: "Space",
@@ -367,9 +376,25 @@ test("reader shows the article outline beside the focal point", () => {
     preventDefault() {},
   });
   pageOutline.children[1].dispatchEvent({ type: "click" });
-  assert.equal(pagePlayPauseButton.textContent, "再生");
+  assert.equal(pagePlayPauseButton.attributes["aria-label"], "再生");
   assert.equal(pageOutline.children[1].attributes["aria-current"], "location");
   assert.match(pageDisplay.textContent, /次の節/);
+
+  const pageModeButton = findElement(pageOverlay, (element) => element.textContent === "文章で読む");
+  pageModeButton.dispatchEvent({ type: "click" });
+  const textShell = findElement(
+    document.getElementById("__rsvp-reader-root"),
+    (element) => element.attributes["data-reader-text-shell"] === "true",
+  );
+  assert.ok(textShell);
+  const textScroller = findElement(
+    textShell,
+    (element) => element.attributes["data-reader-text-scroller"] === "true",
+  );
+  const rsvpModeButton = findElement(textShell, (element) => element.textContent === "RSVPで読む");
+  assert.ok(textScroller);
+  assert.equal(rsvpModeButton.parent.attributes["data-reader-topbar"], "true");
+  assert.ok(findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる"));
 
   reduceMotion = true;
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "reduced-motion-request" });
@@ -439,6 +464,7 @@ test("reader varies linguistic timing while preserving baseline effective WPM", 
     },
     Engine,
     Extractor,
+    ReaderIcons,
     Intl,
     console,
     setTimeout(callback, delay) {
@@ -589,6 +615,7 @@ test("reader crossfades to a referenced figure and resumes with Space", async ()
     },
     Engine,
     Extractor,
+    ReaderIcons,
     Intl,
     console,
     setTimeout(callback, delay) {

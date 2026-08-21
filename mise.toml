@@ -22,6 +22,7 @@ install -d apps/chrome/dist/vendor/defuddle apps/chrome/dist/LICENSES
 cp apps/chrome/manifest.json apps/chrome/dist/manifest.json
 cp .build/apps/chrome/src/service-worker.js apps/chrome/dist/service-worker.js
 cp .build/apps/chrome/src/viewer/viewer.js apps/chrome/dist/viewer.js
+cp .build/packages/icons/src/icons.js apps/chrome/dist/icons.js
 cp .build/packages/engine/src/engine.js apps/chrome/dist/engine.js
 cp .build/packages/extractor/src/extractor.js apps/chrome/dist/extractor.js
 cp node_modules/defuddle/dist/index.js apps/chrome/dist/vendor/defuddle/defuddle.js
@@ -64,7 +65,7 @@ install -d apps/ios/ReaderExtension/Resources/generated
 cp node_modules/defuddle/dist/index.js apps/ios/ReaderExtension/Resources/generated/defuddle.js
 cp .build/packages/engine/src/engine.js apps/ios/ReaderExtension/Resources/generated/engine.js
 cp .build/packages/extractor/src/extractor.js apps/ios/ReaderExtension/Resources/generated/extractor.js
-cp .build/apps/ios/ReaderExtension/Resources/viewer/icons.js apps/ios/ReaderExtension/Resources/generated/icons.js
+cp .build/packages/icons/src/icons.js apps/ios/ReaderExtension/Resources/generated/icons.js
 cp .build/apps/ios/ReaderExtension/Resources/viewer/viewer.js apps/ios/ReaderExtension/Resources/generated/viewer.js
 cp .build/apps/ios/ReaderExtension/Resources/viewer/bootstrap.js apps/ios/ReaderExtension/Resources/generated/bootstrap.js
 cp node_modules/defuddle/LICENSE apps/ios/ReaderExtension/Resources/generated/defuddle-LICENSE.txt

@@ -269,6 +269,7 @@
     }
 
     const stage = document.createElement("div");
+    stage.setAttribute("data-reader-stage", "true");
     Object.assign(stage.style, {
       position: "absolute",
       left: "50%",
@@ -327,38 +328,28 @@
     nextContext = createContext("next");
     contextSentenceIndex = null;
 
+    const topbar = createTopbar("文章で読む", showTextView);
     const controls = document.createElement("div");
     Object.assign(controls.style, {
       position: "absolute",
       left: "50%",
       bottom: "8px",
       transform: "translateX(-50%)",
-      display: "flex",
+      width: "min(100%, 264px)",
+      minHeight: "56px",
+      display: "grid",
+      gridTemplateColumns: "1fr 56px 1fr",
       alignItems: "center",
-      gap: "4px",
-      padding: "5px",
-      border: "1px solid rgba(255,255,255,0.10)",
-      borderRadius: "999px",
-      background: "rgba(44,44,44,0.72)",
-      boxShadow: "0 18px 48px rgba(0,0,0,0.34)",
-      backdropFilter: "blur(24px) saturate(140%)",
-      WebkitBackdropFilter: "blur(24px) saturate(140%)",
     });
     readerControls = controls;
 
-    const backButton = createButton("1文戻る", goBackOneSentence);
-    playPauseButton = createButton("一時停止", togglePlayPause);
-    const modeButton = createButton("文章で読む", showTextView);
-    const closeButton = createButton("閉じる", close);
-    Object.assign(backButton.style, { width: "92px", flex: "0 0 92px" });
-    Object.assign(playPauseButton.style, { width: "92px", flex: "0 0 92px" });
-    Object.assign(modeButton.style, { width: "104px", flex: "0 0 104px" });
-    Object.assign(closeButton.style, { width: "92px", flex: "0 0 92px" });
+    const backButton = createIconControl("previous", "1文戻る", goBackOneSentence, 30, 52);
+    playPauseButton = createIconControl("play", "再生", togglePlayPause, 30, 56);
     backButton.setAttribute("aria-keyshortcuts", "ArrowLeft");
     playPauseButton.setAttribute("aria-keyshortcuts", "Space");
 
-    controls.append(backButton, playPauseButton, modeButton, closeButton);
-    main.append(previousContext, display, nextContext, controls);
+    controls.append(backButton, playPauseButton);
+    main.append(topbar, previousContext, display, nextContext, controls);
     stage.append(main);
     revealReader(stage);
     document.addEventListener("keydown", handleKeyDown);
@@ -367,6 +358,131 @@
       displayResizeObserver = new globalThis.ResizeObserver(fitDisplayText);
       displayResizeObserver.observe(main);
     }
+  }
+
+  function createTopbar(modeLabel: string, switchMode: () => void): HTMLDivElement {
+    const topbar = document.createElement("div");
+    topbar.setAttribute("data-reader-topbar", "true");
+    Object.assign(topbar.style, {
+      position: "absolute",
+      top: "8px",
+      left: "0",
+      right: "0",
+      height: "44px",
+      zIndex: "2",
+      pointerEvents: "none",
+    });
+
+    const modeButton = document.createElement("button");
+    modeButton.type = "button";
+    modeButton.textContent = modeLabel;
+    Object.assign(modeButton.style, {
+      position: "absolute",
+      left: "50%",
+      top: "0",
+      transform: "translateX(-50%)",
+      minWidth: "112px",
+      height: "40px",
+      padding: "0 12px",
+      border: "1px solid transparent",
+      borderRadius: "14px",
+      background: "transparent",
+      color: "rgba(245,245,245,0.72)",
+      font: "inherit",
+      fontSize: "14px",
+      fontWeight: "600",
+      whiteSpace: "nowrap",
+      cursor: "pointer",
+      pointerEvents: "auto",
+      transition: "color 120ms ease, background-color 120ms ease, scale 100ms ease",
+    });
+    modeButton.addEventListener("pointerenter", () => {
+      modeButton.style.color = "#f5f5f7";
+      modeButton.style.background = "rgba(255,255,255,0.06)";
+    });
+    modeButton.addEventListener("pointerleave", () => {
+      modeButton.style.color = "rgba(245,245,245,0.72)";
+      modeButton.style.background = "transparent";
+      modeButton.style.scale = "1";
+    });
+    modeButton.addEventListener("pointerdown", () => {
+      modeButton.style.scale = "0.96";
+    });
+    modeButton.addEventListener("pointerup", () => {
+      modeButton.style.scale = "1";
+    });
+    modeButton.addEventListener("focus", () => {
+      modeButton.style.borderColor = "rgba(255,255,255,0.72)";
+    });
+    modeButton.addEventListener("blur", () => {
+      modeButton.style.borderColor = "transparent";
+    });
+    modeButton.addEventListener("click", switchMode);
+
+    const closeButton = createIconControl("close", "readerを閉じる", close, 22, 44);
+    Object.assign(closeButton.style, {
+      position: "absolute",
+      top: "0",
+      right: "0",
+      pointerEvents: "auto",
+    });
+    topbar.append(modeButton, closeButton);
+    return topbar;
+  }
+
+  function createIconControl(
+    icon: ReaderIconName,
+    accessibilityLabel: string,
+    action: () => void,
+    iconSize: number,
+    buttonSize: number,
+  ): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.replaceChildren(globalThis.ReaderIcons.create(document, icon, iconSize));
+    button.setAttribute("aria-label", accessibilityLabel);
+    button.title = accessibilityLabel;
+    Object.assign(button.style, {
+      appearance: "none",
+      width: `${buttonSize}px`,
+      height: `${buttonSize}px`,
+      minWidth: "44px",
+      minHeight: "44px",
+      padding: "0",
+      border: "1px solid transparent",
+      borderRadius: "14px",
+      background: "transparent",
+      color: "#f5f5f7",
+      display: "grid",
+      placeItems: "center",
+      justifySelf: "center",
+      cursor: "pointer",
+      transition: "background-color 120ms ease, opacity 100ms ease, scale 100ms ease",
+    });
+    button.addEventListener("pointerenter", () => {
+      button.style.background = "rgba(255,255,255,0.08)";
+    });
+    button.addEventListener("pointerleave", () => {
+      button.style.background = "transparent";
+      button.style.opacity = "1";
+      button.style.scale = "1";
+    });
+    button.addEventListener("pointerdown", () => {
+      button.style.opacity = "0.62";
+      button.style.scale = "0.94";
+    });
+    button.addEventListener("pointerup", () => {
+      button.style.opacity = "1";
+      button.style.scale = "1";
+    });
+    button.addEventListener("focus", () => {
+      button.style.borderColor = "rgba(255,255,255,0.72)";
+    });
+    button.addEventListener("blur", () => {
+      button.style.borderColor = "transparent";
+    });
+    button.addEventListener("click", action);
+    return button;
   }
 
   function createContext(position: "previous" | "next"): HTMLDivElement {
@@ -412,6 +528,15 @@
     style.textContent = `
       #${ROOT_ID} nav::-webkit-scrollbar { display: none; }
       #${ROOT_ID} nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-offset: -2px; }
+      @media (max-width: 1080px) {
+        #${ROOT_ID} [data-reader-stage] { width: calc(100% - 32px) !important; height: calc(100% - 32px) !important; grid-template-columns: minmax(0, 1fr) !important; column-gap: 0 !important; }
+        #${ROOT_ID} [data-reader-minimap] { display: none !important; }
+      }
+      @media (max-width: 720px) {
+        #${ROOT_ID} [data-reader-stage] { width: 100% !important; height: 100% !important; }
+        #${ROOT_ID} [data-reader-text-shell] { width: 100% !important; height: 100% !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
+        #${ROOT_ID} [data-reader-text-scroller] { padding: 64px 20px 96px !important; }
+      }
     `;
     rootStyle = style;
     element.append(style);
@@ -436,6 +561,7 @@
 
   function createMinimap() {
     const minimap = document.createElement("aside");
+    minimap.setAttribute("data-reader-minimap", "true");
     minimap.setAttribute("aria-label", "読書位置");
     Object.assign(minimap.style, {
       position: "relative",
@@ -602,6 +728,7 @@
     clearRenderedView();
 
     const shell = document.createElement("div");
+    shell.setAttribute("data-reader-text-shell", "true");
     Object.assign(shell.style, {
       width: "min(900px, calc(100% - 32px))",
       height: "calc(100% - 32px)",
@@ -615,6 +742,7 @@
     });
 
     const scroller = document.createElement("main");
+    scroller.setAttribute("data-reader-text-scroller", "true");
     Object.assign(scroller.style, {
       width: "100%",
       height: "100%",
@@ -638,19 +766,9 @@
     article.append(...blockElements);
     scroller.append(article);
 
-    const controls = document.createElement("div");
-    Object.assign(controls.style, {
-      position: "absolute",
-      top: "16px",
-      right: "16px",
-      zIndex: "1",
-      display: "flex",
-      gap: "6px",
-    });
-    const rsvpButton = createButton("RSVPで読む", showRsvpView);
-    const closeButton = createButton("閉じる", close);
-    controls.append(rsvpButton, closeButton);
-    shell.append(scroller, controls);
+    const topbar = createTopbar("RSVPで読む", showRsvpView);
+    Object.assign(topbar.style, { left: "16px", right: "16px" });
+    shell.append(scroller, topbar);
     root.append(shell);
 
     const updatePosition = () => {
@@ -1117,7 +1235,12 @@
 
   function updatePlayPauseButton() {
     if (!playPauseButton) return;
-    playPauseButton.textContent = playbackState === "playing" ? "一時停止" : "再生";
+    const playing = playbackState === "playing";
+    playPauseButton.replaceChildren(
+      globalThis.ReaderIcons.create(document, playing ? "pause" : "play", playing ? 26 : 30),
+    );
+    playPauseButton.setAttribute("aria-label", playing ? "一時停止" : "再生");
+    playPauseButton.title = playing ? "一時停止" : "再生";
   }
 
   function handleKeyDown(event: KeyboardEvent): void {
