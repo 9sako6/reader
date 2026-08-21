@@ -26,4 +26,4 @@ Chrome版のバージョンは`manifest.json`で管理します。mainへ変更�
 mise run release:chrome
 ```
 
-`chrome-v<version>`タグを受け取ったGitHub Actionsが、zipとSHA-256チェックサムをGitHub Releaseへ添付します。Release本文には導入手順と変更一覧が入ります。
+`chrome-v<version>`タグを受け取ったGitHub Actionsが、zipとSHA-256チェックサムをGitHub Releaseへ添付します。Release本文には導入手順と、前回のChromeタグから今回のタグまでのコミット題名が時系列で入ります。Pull Requestの作成はリリースノート掲載の条件ではありません。
