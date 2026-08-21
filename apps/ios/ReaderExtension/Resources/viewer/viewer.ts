@@ -147,8 +147,8 @@
       if (!content?.text) throw new Error("content_not_found");
       rebuildUnits();
       if (units.length === 0) throw new Error("units_not_found");
-      unitIndex = 0;
       currentOffset = 0;
+      seekToUnit(0);
       renderReader();
     } catch (error) {
       showError();
@@ -485,7 +485,7 @@
 
   function switchMode(nextMode: ReadingMode): void {
     if (nextMode === mode) return;
-    if (nextMode === "rsvp") unitIndex = global.Engine.findUnitIndex(units, currentOffset);
+    if (nextMode === "rsvp") seekToUnit(global.Engine.findUnitIndex(units, currentOffset));
     mode = nextMode;
     renderReader();
   }
@@ -508,7 +508,7 @@
         && unit.end <= figure.sourceEnd
       )));
     units = global.Engine.splitLongUnits(segmented, locale, maxGraphemesForViewport());
-    unitIndex = global.Engine.findUnitIndex(units, currentOffset);
+    seekToUnit(global.Engine.findUnitIndex(units, currentOffset));
   }
 
   function maxGraphemesForViewport() {
@@ -653,6 +653,11 @@
     if (nextFigureIndex < 0) nextFigureIndex = articleFigures.length;
   }
 
+  function seekToUnit(nextUnitIndex: number): void {
+    unitIndex = Math.min(Math.max(nextUnitIndex, 0), Math.max(0, units.length - 1));
+    syncNextFigureIndex();
+  }
+
   function crossesSectionBoundary(unit: ReaderUnit | undefined, nextUnit: ReaderUnit | undefined): boolean {
     if (!unit || !nextUnit) return false;
     const offsets = content?.readingContext?.sectionOffsets || [];
@@ -666,12 +671,11 @@
       figurePanel.remove();
       figurePanel = null;
       const unitBeforeFigure = global.Engine.findUnitIndex(units, Math.max(0, figureOffset - 1));
-      unitIndex = global.Engine.findSentenceStart(units, unitBeforeFigure);
-      syncNextFigureIndex();
+      seekToUnit(global.Engine.findSentenceStart(units, unitBeforeFigure));
       renderUnit();
       return;
     }
-    unitIndex = global.Engine.findPreviousSentenceStart(units, unitIndex);
+    seekToUnit(global.Engine.findPreviousSentenceStart(units, unitIndex));
     renderUnit();
   }
 
