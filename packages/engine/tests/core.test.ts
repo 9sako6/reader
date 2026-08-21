@@ -108,6 +108,23 @@ test("segmentText assigns sentence indices in order", () => {
   assert.deepEqual([...new Set(units.map((unit) => unit.sentenceIndex))], [0, 1, 2]);
 });
 
+test("segmentText treats English periods as sentence boundaries", () => {
+  const units = segmentText("First sentence. Second sentence. Third sentence.", "en");
+  const secondSentence = units.findIndex((unit) => unit.text.includes("Second"));
+  const secondSentenceStart = findSentenceStart(units, secondSentence);
+
+  assert.deepEqual([...new Set(units.map((unit) => unit.sentenceIndex))], [0, 1, 2]);
+  assert.match(units[secondSentenceStart].text.trimStart(), /^Second/u);
+});
+
+test("segmentText starts a new sentence after a block boundary", () => {
+  const units = segmentText("Transcript\nFirst, a quick intro.", "en");
+  const firstIntroUnit = units.findIndex((unit) => unit.text.includes("First"));
+  const firstIntroStart = findSentenceStart(units, firstIntroUnit);
+
+  assert.match(units[firstIntroStart].text.trimStart(), /^First/u);
+});
+
 test("segmentText never crosses a supplied content boundary", () => {
   const source = "画像前の文章と画像後の文章です。";
   const boundary = source.indexOf("画像後");

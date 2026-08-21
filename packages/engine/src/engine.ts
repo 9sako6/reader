@@ -8,7 +8,7 @@
   const MIN_WORDS_BEFORE_BOUNDARY = 3;
   const SOFT_BOUNDARY_WORDS = new Set(["を","に","へ","と","から","まで","より","が","は","も","て","で","ので","のに","なら","れば","けど","けれど"]);
   const PHRASE_BOUNDARY_PUNCTUATION = new Set(["、","，",";","；",":","："]);
-  const SENTENCE_END_PUNCTUATION = new Set(["。","！","？","!","?"]);
+  const SENTENCE_END_PUNCTUATION = new Set(["。","．","！","？",".","!","?"]);
   const QUOTE_PAIRS = new Map([["「","」"],["『","』"]]);
   const ASIDE_PAIRS = new Map([["（","）"],["(",")"]]);
   const BASE_UNIT_MS = 180;
@@ -85,7 +85,10 @@
       if (piece.isWordLike) wordLikeCount += 1;
       const nextIsWordLike = Boolean(next?.isWordLike);
       const phraseBoundary = PHRASE_BOUNDARY_PUNCTUATION.has(piece.segment);
-      const sentenceBoundary = trackSentenceEnds && SENTENCE_END_PUNCTUATION.has(piece.segment);
+      const sentenceBoundary = trackSentenceEnds && (
+        SENTENCE_END_PUNCTUATION.has(piece.segment)
+        || piece.segment.includes("\n")
+      );
       const grammaticalBoundary = piece.isWordLike && SOFT_BOUNDARY_WORDS.has(piece.segment) && wordLikeCount >= MIN_WORDS_BEFORE_BOUNDARY && nextIsWordLike;
       const lengthBoundary = piece.isWordLike && wordLikeCount >= MAX_WORDS_PER_UNIT && nextIsWordLike;
       if (phraseBoundary || sentenceBoundary || grammaticalBoundary || lengthBoundary) flush();
