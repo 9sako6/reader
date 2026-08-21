@@ -141,7 +141,7 @@
     return result;
   }
 
-  function segmentText(text: string, locale = "ja"): ReaderUnit[] {
+  function segmentText(text: string, locale = "ja", boundaries: number[] = []): ReaderUnit[] {
     if (!text) return [];
     const units: ReaderUnit[] = [];
     let sentenceIndex = 0;
@@ -161,7 +161,36 @@
       units.push(...result.units);
       sentenceIndex = result.sentenceIndex;
     }
-    return splitLongUnits(mergeDanglingPunctuation(units), locale);
+    const segmentedUnits = splitLongUnits(mergeDanglingPunctuation(units), locale);
+    const safeBoundaries = [...new Set(boundaries)]
+      .filter((boundary) => Number.isInteger(boundary) && boundary > 0 && boundary < text.length)
+      .sort((left, right) => left - right);
+    if (safeBoundaries.length === 0) return segmentedUnits;
+    return segmentedUnits.flatMap((unit) => {
+      const unitBoundaries = safeBoundaries.filter((boundary) => boundary > unit.start && boundary < unit.end);
+      if (unitBoundaries.length === 0) return [unit];
+      const pieces: ReaderUnit[] = [];
+      let start = unit.start;
+      for (const boundary of [...unitBoundaries, unit.end]) {
+        pieces.push({
+          ...unit,
+          text: text.slice(start, boundary),
+          start,
+          end: boundary,
+        });
+        start = boundary;
+      }
+      return pieces;
+    });
+  }
+
+  function findSentenceStart(units: ReaderUnit[], currentUnitIndex: number): number {
+    if (!Array.isArray(units) || units.length === 0) return 0;
+    const safeIndex = Math.min(Math.max(Number.isInteger(currentUnitIndex) ? currentUnitIndex : 0, 0), units.length - 1);
+    const sentenceIndex = units[safeIndex]?.sentenceIndex;
+    if (sentenceIndex === undefined) return 0;
+    const sentenceStart = units.findIndex((unit) => unit.sentenceIndex === sentenceIndex);
+    return sentenceStart < 0 ? 0 : sentenceStart;
   }
 
   function findPreviousSentenceStart(units: ReaderUnit[], currentUnitIndex: number): number {
@@ -278,6 +307,7 @@
     segmentText,
     splitLongUnits,
     splitStructuralSpans,
+    findSentenceStart,
     findPreviousSentenceStart,
     findActiveHeadingIndex,
     calculateReadingProgress,

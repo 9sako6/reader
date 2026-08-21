@@ -26,9 +26,10 @@ declare global {
   interface ReaderEngine {
     readonly MAX_WORDS_PER_UNIT: number;
     readonly MAX_GRAPHEMES_PER_UNIT: number;
-    segmentText(text: string, locale?: string): ReaderUnit[];
+    segmentText(text: string, locale?: string, boundaries?: number[]): ReaderUnit[];
     splitLongUnits(units: ReaderUnit[], locale?: string, maxGraphemes?: number): ReaderUnit[];
     splitStructuralSpans(text: string): Array<{ text: string; kind: ReaderUnitKind; start: number }>;
+    findSentenceStart(units: ReaderUnit[], currentUnitIndex: number): number;
     findPreviousSentenceStart(units: ReaderUnit[], currentUnitIndex: number): number;
     findActiveHeadingIndex(transitions: ReaderSectionTransition[], currentOffset: number, fallbackIndex?: number): number;
     calculateReadingProgress(currentEnd: number, sourceLength: number): number;

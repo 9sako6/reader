@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-labelledby="title description">
+  <title id="title">文章と画像の読書フロー</title>
+  <desc id="description">文章、画像、文章の順に読み進める様子</desc>
+  <rect width="1200" height="675" rx="32" fill="#111214"/>
+  <rect x="96" y="112" width="1008" height="451" rx="24" fill="#1d1f22"/>
+  <rect x="152" y="172" width="360" height="18" rx="9" fill="#f5f5f7"/>
+  <rect x="152" y="218" width="520" height="12" rx="6" fill="#73767c"/>
+  <rect x="152" y="248" width="460" height="12" rx="6" fill="#73767c"/>
+  <rect x="720" y="164" width="300" height="220" rx="18" fill="#24313a"/>
+  <circle cx="870" cy="274" r="72" fill="#64d2ff"/>
+  <rect x="152" y="342" width="444" height="12" rx="6" fill="#73767c"/>
+  <rect x="152" y="372" width="510" height="12" rx="6" fill="#73767c"/>
+  <rect x="152" y="402" width="398" height="12" rx="6" fill="#73767c"/>
+  <rect x="152" y="474" width="868" height="12" rx="6" fill="#73767c"/>
+  <rect x="152" y="504" width="694" height="12" rx="6" fill="#73767c"/>
+</svg>

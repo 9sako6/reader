@@ -18,8 +18,8 @@ declare global {
     src: string;
     alt: string;
     caption: string;
-    referenceSentence: string;
-    referenceEnd: number;
+    sourceOffset: number;
+    sourceEnd: number;
   }
 
   interface ReadingContext {

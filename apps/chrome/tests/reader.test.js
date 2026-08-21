@@ -558,7 +558,7 @@ test("reader varies linguistic timing while preserving baseline effective WPM", 
   assert.ok(equivalentWordsPerMinute >= 380 && equivalentWordsPerMinute <= 395);
 });
 
-test("reader crossfades to a referenced figure and resumes with Space", async () => {
+test("reader pauses on an article image and keeps it in the text view", async () => {
   const documentElement = new FakeElement("html");
   const documentListeners = new Map();
   const document = {
@@ -632,9 +632,17 @@ test("reader crossfades to a referenced figure and resumes with Space", async ()
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   vm.runInNewContext(source, context);
 
-  const referenceSentence = "結果を図1に示します。";
-  const text = `${referenceSentence}次の説明です。`;
+  const leadingSentence = "結果を図1に示します。";
+  const captionText = "図1 処理時間";
+  const nextSentence = "次の説明です。";
+  const figureOffset = `${leadingSentence}\n`.length;
+  const figureEnd = figureOffset + captionText.length;
+  const text = `${leadingSentence}\n${captionText}\n${nextSentence}`;
   const readingContext = {
+    blocks: [
+      { text: leadingSentence, kind: "paragraph", level: null, start: 0, end: leadingSentence.length },
+      { text: nextSentence, kind: "paragraph", level: null, start: figureEnd + 1, end: text.length },
+    ],
     headings: [],
     sectionTransitions: [],
     initialHeadingIndex: -1,
@@ -642,9 +650,9 @@ test("reader crossfades to a referenced figure and resumes with Space", async ()
       {
         src: "https://example.com/chart.png",
         alt: "処理時間の比較グラフ",
-        caption: "図1 処理時間",
-        referenceSentence,
-        referenceEnd: referenceSentence.length,
+        caption: captionText,
+        sourceOffset: figureOffset,
+        sourceEnd: figureEnd,
       },
     ],
   };
@@ -659,38 +667,62 @@ test("reader crossfades to a referenced figure and resumes with Space", async ()
     timer.callback();
     figurePanel = findElement(
       overlay,
-      (element) => element.attributes["aria-label"] === "参照図表",
+      (element) => element.attributes["aria-label"] === "本文画像",
     );
   }
   assert.ok(figurePanel);
   const image = findElement(figurePanel, (element) => element.tagName === "IMG");
-  const veil = findElement(
-    figurePanel,
-    (element) => element.attributes["data-rsvp-image-veil"] === "true",
-  );
-  const imageSurface = findElement(
-    figurePanel,
-    (element) => element.attributes["data-rsvp-image-surface"] === "true",
-  );
   const display = findElement(
     overlay,
     (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
   );
-  const continueButton = findElement(figurePanel, (element) => element.textContent === "続きを読む");
+  const resumeButton = findElement(overlay, (element) => element.attributes["aria-label"] === "再生");
   assert.equal(image.src, "https://example.com/chart.png");
   assert.equal(image.alt, "処理時間の比較グラフ");
-  assert.ok(findElement(figurePanel, (element) => element.textContent === referenceSentence));
   assert.ok(findElement(figurePanel, (element) => element.textContent === "図1 処理時間"));
-  assert.ok(continueButton);
-  assert.equal(timers.size, 0);
-  assert.deepEqual(Array.from(figurePanel.animations[0].keyframes, ({ opacity }) => opacity), [0, 1]);
-  assert.equal(figurePanel.animations[0].options.duration, 180);
-  assert.deepEqual(Array.from(display.animations.at(-1).keyframes, ({ opacity }) => opacity), [1, 0]);
+  assert.ok(resumeButton);
+  assert.equal(findElement(figurePanel, (element) => element.tagName === "BUTTON"), null);
+  const imageSurface = findElement(
+    figurePanel,
+    (element) => element.attributes["data-reader-image-surface"] === "true",
+  );
+  const veil = findElement(
+    figurePanel,
+    (element) => element.attributes["data-reader-image-veil"] === "true",
+  );
   assert.equal(veil.style.opacity, "1");
   imageSurface.dispatchEvent({ type: "pointerdown" });
   assert.equal(veil.style.opacity, "0");
   imageSurface.dispatchEvent({ type: "pointerup" });
   assert.equal(veil.style.opacity, "1");
+  assert.equal(timers.size, 0);
+  assert.deepEqual(Array.from(figurePanel.animations[0].keyframes, ({ opacity }) => opacity), [0, 1]);
+  assert.equal(figurePanel.animations[0].options.duration, 180);
+  assert.deepEqual(Array.from(display.animations.at(-1).keyframes, ({ opacity }) => opacity), [1, 0]);
+
+  const backButton = findElement(overlay, (element) => element.attributes["aria-label"] === "1文戻る");
+  backButton.dispatchEvent({ type: "click" });
+  await Promise.resolve();
+  assert.equal(findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像"), null);
+  assert.match(display.textContent, /結果を/);
+
+  document.dispatchEvent({
+    type: "keydown",
+    code: "Space",
+    target: documentElement,
+    preventDefault() {},
+  });
+  figurePanel = null;
+  for (let step = 0; step < 10 && !figurePanel; step += 1) {
+    const [timerId, timer] = [...timers.entries()][0];
+    timers.delete(timerId);
+    timer.callback();
+    figurePanel = findElement(
+      overlay,
+      (element) => element.attributes["aria-label"] === "本文画像",
+    );
+  }
+  assert.ok(figurePanel);
 
   document.dispatchEvent({
     type: "keydown",
@@ -699,8 +731,23 @@ test("reader crossfades to a referenced figure and resumes with Space", async ()
     preventDefault() {},
   });
   await Promise.resolve();
-  assert.equal(findElement(overlay, (element) => element.attributes["aria-label"] === "参照図表"), null);
-  assert.match(display.textContent, /次の説明/);
+  assert.equal(findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像"), null);
+  assert.match(display.textContent, /^次の/u);
   assert.deepEqual(Array.from(display.animations.at(-1).keyframes, ({ opacity }) => opacity), [0, 1]);
   assert.ok(timers.size > 0);
+
+  const textModeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
+  textModeButton.dispatchEvent({ type: "click" });
+  const textFigure = findElement(
+    overlay,
+    (element) => element.attributes["data-reader-text-figure"] === "true",
+  );
+  const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
+  const textVeil = findElement(
+    textFigure,
+    (element) => element.attributes["data-reader-image-veil"] === "true",
+  );
+  assert.equal(textImage.src, "https://example.com/chart.png");
+  assert.equal(textVeil.style.background, "rgba(0,0,0,0.46)");
+  assert.ok(findElement(textFigure, (element) => element.textContent === "図1 処理時間"));
 });

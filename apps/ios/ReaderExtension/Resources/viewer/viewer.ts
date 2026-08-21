@@ -31,6 +31,8 @@
   let contextSentenceIndex: number | null = null;
   let playbackTimer: number | null = null;
   let playing = false;
+  let nextFigureIndex = 0;
+  let figurePanel: HTMLElement | null = null;
   let mode: ReadingMode = "rsvp";
   let nodes: MobileNodes | null = null;
 
@@ -93,6 +95,9 @@
       .article h3, .article h4, .article h5, .article h6 { font-size: 1.08em; }
       .article blockquote { margin: 1.5em 0; padding: .25em 0 .25em 1em; border-left: 3px solid var(--reader-accent); color: var(--reader-secondary); }
       .article pre { margin: 1.5em 0; padding: 16px; overflow-x: auto; border-radius: 12px; background: var(--reader-surface); white-space: pre-wrap; }
+      .article-figure { margin: 2em 0; }
+      .article-figure .reader-image-surface img { max-height: 72vh; }
+      .article-figure figcaption { margin-top: .65em; color: var(--reader-muted); font-size: .78em; line-height: 1.5; text-align: center; }
       .progress { position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom)); color: var(--reader-muted); text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; pointer-events: none; }
       .rsvp-view { height: 100%; padding: 16px; }
       .focus-area { width: 100%; height: 100%; min-height: 0; position: relative; display: grid; place-items: center; text-align: center; }
@@ -102,10 +107,16 @@
       .rsvp-unit { min-height: 1.5em; max-width: calc(100vw - 40px); position: relative; z-index: 0; font-size: var(--reader-rsvp-font-size, 40px); font-weight: 650; line-height: 1.25; word-break: keep-all; overflow-wrap: normal; }
       .rsvp-unit.quote::before { content: ""; position: absolute; z-index: -1; inset: -12px -16px; border-radius: 14px; background: rgba(255,255,255,.055); }
       .rsvp-unit.aside { color: var(--reader-secondary); }
+      .rsvp-figure { position: absolute; z-index: 2; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 20px; background: var(--reader-background); }
+      .reader-image-surface { position: relative; width: fit-content; max-width: 100%; margin: 0 auto; overflow: hidden; border-radius: 12px; touch-action: manipulation; }
+      .reader-image-surface img { display: block; width: auto; max-width: 100%; object-fit: contain; }
+      .reader-image-veil { position: absolute; inset: 0; background: rgba(0,0,0,.46); opacity: 1; pointer-events: none; transition: opacity 120ms ease-out; }
+      .rsvp-figure .reader-image-surface img { max-height: 54vh; }
+      .rsvp-figure figcaption { min-height: 1.4em; color: var(--reader-muted); font-size: 13px; line-height: 1.4; text-align: center; }
       @keyframes reader-spin { to { transform: rotate(360deg); } }
       @keyframes reader-reveal { to { visibility: visible; } }
       @media (prefers-reduced-motion: reduce) { .entry::after { transition: none; } .loading-mark { animation: none; border-color: var(--reader-accent); } }
-      @media (prefers-reduced-motion: reduce) { .dock-button { transition: none; } }
+      @media (prefers-reduced-motion: reduce) { .dock-button, .reader-image-veil { transition: none; } }
       @media (prefers-contrast: more) { :host { --reader-secondary: #f5f5f7; --reader-muted: #f5f5f7; } }
     `;
     return style;
@@ -243,9 +254,9 @@
     const blockElements: HTMLElement[] = [];
     for (const block of readableBlocks) {
       const element = createArticleBlock(block);
-      articleNode.append(element);
       blockElements.push(element);
     }
+    appendArticleContent(articleNode, readableBlocks, blockElements, content.readingContext?.figures || []);
     scroller.append(articleNode);
     getNodes().content.replaceChildren(scroller);
     renderTextControls();
@@ -282,6 +293,74 @@
     element.dataset.sourceStart = String(block.start ?? 0);
     element.dataset.sourceEnd = String(block.end ?? (block.start ?? 0) + block.text.length);
     return element;
+  }
+
+  function appendArticleContent(
+    article: HTMLElement,
+    readableBlocks: ReaderBlock[],
+    blockElements: HTMLElement[],
+    articleFigures: ReaderFigure[],
+  ): void {
+    const orderedFigures = [...articleFigures].sort((left, right) => left.sourceOffset - right.sourceOffset);
+    let figureIndex = 0;
+    readableBlocks.forEach((block, blockIndex) => {
+      let currentFigure = orderedFigures[figureIndex];
+      while (currentFigure && currentFigure.sourceOffset <= block.start) {
+        article.append(createArticleFigure(currentFigure));
+        figureIndex += 1;
+        currentFigure = orderedFigures[figureIndex];
+      }
+      const blockElement = blockElements[blockIndex];
+      if (blockElement) article.append(blockElement);
+      currentFigure = orderedFigures[figureIndex];
+      while (currentFigure && currentFigure.sourceOffset <= block.end) {
+        article.append(createArticleFigure(currentFigure));
+        figureIndex += 1;
+        currentFigure = orderedFigures[figureIndex];
+      }
+    });
+    let currentFigure = orderedFigures[figureIndex];
+    while (currentFigure) {
+      article.append(createArticleFigure(currentFigure));
+      figureIndex += 1;
+      currentFigure = orderedFigures[figureIndex];
+    }
+  }
+
+  function createArticleFigure(figure: ReaderFigure): HTMLElement {
+    const container = global.document.createElement("figure");
+    container.className = "article-figure";
+    container.dataset.sourceStart = String(figure.sourceOffset);
+    container.dataset.sourceEnd = String(figure.sourceOffset);
+    const image = global.document.createElement("img");
+    image.src = figure.src;
+    image.alt = figure.alt || figure.caption || "本文画像";
+    image.loading = "lazy";
+    image.decoding = "async";
+    container.append(createVeiledImageSurface(image));
+    if (figure.caption) {
+      const caption = global.document.createElement("figcaption");
+      caption.textContent = figure.caption;
+      container.append(caption);
+    }
+    return container;
+  }
+
+  function createVeiledImageSurface(image: HTMLImageElement): HTMLElement {
+    const surface = global.document.createElement("div");
+    surface.className = "reader-image-surface";
+    surface.setAttribute("data-reader-image-surface", "true");
+    const veil = global.document.createElement("div");
+    veil.className = "reader-image-veil";
+    veil.setAttribute("data-reader-image-veil", "true");
+    const reveal = () => { veil.style.opacity = "0"; };
+    const dim = () => { veil.style.opacity = "1"; };
+    surface.addEventListener("pointerdown", reveal);
+    surface.addEventListener("pointerup", dim);
+    surface.addEventListener("pointercancel", dim);
+    surface.addEventListener("pointerleave", dim);
+    surface.append(image, veil);
+    return surface;
   }
 
   function updateTextPosition(scroller: HTMLElement, blockElements: HTMLElement[], progress: HTMLElement): void {
@@ -335,8 +414,9 @@
     Object.assign(getNodes(), { previousUnit, unit, nextUnit });
     renderRsvpControls();
     contextSentenceIndex = null;
-    play();
+    syncNextFigureIndex();
     renderUnit();
+    play();
   }
 
   function transportButton(label: string, action: () => void): HTMLButtonElement {
@@ -413,7 +493,20 @@
   function rebuildUnits() {
     if (!content?.text) return;
     const locale = global.document.documentElement.lang || "ja";
-    const segmented = global.Engine.segmentText(content.text, locale);
+    const articleFigures = content.readingContext?.figures || [];
+    const figureBoundaries = articleFigures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
+    const segmented = global.Engine.segmentText(content.text, locale, figureBoundaries)
+      .map((unit) => {
+        const value = unit.text.trim();
+        const leadingWhitespace = unit.text.length - unit.text.trimStart().length;
+        return { ...unit, text: value, start: unit.start + leadingWhitespace, end: unit.start + leadingWhitespace + value.length };
+      })
+      .filter((unit) => unit.text.trim().length > 0)
+      .filter((unit) => !articleFigures.some((figure) => (
+        figure.sourceEnd > figure.sourceOffset
+        && unit.start >= figure.sourceOffset
+        && unit.end <= figure.sourceEnd
+      )));
     units = global.Engine.splitLongUnits(segmented, locale, maxGraphemesForViewport());
     unitIndex = global.Engine.findUnitIndex(units, currentOffset);
   }
@@ -430,12 +523,20 @@
   }
 
   function togglePlayback() {
-    if (playing) pause();
+    if (figurePanel) resumeAfterFigure();
+    else if (playing) pause();
     else play();
     renderUnit();
   }
 
   function play() {
+    const currentUnit = units[unitIndex];
+    const nextFigure = content?.readingContext?.figures?.[nextFigureIndex];
+    if (!figurePanel && currentUnit && nextFigure && nextFigure.sourceOffset <= currentUnit.start) {
+      nextFigureIndex += 1;
+      showFigure(nextFigure);
+      return;
+    }
     pause();
     playing = true;
     scheduleNext();
@@ -468,6 +569,21 @@
     }
     const nextUnit = units[unitIndex + 1];
     playbackTimer = global.setTimeout(() => {
+      playbackTimer = null;
+      const displayedUnit = units[unitIndex];
+      const nextFigure = content?.readingContext?.figures?.[nextFigureIndex];
+      const unitAfterDisplayed = units[unitIndex + 1];
+      const reachesFigure = displayedUnit && nextFigure && (
+        nextFigure.sourceOffset <= displayedUnit.end
+        || (unitAfterDisplayed
+          ? nextFigure.sourceOffset <= unitAfterDisplayed.start
+          : nextFigure.sourceOffset <= (content?.text.length ?? 0))
+      );
+      if (displayedUnit && nextFigure && reachesFigure) {
+        nextFigureIndex += 1;
+        showFigure(nextFigure);
+        return;
+      }
       if (unitIndex >= units.length - 1) {
         pause();
         renderUnit();
@@ -483,6 +599,60 @@
     ));
   }
 
+  function showFigure(figure: ReaderFigure): void {
+    pause();
+    figurePanel?.remove();
+    const panel = global.document.createElement("figure");
+    panel.className = "rsvp-figure";
+    panel.setAttribute("aria-label", "本文画像");
+    panel.dataset.sourceStart = String(figure.sourceOffset);
+    const image = global.document.createElement("img");
+    image.src = figure.src;
+    image.alt = figure.alt || figure.caption || "本文画像";
+    panel.append(createVeiledImageSurface(image));
+    if (figure.caption) {
+      const caption = global.document.createElement("figcaption");
+      caption.textContent = figure.caption;
+      panel.append(caption);
+    }
+    getNodes().content.append(panel);
+    figurePanel = panel;
+  }
+
+  function resumeAfterFigure(): void {
+    const shownOffset = Number(figurePanel?.dataset.sourceStart);
+    figurePanel?.remove();
+    figurePanel = null;
+    const displayedUnit = units[unitIndex];
+    const nextFigure = content?.readingContext?.figures?.[nextFigureIndex];
+    const resumesBeforeCurrentUnit = Boolean(displayedUnit) && shownOffset <= (displayedUnit?.start ?? 0);
+    const nextFigureThreshold = resumesBeforeCurrentUnit ? displayedUnit?.start : displayedUnit?.end;
+    if (nextFigure && nextFigureThreshold !== undefined && nextFigure.sourceOffset <= nextFigureThreshold) {
+      nextFigureIndex += 1;
+      showFigure(nextFigure);
+      return;
+    }
+    if (resumesBeforeCurrentUnit) {
+      play();
+      return;
+    }
+    if (unitIndex >= units.length - 1) {
+      pause();
+      renderUnit();
+      return;
+    }
+    unitIndex += 1;
+    renderUnit();
+    play();
+  }
+
+  function syncNextFigureIndex(): void {
+    const currentUnitOffset = units[unitIndex]?.start ?? 0;
+    const articleFigures = content?.readingContext?.figures || [];
+    nextFigureIndex = articleFigures.findIndex((figure) => figure.sourceOffset >= currentUnitOffset);
+    if (nextFigureIndex < 0) nextFigureIndex = articleFigures.length;
+  }
+
   function crossesSectionBoundary(unit: ReaderUnit | undefined, nextUnit: ReaderUnit | undefined): boolean {
     if (!unit || !nextUnit) return false;
     const offsets = content?.readingContext?.sectionOffsets || [];
@@ -491,6 +661,16 @@
 
   function previousSentence() {
     pause();
+    if (figurePanel) {
+      const figureOffset = Number(figurePanel.dataset.sourceStart);
+      figurePanel.remove();
+      figurePanel = null;
+      const unitBeforeFigure = global.Engine.findUnitIndex(units, Math.max(0, figureOffset - 1));
+      unitIndex = global.Engine.findSentenceStart(units, unitBeforeFigure);
+      syncNextFigureIndex();
+      renderUnit();
+      return;
+    }
     unitIndex = global.Engine.findPreviousSentenceStart(units, unitIndex);
     renderUnit();
   }
@@ -506,6 +686,8 @@
     overlay = null;
     content = null;
     units = [];
+    nextFigureIndex = 0;
+    figurePanel = null;
     mode = "rsvp";
     nodes = null;
     global.document.documentElement.style.overflow = sourceOverflow ?? "";

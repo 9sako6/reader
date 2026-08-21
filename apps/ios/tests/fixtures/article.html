@@ -10,6 +10,9 @@
     h1 { font-size: 38px; line-height: 1.25; }
     h2 { margin-top: 48px; }
     p { font-size: 18px; line-height: 1.9; }
+    figure { margin: 36px 0; }
+    figure img { display: block; width: 100%; border-radius: 16px; }
+    figcaption { margin-top: 10px; color: #686868; text-align: center; }
   </style>
 </head>
 <body>
@@ -18,6 +21,10 @@
       <h1>長い文章を、自分の速度で読む</h1>
       <p>画面に表示されている文章は、同じ内容でも読み方によって大きく印象が変わります。小さな文字や明るすぎる背景は、それだけで読む気持ちを削いでしまいます。</p>
       <p>readerは文章を保存する本棚ではありません。いま目の前にある文章を、その場だけ、自分が読みやすい形へ変換します。</p>
+      <figure>
+        <img src="reading-flow.svg" alt="文章と画像が一つの流れに並ぶ図">
+        <figcaption>文章と画像を、本文の順番どおりに読む</figcaption>
+      </figure>
       <h2>文章表示とRSVP</h2>
       <p>通常の文章として自分の速度でスクロールすることも、視線を固定したままRSVPで読み進めることもできます。読み方を変えても、同じ場所から続きを始められます。</p>
       <p>読み終えて閉じると、元のページとスクロール位置へ戻ります。本文や読書位置は端末に残しません。</p>
@@ -28,7 +35,7 @@
   <script src="../../../../node_modules/defuddle/dist/index.js"></script>
   <script src="../../../../.build/packages/engine/src/engine.js"></script>
   <script src="../../../../.build/packages/extractor/src/extractor.js"></script>
-  <script src="../../../../.build/apps/ios/ReaderExtension/Resources/viewer/icons.js"></script>
+  <script src="../../../../.build/packages/icons/src/icons.js"></script>
   <script src="../../../../.build/apps/ios/ReaderExtension/Resources/viewer/viewer.js"></script>
   <script src="../../../../.build/apps/ios/ReaderExtension/Resources/viewer/bootstrap.js"></script>
 </body>

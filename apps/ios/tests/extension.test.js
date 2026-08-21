@@ -60,5 +60,13 @@ test("mobile controls keep the primary reading actions at the bottom", () => {
   assert.doesNotMatch(overlay, /\.rsvp-unit\.quote \{[^}]*padding:/s);
   assert.match(overlay, /\.text-view \{[^}]*-webkit-mask-image: linear-gradient\(to bottom, transparent/s);
   assert.match(overlay, /\.text-view \{[^}]*mask-image: linear-gradient\(to bottom, transparent/s);
+  assert.match(overlay, /appendArticleContent\(articleNode, readableBlocks, blockElements, content\.readingContext\?\.figures \|\| \[\]\)/);
+  assert.match(overlay, /if \(figurePanel\) resumeAfterFigure\(\)/);
+  assert.match(overlay, /panel\.append\(createVeiledImageSurface\(image\)\)/);
+  assert.match(overlay, /background: rgba\(0,0,0,\.46\)/);
+  assert.match(overlay, /surface\.addEventListener\("pointerdown", reveal\)/);
+  assert.match(overlay, /surface\.addEventListener\("pointercancel", dim\)/);
+  assert.match(overlay, /unitIndex = global\.Engine\.findSentenceStart\(units, unitBeforeFigure\)/);
+  assert.doesNotMatch(overlay, /referenceSentence|referenceEnd|続きを読む/);
   assert.doesNotMatch(overlay, /desktop-viewer|DesktopViewer|記事の構成/);
 });

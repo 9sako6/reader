@@ -5,6 +5,7 @@ const {
   MAX_GRAPHEMES_PER_UNIT,
   segmentText,
   splitStructuralSpans,
+  findSentenceStart,
   findPreviousSentenceStart,
   findActiveHeadingIndex,
   calculateReadingProgress,
@@ -103,6 +104,23 @@ test("splitStructuralSpans identifies body, quote, and aside", () => {
 test("segmentText assigns sentence indices in order", () => {
   const units = segmentText("一文目です。二文目です。三文目です。");
   assert.deepEqual([...new Set(units.map((unit) => unit.sentenceIndex))], [0, 1, 2]);
+});
+
+test("segmentText never crosses a supplied content boundary", () => {
+  const source = "画像前の文章と画像後の文章です。";
+  const boundary = source.indexOf("画像後");
+  const units = segmentText(source, "ja", [boundary]);
+
+  assert.equal(units.map((unit) => unit.text).join(""), source);
+  assert.ok(units.every((unit) => unit.end <= boundary || unit.start >= boundary));
+});
+
+test("findSentenceStart keeps the sentence immediately before an image", () => {
+  const units = segmentText("最初の文です。画像直前の長い文です。画像後です。");
+  const beforeImage = units.findIndex((unit) => unit.sentenceIndex === 1);
+  const laterPartOfSentence = units.findLastIndex((unit) => unit.sentenceIndex === 1);
+
+  assert.equal(findSentenceStart(units, laterPartOfSentence), beforeImage);
 });
 
 test("findPreviousSentenceStart moves to previous sentence", () => {

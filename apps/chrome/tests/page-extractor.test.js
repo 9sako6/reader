@@ -98,14 +98,14 @@ test("extractPage returns article text and heading offsets", () => {
   assert.equal(readerOverlayRemoved, true);
 });
 
-test("extractPage keeps only figures referenced by the article text", () => {
+test("extractPage keeps every article image at its source offset", () => {
   const caption = { textContent: "図1 処理時間" };
   const figure = {
     querySelector(selector) {
       return selector === "figcaption" ? caption : null;
     },
   };
-  const referencedImage = {
+  const chartImage = {
     currentSrc: "https://example.com/chart.png",
     src: "https://example.com/chart.png",
     naturalWidth: 1200,
@@ -131,7 +131,7 @@ test("extractPage keeps only figures referenced by the article text", () => {
   };
   const article = {
     querySelectorAll(selector) {
-      if (selector === "img") return [referencedImage, decorativeImage];
+      if (selector === "img") return [chartImage, decorativeImage];
       return [];
     },
   };
@@ -167,11 +167,18 @@ test("extractPage keeps only figures referenced by the article text", () => {
 
   assert.deepEqual(result.readingContext.figures, [
     {
+      src: "https://example.com/hero.png",
+      alt: "装飾画像",
+      caption: "",
+      sourceOffset: 0,
+      sourceEnd: 0,
+    },
+    {
       src: "https://example.com/chart.png",
       alt: "処理時間の比較グラフ",
       caption: "図1 処理時間",
-      referenceSentence: "この結果を図1に示します。",
-      referenceEnd: "この結果を図1に示します。".length,
+      sourceOffset: "この結果を図1に示します。\n".length,
+      sourceEnd: "この結果を図1に示します。\n図1 処理時間".length,
     },
   ]);
 });
