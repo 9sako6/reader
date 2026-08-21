@@ -39,7 +39,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     if (!result?.text) throw new Error("No readable page content found");
     await sendReaderContent(tab.id, requestId, result.text, result.readingContext);
   } catch (error) {
-    console.error("Failed to read the page with RSVP Reader", error);
+    console.error("Failed to read the page with reader", error);
     if (requestId) await showReaderError(tab.id, requestId);
   }
 });
@@ -50,7 +50,7 @@ async function startReader(tabId: number, text: string, readingContext: ReadingC
     requestId = await openReader(tabId);
     await sendReaderContent(tabId, requestId, text, readingContext);
   } catch (error) {
-    console.error("Failed to start RSVP Reader", error);
+    console.error("Failed to start reader", error);
     if (requestId) await showReaderError(tabId, requestId);
   }
 }

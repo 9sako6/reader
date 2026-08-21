@@ -25,7 +25,7 @@
   };
 
   function create(document: Document, name: IconName, size = 24): SVGSVGElement {
-    if (!(name in icons)) throw new TypeError(`Unknown Reader icon: ${name}`);
+    if (!(name in icons)) throw new TypeError(`Unknown reader icon: ${name}`);
     const svg = document.createElementNS(namespace, "svg");
     svg.setAttribute("width", String(size));
     svg.setAttribute("height", String(size));

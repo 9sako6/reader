@@ -15,10 +15,10 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "4FF2F419C3D2B210459D9DF7"
-               BuildableName = "Reader.app"
-               BlueprintName = "Reader"
-               ReferencedContainer = "container:Reader.xcodeproj">
+               BlueprintIdentifier = "025927B2C487EF35555CB4D4"
+               BuildableName = "reader.app"
+               BlueprintName = "reader"
+               ReferencedContainer = "container:reader.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
          <BuildActionEntry
@@ -29,10 +29,10 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "2E9077C31616F18C26DFAC17"
-               BuildableName = "ReaderExtension.appex"
-               BlueprintName = "ReaderExtension"
-               ReferencedContainer = "container:Reader.xcodeproj">
+               BlueprintIdentifier = "07E0C13A194EA9FB85A7C69F"
+               BuildableName = "reader-extension.appex"
+               BlueprintName = "reader-extension"
+               ReferencedContainer = "container:reader.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -46,10 +46,10 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4FF2F419C3D2B210459D9DF7"
-            BuildableName = "Reader.app"
-            BlueprintName = "Reader"
-            ReferencedContainer = "container:Reader.xcodeproj">
+            BlueprintIdentifier = "025927B2C487EF35555CB4D4"
+            BuildableName = "reader.app"
+            BlueprintName = "reader"
+            ReferencedContainer = "container:reader.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <Testables>
@@ -69,10 +69,10 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4FF2F419C3D2B210459D9DF7"
-            BuildableName = "Reader.app"
-            BlueprintName = "Reader"
-            ReferencedContainer = "container:Reader.xcodeproj">
+            BlueprintIdentifier = "025927B2C487EF35555CB4D4"
+            BuildableName = "reader.app"
+            BlueprintName = "reader"
+            ReferencedContainer = "container:reader.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -86,10 +86,10 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4FF2F419C3D2B210459D9DF7"
-            BuildableName = "Reader.app"
-            BlueprintName = "Reader"
-            ReferencedContainer = "container:Reader.xcodeproj">
+            BlueprintIdentifier = "025927B2C487EF35555CB4D4"
+            BuildableName = "reader.app"
+            BlueprintName = "reader"
+            ReferencedContainer = "container:reader.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

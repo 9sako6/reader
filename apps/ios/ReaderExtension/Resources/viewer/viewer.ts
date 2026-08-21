@@ -35,7 +35,7 @@
   let nodes: MobileNodes | null = null;
 
   function getNodes(): MobileNodes {
-    if (!nodes) throw new Error("Reader shell is not available");
+    if (!nodes) throw new Error("reader shell is not available");
     return nodes;
   }
 
@@ -115,7 +115,7 @@
     const button = global.document.createElement("button");
     button.className = "entry";
     button.type = "button";
-    button.setAttribute("aria-label", "Readerで読む");
+    button.setAttribute("aria-label", "readerで読む");
     button.addEventListener("click", open);
     return button;
   }
@@ -141,7 +141,7 @@
       renderReader();
     } catch (error) {
       showError();
-      global.console?.error?.("Reader could not prepare this page", error);
+      global.console?.error?.("reader could not prepare this page", error);
     }
   }
 
@@ -149,12 +149,12 @@
     const reader = global.document.createElement("section");
     reader.className = "reader";
     reader.setAttribute("role", "dialog");
-    reader.setAttribute("aria-label", "Reader");
+    reader.setAttribute("aria-label", "reader");
     const topbar = global.document.createElement("header");
     topbar.className = "topbar";
     const modeButton = transportButton("", toggleMode);
     modeButton.className = "mode-button";
-    const closeButton = iconButton("close", "Readerを閉じる", close);
+    const closeButton = iconButton("close", "readerを閉じる", close);
     topbar.append(modeButton, closeButton);
     const controlbar = global.document.createElement("footer");
     controlbar.className = "controlbar";

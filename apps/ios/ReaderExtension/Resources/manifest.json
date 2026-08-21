@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Reader",
-  "version": "0.1.1",
-  "description": "閲覧中の文章を読みやすいReaderへ切り替えます。",
+  "name": "reader",
+  "version": "0.0.1",
+  "description": "閲覧中の文章を読みやすいreaderへ切り替えます。",
   "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {

@@ -5,7 +5,7 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const manifestPath = path.join(root, "ReaderExtension", "Resources", "manifest.json");
 
-test("Safari extension loads Reader resources in dependency order", () => {
+test("Safari extension loads reader resources in dependency order", () => {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.permissions, undefined);
@@ -21,12 +21,12 @@ test("Safari extension loads Reader resources in dependency order", () => {
 });
 
 test("Xcode project embeds every manifest script in the extension", () => {
-  const project = fs.readFileSync(path.join(root, "Reader.xcodeproj", "project.pbxproj"), "utf8");
+  const project = fs.readFileSync(path.join(root, "reader.xcodeproj", "project.pbxproj"), "utf8");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   for (const script of manifest.content_scripts[0].js) {
     assert.match(project, new RegExp(`${script.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} in Resources`));
   }
-  assert.match(project, /ReaderExtension\.appex in Embed Foundation Extensions/);
+  assert.match(project, /reader-extension\.appex in Embed Foundation Extensions/);
 });
 
 test("mobile controls keep the primary reading actions at the bottom", () => {
@@ -55,7 +55,7 @@ test("mobile controls keep the primary reading actions at the bottom", () => {
   assert.doesNotMatch(overlay, /const play = transportButton/);
   assert.doesNotMatch(overlay, /1文進む|表示設定/);
   assert.match(overlay, /justify-content: flex-end/);
-  assert.match(overlay, /iconButton\("close", "Readerを閉じる"/);
+  assert.match(overlay, /iconButton\("close", "readerを閉じる"/);
   assert.match(overlay, /\.rsvp-unit\.quote::before/);
   assert.doesNotMatch(overlay, /\.rsvp-unit\.quote \{[^}]*padding:/s);
   assert.match(overlay, /\.text-view \{[^}]*-webkit-mask-image: linear-gradient\(to bottom, transparent/s);
