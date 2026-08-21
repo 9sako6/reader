@@ -59,7 +59,7 @@ async function openReader(tabId: number): Promise<string> {
   const requestId = `${Date.now()}-${requestSequence += 1}`;
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["engine.js", "extractor.js", "viewer.js"],
+    files: ["engine.js", "extractor.js", "icons.js", "viewer.js"],
   });
   await chrome.tabs.sendMessage(tabId, {
     type: "SHOW_RSVP_LOADING",

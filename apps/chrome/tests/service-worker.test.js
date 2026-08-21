@@ -83,7 +83,7 @@ test("service worker registers selection and whole-page entry points", async () 
   while (!finishExtraction) await Promise.resolve();
   assert.equal(
     scriptCalls[0].files.join(","),
-    "engine.js,extractor.js,viewer.js",
+    "engine.js,extractor.js,icons.js,viewer.js",
   );
   assert.equal(messages[0].tabId, 7);
   assert.equal(messages[0].message.type, "SHOW_RSVP_LOADING");
