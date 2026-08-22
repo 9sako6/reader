@@ -11,7 +11,10 @@
   const ROOT_ID = "__rsvp-reader-root";
   const DISPLAY_FONT_SIZE = "clamp(36px, 4.5vw, 64px)";
 
+  let baseUnits: ReaderUnit[] = [];
   let units: ReaderUnit[] = [];
+  let segmentationLocale = "ja";
+  let currentGraphemeLimit = 12;
   let currentUnitIndex = 0;
   let playbackState: PlaybackState = "idle";
   let timerId: number | null = null;
@@ -104,7 +107,8 @@
     playbackState = "paused";
 
     const figureBoundaries = figures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
-    units = globalThis.Engine.segmentText(content.text, "ja", figureBoundaries)
+    segmentationLocale = "ja";
+    baseUnits = globalThis.Engine.segmentText(content.text, segmentationLocale, figureBoundaries)
       .map((unit) => {
         const value = unit.text.trim();
         const leadingWhitespace = unit.text.length - unit.text.trimStart().length;
@@ -116,13 +120,16 @@
         && unit.start >= figure.sourceOffset
         && unit.end <= figure.sourceEnd
       )));
-    if (units.length === 0) {
+    if (baseUnits.length === 0) {
       close();
       return;
     }
 
+    units = baseUnits;
+    currentGraphemeLimit = 12;
     currentUnitIndex = 0;
     createOverlay();
+    rebuildUnitsForViewport();
     renderCurrentUnit();
     play();
   }
@@ -377,7 +384,9 @@
     });
 
     if (typeof globalThis.ResizeObserver === "function") {
-      displayResizeObserver = new globalThis.ResizeObserver(fitDisplayText);
+      displayResizeObserver = new globalThis.ResizeObserver(() => {
+        if (rebuildUnitsForViewport()) renderCurrentUnit();
+      });
       displayResizeObserver.observe(main);
     }
   }
@@ -1018,7 +1027,8 @@
       contextSentenceIndex = unit.sentenceIndex;
     }
     display.textContent = unit.text;
-    fitDisplayText();
+    display.dataset.sourceStart = String(unit.start);
+    display.dataset.sourceEnd = String(unit.end);
     applyUnitStyle(unit.kind);
     updateMinimap(unit.start, unit.end);
   }
@@ -1031,43 +1041,30 @@
     );
   }
 
-  function fitDisplayText() {
-    if (!display) return;
-
-    display.style.fontSize = DISPLAY_FONT_SIZE;
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      const computedStyle = globalThis.getComputedStyle?.(display);
-      const fontSize = Number.parseFloat(computedStyle?.fontSize);
-      const leftPadding = Number.parseFloat(computedStyle?.paddingLeft) || 0;
-      const rightPadding = Number.parseFloat(computedStyle?.paddingRight) || 0;
-      const horizontalPadding = leftPadding + rightPadding;
-      const availableWidth = Math.max(0, display.clientWidth - horizontalPadding);
-      const requiredWidth = measureDisplayTextWidth(horizontalPadding);
-      if (availableWidth <= 0 || requiredWidth <= availableWidth) return;
-      if (!Number.isFinite(fontSize) || fontSize <= 0 || !Number.isFinite(requiredWidth)) return;
-      display.style.fontSize = `${fontSize * (availableWidth / requiredWidth) * 0.96}px`;
-    }
+  function computedFixedFontSize(): number {
+    const computedStyle = display ? globalThis.getComputedStyle?.(display) : null;
+    const value = Number.parseFloat(computedStyle?.fontSize || "");
+    return Number.isFinite(value) && value > 0 ? value : 64;
   }
 
-  function measureDisplayTextWidth(horizontalPadding: number): number {
-    const displayNode = display;
-    if (!displayNode) return 0;
-    let range: Range | null = null;
-    const alignment = displayNode.style.justifyContent;
-    try {
-      displayNode.style.justifyContent = "flex-start";
-      range = document.createRange?.();
-      range?.selectNodeContents(displayNode);
-      const rangeWidth = range?.getBoundingClientRect().width;
-      const overflowWidth = Math.max(0, displayNode.scrollWidth - horizontalPadding);
-      if (Number.isFinite(rangeWidth)) return Math.max(overflowWidth, rangeWidth);
-      return overflowWidth;
-    } catch {
-      return Math.max(0, displayNode.scrollWidth - horizontalPadding);
-    } finally {
-      displayNode.style.justifyContent = alignment;
-      range?.detach?.();
-    }
+  function maxGraphemesForViewport(): number {
+    const displayAreaWidth = display?.clientWidth || globalThis.innerWidth || 0;
+    const availableWidth = Math.max(160, displayAreaWidth - 32);
+    const fontSize = computedFixedFontSize();
+    return Math.min(12, Math.max(3, Math.floor(availableWidth / fontSize)));
+  }
+
+  function rebuildUnitsForViewport(): boolean {
+    if (baseUnits.length === 0) return false;
+    const nextLimit = maxGraphemesForViewport();
+    if (nextLimit === currentGraphemeLimit && units.length > 0) return false;
+
+    const offset = units[currentUnitIndex]?.start ?? currentOffset;
+    currentGraphemeLimit = nextLimit;
+    units = globalThis.Engine.splitLongUnits(baseUnits, segmentationLocale, currentGraphemeLimit);
+    currentUnitIndex = globalThis.Engine.findUnitIndex(units, offset);
+    currentOffset = units[currentUnitIndex]?.start ?? offset;
+    return true;
   }
 
   function applyUnitStyle(kind: ReaderUnitKind): void {
@@ -1458,7 +1455,10 @@
     playbackState = "idle";
     sourceText = "";
     blocks = [];
+    baseUnits = [];
     currentOffset = 0;
+    segmentationLocale = "ja";
+    currentGraphemeLimit = 12;
     launchFocus = null;
     if (restoreFocus && typeof globalThis.requestAnimationFrame === "function") {
       globalThis.requestAnimationFrame(() => restoreFocus.focus?.());

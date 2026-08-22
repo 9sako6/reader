@@ -112,36 +112,63 @@
 
   function splitLongUnits(units: ReaderUnit[], locale = "ja", maxGraphemes = MAX_GRAPHEMES_PER_UNIT): ReaderUnit[] {
     const limit = Math.max(1, Number.isInteger(maxGraphemes) ? maxGraphemes : MAX_GRAPHEMES_PER_UNIT);
-    const graphemeSegmenter = new Intl.Segmenter(locale, { granularity: "grapheme" });
-    const wordSegmenter = new Intl.Segmenter(locale, { granularity: "word" });
-    const result: ReaderUnit[] = [];
-    for (const unit of units) {
-      const graphemes = [...graphemeSegmenter.segment(unit.text)];
-      if (graphemes.length <= limit) { result.push({ ...unit }); continue; }
+    return units.flatMap((unit) => splitUnitAtGraphemeLimit(unit, locale, limit));
+  }
 
-      let partStart = 0;
-      let partEnd = 0;
-      let partHasWord = false;
-      for (const piece of wordSegmenter.segment(unit.text)) {
-        const pieceEnd = piece.index + piece.segment.length;
-        const candidate = unit.text.slice(partStart, pieceEnd);
-        const exceedsLimit = graphemeCount(candidate, locale) > limit;
+  function splitUnitAtGraphemeLimit(unit: ReaderUnit, locale: string, limit: number): ReaderUnit[] {
+    const graphemes = [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(unit.text)];
+    if (graphemes.length <= limit) return [{ ...unit }];
 
-        if (piece.isWordLike && partHasWord && exceedsLimit) {
-          result.push({ ...unit, text: unit.text.slice(partStart, partEnd), start: unit.start + partStart, end: unit.start + partEnd });
-          partStart = piece.index;
-          partHasWord = false;
-        }
-
-        partEnd = pieceEnd;
-        if (piece.isWordLike) partHasWord = true;
-      }
-
-      if (partStart < partEnd) {
-        result.push({ ...unit, text: unit.text.slice(partStart, partEnd), start: unit.start + partStart, end: unit.start + partEnd });
-      }
+    const graphemeIndexByOffset = new Map<number, number>([
+      ...graphemes.map((piece, index) => [piece.index, index] as const),
+      [unit.text.length, graphemes.length],
+    ]);
+    const wordBoundaries = new Set<number>();
+    for (const piece of new Intl.Segmenter(locale, { granularity: "word" }).segment(unit.text)) {
+      if (piece.index > 0) wordBoundaries.add(piece.index);
+      const pieceEnd = piece.index + piece.segment.length;
+      wordBoundaries.add(pieceEnd);
     }
-    return result;
+
+    const parts: ReaderUnit[] = [];
+    let graphemeStart = 0;
+    while (graphemeStart < graphemes.length) {
+      const candidateGraphemeEnd = Math.min(graphemes.length, graphemeStart + limit);
+      const start = graphemes[graphemeStart]?.index ?? unit.text.length;
+      const candidateEnd = candidateGraphemeEnd === graphemes.length
+        ? unit.text.length
+        : graphemes[candidateGraphemeEnd]?.index ?? unit.text.length;
+      const wordBoundary = [...wordBoundaries]
+        .filter((offset) => offset > start && offset <= candidateEnd && graphemeIndexByOffset.has(offset))
+        .sort((left, right) => right - left)[0];
+      const end = wordBoundary ?? candidateEnd;
+      const endGrapheme = graphemeIndexByOffset.get(end) ?? candidateGraphemeEnd;
+      const safeEndGrapheme = endGrapheme > graphemeStart ? endGrapheme : candidateGraphemeEnd;
+      const safeEnd = safeEndGrapheme === graphemes.length
+        ? unit.text.length
+        : graphemes[safeEndGrapheme]?.index ?? candidateEnd;
+
+      parts.push({
+        ...unit,
+        text: unit.text.slice(start, safeEnd),
+        start: unit.start + start,
+        end: unit.start + safeEnd,
+      });
+      graphemeStart = safeEndGrapheme;
+    }
+    return parts.reduce<ReaderUnit[]>((merged, part) => {
+      const previous = merged.at(-1);
+      if (
+        previous
+        && previous.sentenceIndex === part.sentenceIndex
+        && !/[\p{L}\p{N}]/u.test(part.text)
+        && graphemeCount(`${previous.text}${part.text}`, locale) <= limit
+      ) {
+        previous.text += part.text;
+        previous.end = part.end;
+      } else merged.push(part);
+      return merged;
+    }, []);
   }
 
   function segmentText(text: string, locale = "ja", boundaries: number[] = []): ReaderUnit[] {

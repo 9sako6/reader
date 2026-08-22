@@ -72,6 +72,19 @@
         };
       }
 
+      function customFixtureContent(text) {
+        return {
+          text,
+          readingContext: {
+            headings: [],
+            sectionOffsets: [],
+            sectionTransitions: [],
+            initialHeadingIndex: -1,
+            figures: [],
+          },
+        };
+      }
+
       async function installChromeViewer() {
         const messageListeners = [];
         const chromeGlobal = globalThis.chrome || {};
@@ -93,8 +106,10 @@
           await loadScript(source);
           loadedScripts.push(source);
         }
-        const open = () => {
-          const { text, readingContext } = fixtureContent();
+        const open = (customText) => {
+          const { text, readingContext } = typeof customText === "string"
+            ? customFixtureContent(customText)
+            : fixtureContent();
           for (const listener of messageListeners) listener({ type: "SHOW_RSVP_LOADING", requestId: "e2e" });
           for (const listener of messageListeners) listener({ type: "START_RSVP", requestId: "e2e", text, readingContext });
         };

@@ -6,6 +6,7 @@ const {
   MAX_WORDS_PER_UNIT,
   MAX_GRAPHEMES_PER_UNIT,
   segmentText,
+  splitLongUnits,
   splitStructuralSpans,
   findSentenceStart,
   findPreviousSentenceStart,
@@ -88,6 +89,44 @@ test("long units split at word boundaries without breaking katakana words", () =
     segmentText("ソフトウェア開発ライフサイクル").map((unit) => unit.text),
     ["ソフトウェア開発", "ライフサイクル"],
   );
+});
+
+test("splitLongUnits caps unbroken text and preserves grapheme and source offsets", () => {
+  const cases = [
+    { name: "English word", source: "Supercalifragilisticexpialidocious" },
+    { name: "alphanumeric token", source: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" },
+    { name: "URL", source: "https://example.com/path/to/a/very/long/resource?token=abcdefghijklmnopqrstuvwxyz0123456789" },
+    { name: "UUID", source: "550e8400-e29b-41d4-a716-446655440000" },
+    {
+      name: "emoji and combining marks",
+      source: "👨‍👩‍👧‍👦🇯🇵e\u0301👨‍👩‍👧‍👦🇯🇵e\u0301👨‍👩‍👧‍👦🇯🇵e\u0301👨‍👩‍👧‍👦🇯🇵e\u0301👨‍👩‍👧‍👦🇯🇵e\u0301",
+    },
+  ];
+
+  for (const { name, source } of cases) {
+    for (const limit of [3, 6, 12]) {
+      const sourceWithPrefix = `prefix:${source}:suffix`;
+      const sourceStart = "prefix:".length;
+      const unit = {
+        text: source,
+        sentenceIndex: 4,
+        kind: "body",
+        start: sourceStart,
+        end: sourceStart + source.length,
+      };
+      const units = splitLongUnits([unit], "ja", limit);
+      const graphemeCount = (text: string) => [
+        ...new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(text),
+      ].length;
+
+      assert.equal(units.map((item) => item.text).join(""), source, `${name} at ${limit}`);
+      assert.ok(
+        units.every((item) => graphemeCount(item.text) <= limit),
+        `${name} exceeds ${limit} graphemes`,
+      );
+      for (const item of units) assert.equal(sourceWithPrefix.slice(item.start, item.end), item.text);
+    }
+  }
 });
 
 test("long Japanese corner-bracket quotes are split without losing quote styling", () => {
