@@ -154,29 +154,45 @@ async function verifySafariRuntime() {
   await driverRequest("POST", `/session/${sessionId}/url`, { url: freshPageUrl() });
   const result = await executeScript(`
     const done = arguments[arguments.length - 1];
-    globalThis.MobileViewer.close();
-    const originalInit = globalThis.ReaderSession.init;
-    const originalCreate = globalThis.ReaderSession.create;
-    let initCount = 0;
-    let createCount = 0;
-    const wasmResponses = [];
-    globalThis.ReaderSession.init = (...args) => {
-      initCount += 1;
-      return originalInit(...args);
-    };
-    globalThis.ReaderSession.create = (...args) => {
-      createCount += 1;
-      return originalCreate(...args);
-    };
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (...args) => originalFetch(...args).then((response) => {
-      if (String(args[0]).endsWith("reader_session_bg.wasm")) {
-        wasmResponses.push({ status: response.status, contentType: response.headers.get("content-type") });
+    const dependencyDeadline = Date.now() + 10000;
+    function openWhenRuntimeIsReady() {
+      if (typeof globalThis.wasm_bindgen !== "function"
+        || typeof globalThis.MobileViewer?.open !== "function"
+        || typeof globalThis.ReaderSession?.init !== "function") {
+        if (Date.now() >= dependencyDeadline) {
+          done({ error: "generated runtime dependencies did not become ready", wasmBindgen: typeof globalThis.wasm_bindgen, mobileViewer: typeof globalThis.MobileViewer, readerSession: typeof globalThis.ReaderSession });
+          return;
+        }
+        setTimeout(openWhenRuntimeIsReady, 16);
+        return;
       }
-      return response;
-    });
-    const unitDeadline = Date.now() + 5000;
-    function finishWhenRuntimeIsReady() {
+      globalThis.MobileViewer.close();
+      const originalInit = globalThis.ReaderSession.init;
+      const originalCreate = globalThis.ReaderSession.create;
+      let initCount = 0;
+      let createCount = 0;
+      let initError;
+      const wasmResponses = [];
+      globalThis.ReaderSession.init = (...args) => {
+        initCount += 1;
+        return originalInit(...args).catch((error) => {
+          initError = String(error);
+          throw error;
+        });
+      };
+      globalThis.ReaderSession.create = (...args) => {
+        createCount += 1;
+        return originalCreate(...args);
+      };
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (...args) => originalFetch(...args).then((response) => {
+        if (String(args[0]).includes("reader_session_bg.wasm")) {
+          wasmResponses.push({ status: response.status, contentType: response.headers.get("content-type") });
+        }
+        return response;
+      });
+      const unitDeadline = Date.now() + 10000;
+      function finishWhenRuntimeIsReady() {
       const host = document.getElementById("__reader-host");
       const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
       const initialized = globalThis.ReaderSession.ready() === true;
@@ -188,6 +204,7 @@ async function verifySafariRuntime() {
           initCount,
           createCount,
           wasmResponses,
+          initError,
           host: Boolean(host),
           unit: true,
           unitText,
@@ -201,6 +218,7 @@ async function verifySafariRuntime() {
           initCount,
           createCount,
           wasmResponses,
+          initError,
           host: Boolean(host),
           unit: Boolean(unit),
           unitText,
@@ -209,7 +227,9 @@ async function verifySafariRuntime() {
       }
       setTimeout(finishWhenRuntimeIsReady, 16);
     }
-    globalThis.MobileViewer.open().then(finishWhenRuntimeIsReady).catch((error) => done({ error: String(error) }));
+      globalThis.MobileViewer.open().then(finishWhenRuntimeIsReady).catch((error) => done({ error: String(error), initError }));
+    }
+    openWhenRuntimeIsReady();
   `);
   assert.equal(result.error, undefined, JSON.stringify(result));
   assert.equal(result.initialized, true);

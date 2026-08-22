@@ -12,6 +12,7 @@ const scripts = ["session-wasm-module.js", "session.js", "defuddle.js", "engine.
   .map((name) => resolve(generatedRoot, name));
 const nodeCounts = [1000, 10_000, 50_000, 100_000];
 const runsPerCase = Number(process.env.READER_PERFORMANCE_RUNS) || 10;
+const warmupRunsPerCase = Number(process.env.READER_PERFORMANCE_WARMUP_RUNS) || 2;
 const budgetMargin = 0.25;
 const baseline = {
   source: "github-actions/macos-15 run 32590877670 artifact reader-performance-baseline",
@@ -325,6 +326,7 @@ const browser = await chromium.launch({ headless: true });
 try {
   const fixtureReports = {};
   for (const fixture of fixtures) {
+    for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) await measurePage(browser, fixture);
     const runs = [];
     for (let run = 0; run < runsPerCase; run += 1) runs.push(await measurePage(browser, fixture));
     const median = medianReport(runs);
@@ -336,9 +338,11 @@ try {
 
   const nodeReports = {};
   for (const nodeCount of nodeCounts) {
+    const fixture = { name: `nodes-${nodeCount}`, nodeCount, extraction: "dominant" };
+    for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) await measurePage(browser, fixture);
     const runs = [];
     for (let run = 0; run < runsPerCase; run += 1) {
-      runs.push(await measurePage(browser, { name: `nodes-${nodeCount}`, nodeCount, extraction: "dominant" }));
+      runs.push(await measurePage(browser, fixture));
     }
     const median = medianReport(runs);
     const p50 = percentileReport(runs, 0.5);
@@ -373,6 +377,7 @@ try {
     schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     runsPerCase,
+    warmupRunsPerCase,
     baseline,
     fixtures: fixtureReports,
     nodeBenchmarks: nodeReports,
