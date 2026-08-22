@@ -4,14 +4,38 @@ import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
+const port = Number(process.env.READER_E2E_PORT) || 4173;
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
   [".svg", "image/svg+xml"],
 ]);
+const immediateImage = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
 
 createServer(async (request, response) => {
-  const pathname = decodeURIComponent(new URL(request.url || "/", "http://localhost").pathname);
+  const requestUrl = new URL(request.url || "/", "http://localhost");
+  const pathname = decodeURIComponent(requestUrl.pathname);
+  if (pathname === "/image/missing.png") {
+    response.writeHead(404).end();
+    return;
+  }
+  if (pathname === "/image/broken.png") {
+    response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" }).end("not an image");
+    return;
+  }
+  if (pathname === "/image/immediate.png" || pathname === "/image/delayed.png") {
+    const configuredDelayValue = requestUrl.searchParams.get("delay");
+    const configuredDelay = configuredDelayValue === null ? Number.NaN : Number(configuredDelayValue);
+    const delay = Number.isFinite(configuredDelay) && configuredDelay >= 0
+      ? configuredDelay
+      : pathname.endsWith("delayed.png") ? 500 : 0;
+    if (delay > 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
+    response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" }).end(immediateImage);
+    return;
+  }
   const filePath = resolve(repositoryRoot, `.${pathname}`);
   if (!filePath.startsWith(`${repositoryRoot}${sep}`)) {
     response.writeHead(403).end();
@@ -28,4 +52,4 @@ createServer(async (request, response) => {
   } catch {
     response.writeHead(404).end();
   }
-}).listen(4173, "127.0.0.1");
+}).listen(port, "127.0.0.1");

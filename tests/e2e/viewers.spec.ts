@@ -42,9 +42,23 @@ async function placeTextMarker(marker: ReturnType<Page["getByRole"]>, targetTop:
   }, targetTop);
 }
 
+async function scrollTextToEnd(marker: ReturnType<Page["getByRole"]>): Promise<void> {
+  await expect.poll(() => marker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    return scroller ? scroller.scrollHeight - scroller.clientHeight : 0;
+  })).toBeGreaterThan(0);
+  await marker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    scroller.scrollTop = scroller.scrollHeight;
+  });
+}
+
 type ChromeOpenOptions = {
   delay?: number;
   text?: string;
+  image?: "immediate" | "delayed" | "missing" | "broken" | "default";
+  figureFirst?: boolean;
   requestId?: string;
   paused?: boolean;
   error?: boolean;
@@ -547,11 +561,7 @@ test("Chrome viewer preserves the sentence after an image after 50 mode round tr
   await dialog.getByRole("button", { name: "文章で読む" }).click();
   const textMarkers = dialog.locator('[data-reader-position-kind="text"][data-reader-text-anchor]');
   const afterImageMarker = textMarkers.last();
-  await afterImageMarker.evaluate((element) => {
-    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
-    if (!scroller) throw new Error("text scroller not found");
-    scroller.scrollTop = scroller.scrollHeight;
-  });
+  await scrollTextToEnd(afterImageMarker);
   await dialog.getByRole("button", { name: "RSVPで読む" }).click();
   await pauseReaderIfPlaying(dialog);
   const expected = await readReaderPosition(dialog);
@@ -708,11 +718,7 @@ test("mobile viewer preserves the sentence after an image after 50 mode round tr
   await dialog.getByRole("button", { name: "文章で読む" }).click();
   const textMarkers = dialog.locator('[data-reader-position-kind="text"][data-reader-text-anchor]');
   const afterImageMarker = textMarkers.last();
-  await afterImageMarker.evaluate((element) => {
-    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
-    if (!scroller) throw new Error("text scroller not found");
-    scroller.scrollTop = scroller.scrollHeight;
-  });
+  await scrollTextToEnd(afterImageMarker);
   await dialog.getByRole("button", { name: "RSVPで読む" }).click();
   await pauseReaderIfPlaying(dialog);
   const expected = await readReaderPosition(dialog);
@@ -740,8 +746,8 @@ test("Chrome viewer pauses for an image and exposes its context", async ({ page 
   await expect(figure).toBeVisible({ timeout: 15_000 });
   await expect(figure.getByRole("img", { name: "本文の読書フロー図" })).toBeVisible();
   await expect(figure).toContainText("読書フローの図");
-  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
-  await dialog.getByRole("button", { name: "再生" }).click();
+  await expect(dialog.getByRole("button", { name: "続きを読む" })).toBeVisible();
+  await dialog.getByRole("button", { name: "続きを読む" }).click();
   await expect(figure).toBeHidden();
   await expect(dialog.locator("[data-reader-unit]")).toBeVisible();
 });
@@ -757,10 +763,89 @@ test("mobile viewer pauses for an image and exposes its context", async ({ page 
   await expect(figure).toBeVisible({ timeout: 15_000 });
   await expect(figure.getByRole("img", { name: "本文の読書フロー図" })).toBeVisible();
   await expect(figure).toContainText("読書フローの図");
-  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
-  await dialog.getByRole("button", { name: "再生" }).click();
+  await expect(dialog.getByRole("button", { name: "続きを読む" })).toBeVisible();
+  await dialog.getByRole("button", { name: "続きを読む" }).click();
   await expect(figure).toBeHidden();
   await expect(dialog.locator("[data-reader-unit]")).toBeVisible();
+});
+
+test("Chrome viewer toggles a ready image surface with touch and keyboard", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/tests/e2e/fixtures/article.html?viewer=chrome&image=immediate&figure=first");
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  await openChrome(page, { paused: true, figureFirst: true, image: "immediate" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const figure = dialog.getByRole("figure", { name: "本文画像" });
+  await expect(figure).toBeVisible();
+  const surface = figure.locator('[data-reader-image-surface]');
+  await expect(surface).toHaveAccessibleName("画像を明るく表示");
+  await expect(surface).toHaveAttribute("aria-pressed", "false");
+  await expect(figure.locator("[data-reader-figure-indicator]")).toHaveCount(0);
+
+  await surface.click();
+  await expect(surface).toHaveAttribute("aria-pressed", "true");
+  await expect(surface).toHaveAccessibleName("画像を暗く表示");
+  await surface.focus();
+  await page.keyboard.press("Space");
+  await expect(surface).toHaveAttribute("aria-pressed", "false");
+  await page.keyboard.press("Enter");
+  await expect(surface).toHaveAttribute("aria-pressed", "true");
+});
+
+test("Chrome viewer shows delayed figure loading and resumes after a 404", async ({ page }) => {
+  await page.goto("/tests/e2e/fixtures/article.html?viewer=chrome&image=delayed&figure=first");
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  await openChrome(page, { paused: true, figureFirst: true, image: "delayed" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const figure = dialog.getByRole("figure", { name: "本文画像" });
+  await expect(figure).toBeVisible();
+  await expect(figure.locator("[data-reader-figure-status]")).toBeVisible();
+  await expect(figure.locator("[data-reader-figure-status]")).toHaveText(/画像を準備しています/u);
+  await expect(figure.locator("[data-reader-figure-indicator]")).toBeVisible();
+  await expect(figure.locator("[data-reader-figure-status]")).toBeHidden({ timeout: 5_000 });
+  await dialog.getByRole("button", { name: "続きを読む" }).click();
+  await expect(dialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
+});
+
+for (const image of ["missing", "broken"] as const) {
+  test(`Chrome viewer keeps playback available for a ${image} figure`, async ({ page }) => {
+    await page.goto(`/tests/e2e/fixtures/article.html?viewer=chrome&image=${image}&figure=first`);
+    await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+    await openChrome(page, { paused: true, figureFirst: true, image });
+
+    const dialog = page.getByRole("dialog", { name: "reader" });
+    const figure = dialog.getByRole("figure", { name: "本文画像" });
+    await expect(figure.locator("[data-reader-figure-status]")).toBeVisible();
+    await expect(figure.locator("[data-reader-figure-status]")).toHaveText("画像を読み込めませんでした");
+    await expect(dialog.getByRole("button", { name: "続きを読む" })).toBeVisible();
+    await dialog.getByRole("button", { name: "続きを読む" }).click();
+    await expect(dialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
+  });
+}
+
+test("mobile viewer shows delayed figure loading and resumes after a 404", async ({ page }) => {
+  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&image=delayed&figure=first");
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  await openMobile(page);
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const figure = dialog.getByRole("figure", { name: "本文画像" });
+  await expect(figure).toBeVisible();
+  await expect(figure.locator("[data-reader-figure-status]")).toBeVisible();
+  await expect(figure.locator("[data-reader-figure-status]")).toHaveText(/画像を準備しています/u);
+  await expect(figure.locator("[data-reader-figure-indicator]")).toBeVisible();
+  await expect(figure.locator("[data-reader-figure-status]")).toBeHidden({ timeout: 5_000 });
+
+  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&image=missing&figure=first");
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  await openMobile(page);
+  const failedDialog = page.getByRole("dialog", { name: "reader" });
+  const failedFigure = failedDialog.getByRole("figure", { name: "本文画像" });
+  await expect(failedFigure.locator("[data-reader-figure-status]")).toHaveText("画像を読み込めませんでした");
+  await failedDialog.getByRole("button", { name: "続きを読む" }).click();
+  await expect(failedDialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
 });
 
 test("Chrome viewer traps focus and restores the launch button after Escape", async ({ page }) => {
@@ -782,7 +867,7 @@ test("Chrome viewer traps focus and restores the launch button after Escape", as
   const firstControl = dialog.getByRole("button", { name: "実ブラウザで読む" });
   await firstControl.focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(dialog.getByRole("button", { name: "再生" })).toBeFocused();
+  await expect(dialog.getByRole("button", { name: /^(再生|一時停止)$/ })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(firstControl).toBeFocused();
 
@@ -833,7 +918,7 @@ test("mobile viewer traps focus and restores the launch button after Escape", as
   await expect(closeButton).toBeFocused();
 
   await page.keyboard.press("Shift+Tab");
-  await expect(dialog.getByRole("button", { name: "再生" })).toBeFocused();
+  await expect(dialog.getByRole("button", { name: /^(再生|一時停止)$/ })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(closeButton).toBeFocused();
 

@@ -30,6 +30,8 @@
     <script>
       const parameters = new URLSearchParams(location.search);
       const viewer = parameters.get("viewer") || "chrome";
+      const imageFixture = parameters.get("image") || "default";
+      const figureFirst = parameters.get("figure") === "first";
       const configuredDelay = Number(parameters.get("delay"));
       const defaultDelay = Number.isFinite(configuredDelay) && configuredDelay >= 0 ? configuredDelay : 0;
       const loadedScripts = [];
@@ -44,20 +46,28 @@
         });
       }
 
-      function fixtureContent() {
-        const leading = "最初の短い文です。次の文は注視位置が動かないことを確かめます。画像の直前にある文です。";
-        const caption = "読書フローの図";
-        const trailing = "画像の後に続く文章です。最後まで操作できます。";
-        const figureOffset = leading.length + 1;
+      function fixtureContent(options = {}) {
+        const leading = options.figureFirst
+          ? ""
+          : "最初の短い文です。次の文は注視位置が動かないことを確かめます。画像の直前にある文です。";
+        const caption = options.figureFirst ? "先頭画像" : "読書フローの図";
+        const trailing = options.figureFirst
+          ? "画像の直後から本文を続けます。"
+          : "画像の後に続く文章です。最後まで操作できます。";
+        const figureOffset = leading.length + (leading ? 1 : 0);
         const trailingOffset = figureOffset + caption.length + 1;
-        const text = `${leading}\n${caption}\n${trailing}`;
+        const text = leading ? `${leading}\n${caption}\n${trailing}` : `${caption}\n${trailing}`;
+        const configuredImage = typeof options.image === "string" ? options.image : imageFixture;
+        const imagePath = configuredImage === "default"
+          ? "/apps/ios/tests/fixtures/reading-flow.svg"
+          : `/image/${configuredImage}.png`;
         return {
           text,
           readingContext: {
             language: "ja",
             title: "実ブラウザで読む",
             blocks: [
-              { text: leading, kind: "paragraph", level: null, start: 0, end: leading.length },
+              ...(leading ? [{ text: leading, kind: "paragraph", level: null, start: 0, end: leading.length }] : []),
               { text: trailing, kind: "paragraph", level: null, start: trailingOffset, end: text.length },
             ],
             headings: [{ text: "実ブラウザで読む", level: 1 }],
@@ -65,7 +75,7 @@
             sectionTransitions: [],
             initialHeadingIndex: 0,
             figures: [{
-              src: new URL("/apps/ios/tests/fixtures/reading-flow.svg", location.href).href,
+              src: new URL(imagePath, location.href).href,
               alt: "本文の読書フロー図",
               caption,
               sourceOffset: figureOffset,
@@ -131,7 +141,7 @@
             : options.text;
           const { text, readingContext } = typeof customText === "string"
             ? customFixtureContent(customText)
-            : fixtureContent();
+            : fixtureContent({ image: options.image || imageFixture, figureFirst: options.figureFirst || figureFirst });
           const requestId = typeof options.requestId === "string"
             ? options.requestId
             : `e2e-${requestSequence += 1}`;
@@ -205,8 +215,8 @@
             return Promise.reject(new Error(reason));
           }
           return defaultDelay === 0
-            ? fixtureContent()
-            : new Promise((resolve) => setTimeout(() => resolve(fixtureContent()), defaultDelay));
+            ? fixtureContent({ image: imageFixture, figureFirst })
+            : new Promise((resolve) => setTimeout(() => resolve(fixtureContent({ image: imageFixture, figureFirst })), defaultDelay));
         };
         globalThis.Extractor.fromPage = delayedFixtureContent;
         globalThis.Extractor.fromPageAsync = delayedFixtureContent;
