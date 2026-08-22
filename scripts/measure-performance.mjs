@@ -5,27 +5,31 @@ import { chromium } from "@playwright/test";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const outputPath = resolve(repositoryRoot, "test-results/performance/reader.json");
+const webPort = Number(process.env.READER_PERFORMANCE_PORT) || 4173;
+const baseUrl = `http://127.0.0.1:${webPort}`;
 const generatedRoot = resolve(repositoryRoot, "apps/ios/ReaderExtension/Resources/generated");
 const scripts = ["session-wasm-module.js", "session.js", "defuddle.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]
   .map((name) => resolve(generatedRoot, name));
 const nodeCounts = [1000, 10_000, 50_000];
-const runsPerCase = 10;
+const runsPerCase = Number(process.env.READER_PERFORMANCE_RUNS) || 10;
 const budgetMargin = 0.25;
 const baseline = {
   source: "origin/main@8739934e58fb3bf865ffbd27b0b62488504c098f",
   runs: 10,
   margin: budgetMargin,
+  conditions: "Chromium headless, 390x844 viewport, same fixture and toolchain for baseline/candidate",
   fixtures: {
-    "short-article": { tapToFirstUnitMs: 289.5, tapToFirstRenderMs: 289.9, sessionInitMs: 9.8 },
-    "long-article": { tapToFirstUnitMs: 834.2, tapToFirstRenderMs: 856.5, sessionInitMs: 31.9 },
-    "dominant-article": { tapToFirstUnitMs: 831.9, tapToFirstRenderMs: 855.2, sessionInitMs: 32.6 },
-    "defuddle-fallback": { tapToFirstUnitMs: 872.7, tapToFirstRenderMs: 888.9, sessionInitMs: 32.9 },
+    "short-article": { tapToFirstUnitMs: 289.5, tapToFirstRenderMs: 289.9, tapToFirstFeedbackMs: 7.4, sessionInitMs: 9.8 },
+    "long-article": { tapToFirstUnitMs: 834.2, tapToFirstRenderMs: 856.5, tapToFirstFeedbackMs: 27.1, sessionInitMs: 31.9 },
+    "dominant-article": { tapToFirstUnitMs: 831.9, tapToFirstRenderMs: 855.2, tapToFirstFeedbackMs: 26.9, sessionInitMs: 32.6 },
+    "defuddle-fallback": { tapToFirstUnitMs: 872.7, tapToFirstRenderMs: 888.9, tapToFirstFeedbackMs: 27.7, sessionInitMs: 32.9 },
   },
   nodeBenchmarks: {
-    "1000": { tapToFirstUnitMs: 292.7, tapToFirstRenderMs: 293.1, sessionInitMs: 9.0 },
-    "10000": { tapToFirstUnitMs: 817.6, tapToFirstRenderMs: 837.7, sessionInitMs: 31.1 },
-    "50000": { tapToFirstUnitMs: 3415.7, tapToFirstRenderMs: 3419.4, sessionInitMs: 138.5 },
+    "1000": { tapToFirstUnitMs: 292.7, tapToFirstRenderMs: 293.1, tapToFirstFeedbackMs: 6.8, extractionMs: 100, sessionInitMs: 9.0 },
+    "10000": { tapToFirstUnitMs: 817.6, tapToFirstRenderMs: 837.7, tapToFirstFeedbackMs: 26.4, extractionMs: 92.3, sessionInitMs: 31.1 },
+    "50000": { tapToFirstUnitMs: 3415.7, tapToFirstRenderMs: 3419.4, tapToFirstFeedbackMs: 119.2, extractionMs: 130.5, sessionInitMs: 138.5 },
   },
+  passive: { bootstrapDecodedBytes: 10210, longTaskCount: 0 },
 };
 const fixtures = [
   { name: "short-article", nodeCount: 1000, extraction: "dominant" },
@@ -36,15 +40,16 @@ const fixtures = [
 
 let fixtureServer = null;
 try {
-  await fetch("http://127.0.0.1:4173/tests/e2e/fixtures/performance.html");
-} catch {
+  await fetch(`${baseUrl}/tests/e2e/fixtures/performance.html`);
+  } catch {
   fixtureServer = spawn(process.execPath, ["tests/e2e/server.mjs"], {
     cwd: repositoryRoot,
+    env: { ...process.env, READER_E2E_PORT: String(webPort) },
     stdio: "ignore",
   });
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
-      await fetch("http://127.0.0.1:4173/tests/e2e/fixtures/performance.html");
+      await fetch(`${baseUrl}/tests/e2e/fixtures/performance.html`);
       break;
     } catch {
       await new Promise((resolveAttempt) => setTimeout(resolveAttempt, 20));
@@ -99,15 +104,22 @@ function percentileReport(runs, percentileRank) {
 function budgetReport(fixtureName, p90) {
   const fixtureBaseline = baseline.fixtures[fixtureName] || baseline.nodeBenchmarks[fixtureName];
   if (!fixtureBaseline) return { status: "not-applicable", metrics: {} };
-  const metrics = Object.fromEntries(Object.entries(fixtureBaseline).map(([metric, baselineP90]) => {
+  const metrics = Object.fromEntries(Object.entries(fixtureBaseline)
+    .filter(([metric]) => [
+      "tapToFirstUnitMs",
+      "tapToFirstRenderMs",
+      ...(baseline.nodeBenchmarks[fixtureName] ? ["extractionMs"] : ["tapToFirstFeedbackMs"]),
+    ].includes(metric))
+    .map(([metric, baselineP90]) => {
     const budget = baselineP90 * (1 + budgetMargin);
     return [metric, {
       baselineP90,
       budget,
       observedP90: p90[metric],
+      increaseRate: (p90[metric] - baselineP90) / baselineP90,
       regression: p90[metric] > budget,
     }];
-  }));
+    }));
   return {
     status: Object.values(metrics).some((metric) => metric.regression) ? "regression" : "within-budget",
     metrics,
@@ -130,7 +142,7 @@ async function measurePassivePage(browser, control = false) {
       }
     });
     const query = control ? "passive-control=1" : "passive=1";
-    await page.goto(`http://127.0.0.1:4173/tests/e2e/fixtures/safari-package-lazy-runtime.html?${query}`, { waitUntil: "load" });
+    await page.goto(`${baseUrl}/tests/e2e/fixtures/safari-package-lazy-runtime.html?${query}`, { waitUntil: "load" });
     await page.waitForTimeout(200);
     const browserMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
     return await page.evaluate((metrics) => {
@@ -170,16 +182,16 @@ async function measurePage(browser, fixture) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   page.setDefaultTimeout(120_000);
   try {
-    await page.goto("http://127.0.0.1:4173/tests/e2e/fixtures/performance.html");
-    await page.evaluate(() => {
+    await page.goto(`${baseUrl}/tests/e2e/fixtures/performance.html`);
+    await page.evaluate((runtimeBaseUrl) => {
       globalThis.browser = {
         runtime: {
           getURL(path) {
-            return `http://127.0.0.1:4173/apps/ios/ReaderExtension/Resources/generated/${path}`;
+            return `${runtimeBaseUrl}/apps/ios/ReaderExtension/Resources/generated/${path}`;
           },
         },
       };
-    });
+    }, baseUrl);
     for (const script of scripts) {
       await page.addScriptTag({
         path: script,
@@ -283,6 +295,8 @@ try {
   const passiveRegressions = [
     passiveWithBootstrap.bootstrapRequestCount !== 1 ? "bootstrap-request-count" : null,
     passiveWithBootstrap.heavyGlobalsBeforeTap.length > 0 ? "heavy-global-before-tap" : null,
+    passiveWithBootstrap.bootstrapDecodedBytes > baseline.passive.bootstrapDecodedBytes * (1 + budgetMargin) ? "bootstrap-decoded-bytes" : null,
+    passiveWithBootstrap.longTaskCount > baseline.passive.longTaskCount ? "passive-long-task" : null,
   ].filter(Boolean);
   const report = {
     schemaVersion: 2,
@@ -300,6 +314,9 @@ try {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (process.env.READER_PERFORMANCE_ENFORCE === "1" && (regressions.length > 0 || nodeRegressions.length > 0 || passiveRegressions.length > 0)) {
     throw new Error(`Reader performance budget regression: ${JSON.stringify({ regressions, nodeRegressions, passiveRegressions })}`);
+  }
+  if (process.env.READER_PERFORMANCE_ENFORCE === "1" && runsPerCase < 10) {
+    throw new Error(`Reader performance requires at least 10 runs; received ${runsPerCase}`);
   }
 } finally {
   await browser.close();
