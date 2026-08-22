@@ -5,6 +5,42 @@ node = "26.7.0"
 pnpm = "11.22.0"
 xcodegen = "2.46.0"
 
+[tasks."build:session-wasm"]
+description = "Build and bind the shared ReaderSession WASM module"
+run = "bash scripts/build-session-wasm.sh"
+
+[tasks."spec:check"]
+description = "Type-check the finite ReaderSession Quint model"
+run = "pnpm exec quint typecheck packages/session/spec/reader_session.qnt"
+
+[tasks."spec:test"]
+description = "Run ReaderSession named Quint tests"
+run = "pnpm exec quint test packages/session/spec/reader_session.qnt"
+
+[tasks."spec:simulate"]
+description = "Run the fixed-seed ReaderSession Quint simulation"
+depends = ["spec:check"]
+run = "pnpm exec quint run packages/session/spec/reader_session.qnt --max-steps=8 --max-samples=1000 --seed=180018 --invariants endedHasNoContent playingOnlyInRsvp figureIsPaused timerOnlyWhilePlaying positionIsInRange staleTickDoesNotAdvance stalePreparationDoesNotOpen closedSessionCannotRevive noImplicitRewind figureConsumedAtMostOnce modeRoundTripKeepsLocation"
+
+[tasks."spec:verify"]
+description = "Verify the finite ReaderSession model with TLC"
+depends = ["spec:check"]
+run = "pnpm exec quint verify packages/session/spec/reader_session.qnt --backend=tlc --max-steps=8 --invariants endedHasNoContent playingOnlyInRsvp figureIsPaused timerOnlyWhilePlaying positionIsInRange staleTickDoesNotAdvance stalePreparationDoesNotOpen closedSessionCannotRevive noImplicitRewind figureConsumedAtMostOnce modeRoundTripKeepsLocation"
+
+[tasks."test:session"]
+description = "Run the ReaderSession Rust and Quint Connect tests"
+run = [
+  "cargo fmt --check",
+  "cargo test --locked --package reader-session",
+  "pnpm exec quint --version | grep -F '0.32.0'",
+  "mise run spec:simulate",
+]
+
+[tasks."measure:session"]
+description = "Measure the ReaderSession WASM artifact"
+depends = ["build:session-wasm"]
+run = "node scripts/measure-session-wasm.mjs"
+
 [tasks.compile]
 description = "Compile the TypeScript sources"
 run = "pnpm exec tsc -p tsconfig.json"
@@ -18,12 +54,15 @@ run = [
 
 [tasks."build:chrome"]
 description = "Build the Chrome extension"
-depends = ["compile"]
+depends = ["compile", "build:session-wasm"]
 run = '''
 rm -rf apps/chrome/dist
 install -d apps/chrome/dist/vendor/defuddle apps/chrome/dist/LICENSES
 cp apps/chrome/manifest.json apps/chrome/dist/manifest.json
 cp .build/apps/chrome/src/service-worker.js apps/chrome/dist/service-worker.js
+cp .build/packages/session-ts/src/session.js apps/chrome/dist/session.js
+cp .build/session-wasm/reader_session.js apps/chrome/dist/session-wasm.js
+cp .build/session-wasm/reader_session_bg.wasm apps/chrome/dist/reader_session_bg.wasm
 cp .build/apps/chrome/src/viewer/viewer.js apps/chrome/dist/viewer.js
 cp .build/packages/icons/src/icons.js apps/chrome/dist/icons.js
 cp .build/packages/engine/src/engine.js apps/chrome/dist/engine.js
@@ -61,11 +100,14 @@ test -f artifacts/chrome/SHA256SUMS
 
 [tasks."build:ios"]
 description = "Build the Safari extension resources"
-depends = ["compile"]
+depends = ["compile", "build:session-wasm"]
 run = '''
 rm -rf apps/ios/ReaderExtension/Resources/generated
 install -d apps/ios/ReaderExtension/Resources/generated
 cp node_modules/defuddle/dist/index.js apps/ios/ReaderExtension/Resources/generated/defuddle.js
+cp .build/packages/session-ts/src/session.js apps/ios/ReaderExtension/Resources/generated/session.js
+cp .build/session-wasm/reader_session.js apps/ios/ReaderExtension/Resources/generated/session-wasm.js
+cp .build/session-wasm/reader_session_bg.wasm apps/ios/ReaderExtension/Resources/generated/reader_session_bg.wasm
 cp .build/packages/engine/src/engine.js apps/ios/ReaderExtension/Resources/generated/engine.js
 cp .build/packages/extractor/src/extractor.js apps/ios/ReaderExtension/Resources/generated/extractor.js
 cp .build/packages/icons/src/icons.js apps/ios/ReaderExtension/Resources/generated/icons.js
@@ -81,11 +123,15 @@ run = [{ tasks = ["build:chrome", "build:ios"] }]
 
 [tasks.check]
 description = "Run static checks"
-run = [{ task = "typecheck" }]
+run = [
+  { task = "typecheck" },
+  { task = "spec:check" },
+  "cargo fmt --check",
+]
 
 [tasks.test]
 description = "Build and test reader"
-depends = ["build"]
+depends = ["build", "test:session"]
 run = "pnpm exec vitest run"
 
 [tasks."test:e2e"]
