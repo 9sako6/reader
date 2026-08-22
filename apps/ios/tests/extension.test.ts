@@ -43,9 +43,9 @@ test("Xcode project embeds every manifest script in the extension", () => {
   assert.match(project, /reader-extension\.appex in Embed Foundation Extensions/);
 });
 
-function createSafariReaderHarness() {
+function createSafariReaderHarness(engine = Engine, language = "ja") {
   const documentElement = new FakeElement("html");
-  documentElement.lang = "ja";
+  documentElement.lang = language;
   const body = new FakeElement("body");
   documentElement.append(body);
   const createdElements: FakeElement[] = [];
@@ -77,6 +77,7 @@ function createSafariReaderHarness() {
   const content = {
     text,
     readingContext: {
+      language,
       title: "",
       blocks: [
         { text: leadingSentence, kind: "paragraph", level: null, start: 0, end: 26 },
@@ -105,7 +106,7 @@ function createSafariReaderHarness() {
   const context: any = {
     document,
     location: { href: "https://example.com/articles/first" },
-    Engine,
+    Engine: engine,
     Extractor: {
       fromPage: () => {
         extractionCount += 1;
@@ -237,6 +238,22 @@ test("Safari reader reveals controls and preserves the paused state", async () =
   assert.equal(playButton.attributes["aria-label"], "再生");
   rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1700 });
   assert.equal(backButton.parent.hidden, false);
+});
+
+test("Safari viewer segments with the ReaderContent language", async () => {
+  const locales: string[] = [];
+  const engine = {
+    ...Engine,
+    segmentText(text, locale, boundaries) {
+      locales.push(locale);
+      return Engine.segmentText(text, locale, boundaries);
+    },
+  };
+  const harness = createSafariReaderHarness(engine, "en-US");
+
+  await harness.context.MobileViewer.open();
+
+  assert.deepEqual(locales, ["en-US"]);
 });
 
 test("Safari reader shows rewind feedback without changing pause state", async () => {

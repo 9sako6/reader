@@ -425,7 +425,7 @@
     if (tagName === "h1") element.className = "article-title";
     element.dataset.sourceStart = String(block.start ?? 0);
     element.dataset.sourceEnd = String(block.end ?? (block.start ?? 0) + block.text.length);
-    const locale = global.document.documentElement.lang || "ja";
+    const locale = content?.readingContext?.language || "ja";
     const sentences = [...new Intl.Segmenter(locale, { granularity: "sentence" }).segment(block.text)];
     if (sentences.length === 0) {
       element.textContent = block.text;
@@ -746,7 +746,7 @@
   function rebuildUnits() {
     if (!content?.text) return;
     const previousFlow = flowItems[flowIndex];
-    const locale = global.document.documentElement.lang || "ja";
+    const locale = content?.readingContext?.language || "ja";
     const articleFigures = content.readingContext?.figures || [];
     const figureBoundaries = articleFigures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
     const segmented = global.Engine.segmentText(content.text, locale, figureBoundaries)

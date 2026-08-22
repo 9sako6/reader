@@ -23,6 +23,7 @@ declare global {
   }
 
   interface ReadingContext {
+    language: string;
     title: string;
     blocks: ReaderBlock[];
     headings: ReaderHeading[];

@@ -6,6 +6,7 @@
   const TEXT_BOUNDARY_TAGS = new Set([
     "ADDRESS", "BLOCKQUOTE", "BR", "DD", "DT", "FIGCAPTION", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "LI", "P", "PRE", "TR",
   ]);
+  const BCP_47_LIKE_LANGUAGE = /^[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*$/u;
 
   interface IndexedNodeRange {
     start: number;
@@ -98,7 +99,8 @@
 
     return {
       text,
-      readingContext: {
+      readingContext: normalizeReadingContext({
+        language: sourceDocument.documentElement?.lang || "",
         title: title || headingEntries[0]?.text || "",
         blocks: extractBlocks(sourceDocument, contentRoot, text, leadingTrim, indexedSource),
         headings,
@@ -106,7 +108,7 @@
         sectionTransitions,
         initialHeadingIndex: includeTitle ? 0 : -1,
         figures: extractFigures(sourceDocument, contentRoot, text, leadingTrim, indexedSource),
-      },
+      }),
     };
   }
 
@@ -153,8 +155,11 @@
     }
   }
 
-  function normalizeReadingContext(value: Partial<ReadingContext> | null): ReadingContext {
+  function normalizeReadingContext(value: Partial<ReadingContext> | null, fallbackLanguage = "ja"): ReadingContext {
+    const suppliedLanguage = typeof value?.language === "string" ? value.language.trim() : "";
+    const fallback = BCP_47_LIKE_LANGUAGE.test(fallbackLanguage) ? fallbackLanguage : "ja";
     return {
+      language: BCP_47_LIKE_LANGUAGE.test(suppliedLanguage) ? suppliedLanguage : fallback,
       title: typeof value?.title === "string" ? value.title : "",
       blocks: Array.isArray(value?.blocks) ? value.blocks : [],
       headings: Array.isArray(value?.headings) ? value.headings : [],
