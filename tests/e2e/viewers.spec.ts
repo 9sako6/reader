@@ -1564,8 +1564,8 @@ test("WASM is lazy until the viewer is opened", async ({ page }) => {
 for (const viewer of ["chrome", "mobile"] as const) {
   test(`${viewer} pauses on hidden and does not auto-resume on visible`, async ({ page }) => {
     await loadViewer(page, viewer);
-    if (viewer === "chrome") await openChrome(page, { text: "可視性の変化を実ブラウザで確認します。", paused: true });
-    else await openMobile(page, { text: "可視性の変化を実ブラウザで確認します。" });
+    if (viewer === "chrome") await openChrome(page, { text: "可視性確認。", paused: true });
+    else await openMobile(page, { text: "可視性確認。" });
 
     const dialog = page.getByRole("dialog", { name: "reader" });
     await expect(dialog).toBeVisible();
@@ -1589,7 +1589,7 @@ for (const viewer of ["chrome", "mobile"] as const) {
 
     await setVisibility("visible");
     await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
-    await page.waitForTimeout(350);
+    await page.waitForTimeout(700);
     await expect.poll(() => readReaderPosition(dialog)).toEqual(hiddenPosition);
   });
 }
