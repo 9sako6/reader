@@ -11,6 +11,7 @@
             const params = new URLSearchParams(location.search);
             const query = new URLSearchParams();
             if (params.has("slow")) query.set("delay", "250");
+            if (params.has("boundary")) query.set("delay", "600");
             if (params.has("slow-extraction")) query.set("slow-extraction", "900");
             if (params.has("retry")) {
               query.set("fail-once", "extractor.js");

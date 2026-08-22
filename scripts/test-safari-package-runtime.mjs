@@ -369,6 +369,121 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
   }
 }
 
+async function verifyGeneratedLazyRuntimeSingleFlightInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const assetRequests = new Map();
+    page.on("request", (request) => {
+      const asset = new URL(request.url()).pathname.match(/generated\/([^/]+)$/)?.[1];
+      if (asset) assetRequests.set(asset, (assetRequests.get(asset) || 0) + 1);
+    });
+    await page.goto(`${lazyPageUrl}?runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    await page.locator("#__reader-bootstrap").getByRole("button", { name: "readerで読む" }).evaluate((button) => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    const result = await page.evaluate(async () => {
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const host = document.getElementById("__reader-host");
+        const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+        if (globalThis.ReaderSession?.ready?.() === true && unit?.textContent?.trim()) {
+          return {
+            initialized: true,
+            hostCount: document.querySelectorAll("#__reader-host").length,
+            unitText: unit.textContent.trim(),
+          };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 16));
+      }
+      return {
+        initialized: globalThis.ReaderSession?.ready?.() === true,
+        hostCount: document.querySelectorAll("#__reader-host").length,
+        unitText: "",
+      };
+    });
+    assert.equal(result.initialized, true, JSON.stringify(result));
+    assert.equal(result.hostCount, 1);
+    assert.notEqual(result.unitText, "");
+    for (const asset of ["defuddle.js", "session-wasm-module.js", "session.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]) {
+      assert.equal(assetRequests.get(asset), 1, `${asset} must be imported once for repeated taps`);
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+async function verifyGeneratedLazyRuntimeFeedbackBoundariesInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${lazyPageUrl}?boundary=1&runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    await page.locator("#__reader-bootstrap").getByRole("button", { name: "readerで読む" }).evaluate((button) => button.click());
+    const readFeedbackState = () => page.evaluate(() => {
+      const root = document.getElementById("__reader-bootstrap")?.shadowRoot;
+      return {
+        feedbackHidden: root?.querySelector(".feedback")?.hidden ?? null,
+        barHidden: root?.querySelector(".bar")?.hidden ?? null,
+        status: root?.querySelector('[role="status"]')?.textContent ?? null,
+        cancelHidden: root?.querySelector(".actions button")?.hidden ?? null,
+        handleHidden: root?.querySelector(".handle")?.hidden ?? null,
+      };
+    });
+    assert.deepEqual(await readFeedbackState(), {
+      feedbackHidden: true,
+      barHidden: true,
+      status: "",
+      cancelHidden: true,
+      handleHidden: false,
+    });
+    await page.waitForTimeout(150);
+    assert.deepEqual(await readFeedbackState(), {
+      feedbackHidden: false,
+      barHidden: false,
+      status: "",
+      cancelHidden: true,
+      handleHidden: true,
+    });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await readFeedbackState(), {
+      feedbackHidden: false,
+      barHidden: false,
+      status: "もう少しお待ちください",
+      cancelHidden: false,
+      handleHidden: true,
+    });
+    await page.locator("#__reader-bootstrap").getByRole("button", { name: "キャンセル" }).click();
+  } finally {
+    await browser.close();
+  }
+}
+
+async function verifyGeneratedLazyRuntimeNavigationInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${lazyPageUrl}?slow=1&runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    await page.locator("#__reader-bootstrap").getByRole("button", { name: "readerで読む" }).evaluate((button) => button.click());
+    await page.goto(`${lazyPageUrl}?runtime=navigation-target-${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    await page.waitForTimeout(1200);
+    const state = await page.evaluate(() => ({
+      bootstrapHost: Boolean(document.getElementById("__reader-bootstrap")),
+      readerHost: Boolean(document.getElementById("__reader-host")),
+      mobileViewer: typeof globalThis.MobileViewer,
+      readerSession: typeof globalThis.ReaderSession,
+    }));
+    assert.deepEqual(state, {
+      bootstrapHost: true,
+      readerHost: false,
+      mobileViewer: "undefined",
+      readerSession: "undefined",
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
 async function verifyGeneratedLazyRuntimeRetryInWebKit() {
   const browser = await webkit.launch({ headless: true });
   try {
@@ -474,6 +589,9 @@ try {
   await verifyPackage();
   await verifyGeneratedRuntimeInWebKit();
   await verifyGeneratedLazyRuntimeInWebKit();
+  await verifyGeneratedLazyRuntimeSingleFlightInWebKit();
+  await verifyGeneratedLazyRuntimeFeedbackBoundariesInWebKit();
+  await verifyGeneratedLazyRuntimeNavigationInWebKit();
   await verifyGeneratedLazyRuntimeRetryInWebKit();
   await verifyGeneratedLazyRuntimeCancelInWebKit();
   await verifyGeneratedLazyRuntimeHandoffCancelInWebKit();
