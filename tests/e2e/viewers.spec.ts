@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function loadViewer(page: Page, viewer: "chrome" | "mobile"): Promise<void> {
   await page.goto(`/tests/e2e/fixtures/article.html?viewer=${viewer}`);
@@ -73,6 +73,45 @@ for (const viewportWidth of RSVP_WIDTHS) {
     expect(resizedDisplay.widthOverflow).toBeLessThanOrEqual(0);
     expect(resizedDisplay.fontSize).toBe(snapshots[0]?.fontSize);
   });
+}
+
+async function addAccessibilityFixture(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    document.head.inert = true;
+    document.body.inert = false;
+    const outsideButton = document.createElement("button");
+    outsideButton.id = "outside-reader-button";
+    outsideButton.type = "button";
+    outsideButton.textContent = "記事側の操作";
+    const outsideInput = document.createElement("input");
+    outsideInput.id = "outside-reader-input";
+    outsideInput.setAttribute("aria-label", "記事側の入力");
+    const outsideEditor = document.createElement("div");
+    outsideEditor.id = "outside-reader-editor";
+    outsideEditor.contentEditable = "true";
+    outsideEditor.setAttribute("aria-label", "記事側の編集欄");
+    document.body.prepend(outsideEditor, outsideInput, outsideButton);
+  });
+}
+
+async function expectFocusToStayInReader(page: Page, dialog: Locator): Promise<void> {
+  const outsideButton = page.locator("#outside-reader-button");
+  const outsideInput = page.locator("#outside-reader-input");
+  const outsideEditor = page.locator("#outside-reader-editor");
+  for (let index = 0; index < 10; index += 1) {
+    await page.keyboard.press("Tab");
+    await expect(outsideButton).not.toBeFocused();
+    await expect(outsideInput).not.toBeFocused();
+    await expect(outsideEditor).not.toBeFocused();
+    await expect(dialog).toBeVisible();
+  }
+  for (let index = 0; index < 10; index += 1) {
+    await page.keyboard.press("Shift+Tab");
+    await expect(outsideButton).not.toBeFocused();
+    await expect(outsideInput).not.toBeFocused();
+    await expect(outsideEditor).not.toBeFocused();
+    await expect(dialog).toBeVisible();
+  }
 }
 
 test("Chrome viewer keeps RSVP text readable without overflow", async ({ page }) => {
@@ -294,7 +333,8 @@ test("Chrome viewer traps focus and restores the launch button after Escape", as
   const dialog = page.getByRole("dialog", { name: "reader" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAttribute("aria-modal", "true");
-  await expect(dialog.locator("[aria-live]")).toHaveCount(0);
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("aria-live", "off");
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("aria-atomic", "false");
   const closeButton = dialog.getByRole("button", { name: "readerを閉じる" });
   await expect(closeButton).toBeFocused();
   await dialog.getByRole("button", { name: "一時停止" }).click();
@@ -320,17 +360,54 @@ test("mobile viewer traps focus and restores the launch button after Escape", as
   const dialog = page.getByRole("dialog", { name: "reader" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAttribute("aria-modal", "true");
-  await expect(dialog.locator("[aria-live]")).toHaveCount(0);
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("aria-live", "off");
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("aria-atomic", "false");
   const closeButton = dialog.getByRole("button", { name: "readerを閉じる" });
   await expect(closeButton).toBeFocused();
 
   await page.keyboard.press("Shift+Tab");
-  await expect(dialog.getByRole("button", { name: "文章で読む" })).toBeFocused();
+  await expect(dialog.getByRole("button", { name: "再生" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(closeButton).toBeFocused();
 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  await expect(launchButton).toBeFocused();
+});
+
+test("Chrome viewer keeps background inert and keyboard focus inside the modal", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "chrome");
+  await addAccessibilityFixture(page);
+  const launchButton = page.getByRole("button", { name: "Chrome readerを開く" });
+  await launchButton.focus();
+  await launchButton.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog.getByRole("button", { name: "readerを閉じる" })).toBeFocused();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: true, head: true });
+  await expectFocusToStayInReader(page, dialog);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: false, head: true });
+  await expect(launchButton).toBeFocused();
+});
+
+test("mobile viewer keeps background inert and keyboard focus inside the modal", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await addAccessibilityFixture(page);
+  const launchButton = page.getByRole("button", { name: "readerで読む" });
+  await launchButton.focus();
+  await launchButton.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog.getByRole("button", { name: "readerを閉じる" })).toBeFocused();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: true, head: true });
+  await expectFocusToStayInReader(page, dialog);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: false, head: true });
   await expect(launchButton).toBeFocused();
 });
 

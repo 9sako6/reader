@@ -37,6 +37,7 @@
   const TEXT_VIEW_READABLE_BOTTOM_PX = 96;
   const RSVP_FONT_SIZE = 40;
   let shadow: ShadowRoot | null = null;
+  let host: HTMLDivElement | null = null;
   let handle: HTMLButtonElement | null = null;
   let overlay: HTMLElement | null = null;
   let scrollFadeTimer: number | null = null;
@@ -59,12 +60,13 @@
   let nodes: MobileNodes | null = null;
   let opening = false;
   let pendingLeftTap: number | null = null;
-  let controlsVisible = false;
   let lastLeftTapAt = 0;
   let lastLeftTapX = 0;
   let lastLeftTapY = 0;
   let textFigureOffset: number | null = null;
   let launchFocus: HTMLElement | null = null;
+  let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
+  let backgroundInert = false;
 
   function getNodes(): MobileNodes {
     if (!nodes) throw new Error("reader shell is not available");
@@ -73,7 +75,7 @@
 
   function install() {
     if (!global.document?.documentElement || global.document.getElementById(HOST_ID)) return;
-    const host = global.document.createElement("div");
+    host = global.document.createElement("div");
     host.id = HOST_ID;
     const root = host.attachShadow({ mode: "open" });
     shadow = root;
@@ -106,7 +108,6 @@
       .mode-button:active { opacity: .52; transform: translateX(-50%) scale(.96); }
       .controlbar { height: calc(132px + env(safe-area-inset-bottom)); position: absolute; z-index: 4; left: 0; right: 0; bottom: 0; background: linear-gradient(to top, rgba(5,5,5,.96), rgba(5,5,5,0)); pointer-events: none; }
       .control-dock { width: min(100% - 32px, 280px); min-height: 60px; position: absolute; left: 50%; bottom: calc(52px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: 1fr 64px 1fr; align-items: center; background: transparent; transform: translateX(-50%); pointer-events: auto; transition: opacity 140ms ease, transform 140ms ease; }
-      .control-dock[hidden] { display: none; }
       .dock-button { min-width: 44px; min-height: 56px; padding: 0 14px; border: 0; background: transparent; color: var(--reader-control); font-size: 15px; font-weight: 600; white-space: nowrap; transition: opacity 100ms ease, transform 100ms ease; }
       .dock-button svg { display: block; margin: auto; }
       .dock-button:active { opacity: .52; transform: scale(.94); }
@@ -149,7 +150,12 @@
       .rewind-ring { position: absolute; inset: 0; border-radius: 50%; background: rgba(162,162,168,.12); }
       .rewind-feedback svg { position: relative; z-index: 1; opacity: .72; }
       @keyframes reader-launch-loader-reveal { to { opacity: 1; } }
-      @media (prefers-reduced-motion: reduce) { .entry::after, .dock-button, .control-dock, .reader-image-veil { transition: none; } .launch-loader { animation-duration: 1ms; } }
+      @media (prefers-reduced-motion: reduce) {
+        .entry::after, .dock-button, .control-dock, .icon-button, .reader-image-veil { transition: none; }
+        .mode-button:active { transform: translateX(-50%); }
+        .dock-button:active, .icon-button:active { transform: none; }
+        .launch-loader { animation-duration: 1ms; }
+      }
       @media (prefers-contrast: more) { :host { --reader-secondary: #f5f5f7; --reader-muted: #f5f5f7; --reader-control: #f5f5f7; } }
     `;
     return style;
@@ -168,6 +174,7 @@
     if (overlay || opening || !handle || !shadow) return;
     opening = true;
     launchFocus = handle;
+    makeBackgroundInert(host);
     sourceScrollY = global.scrollY || 0;
     sourceOverflow = global.document.documentElement.style.overflow;
     sourceBodyOverflow = global.document.body?.style.overflow ?? null;
@@ -207,7 +214,7 @@
       global.console?.error?.("reader could not prepare this page", preparationError);
     } else renderReader();
     global.requestAnimationFrame(() => {
-      overlay?.querySelector?.<HTMLButtonElement>('[aria-label="readerを閉じる"]')?.focus();
+      findCloseButton()?.focus();
     });
     opening = false;
   }
@@ -302,7 +309,7 @@
     controlbar.append(modeButton, progress);
     const content = global.document.createElement("main");
     content.className = "content";
-    reader.append(topbar, content, controlbar);
+    reader.append(topbar, controlbar, content);
     nodes = {
       content,
       controlbar,
@@ -617,6 +624,8 @@
     const unit = global.document.createElement("div");
     unit.className = "rsvp-unit";
     unit.setAttribute("data-reader-unit", "true");
+    unit.setAttribute("aria-live", "off");
+    unit.setAttribute("aria-atomic", "false");
     const nextUnit = global.document.createElement("div");
     nextUnit.className = "context-unit next";
     nextUnit.setAttribute("aria-hidden", "true");
@@ -645,16 +654,17 @@
     const previous = transportButton("", goBackFromControl);
     previous.className = "dock-button previous";
     previous.setAttribute("aria-label", "1文戻る");
+    previous.setAttribute("aria-keyshortcuts", "ArrowLeft");
     previous.append(global.ReaderIcons.create(global.document, "previous", 34));
     const playButton = transportButton("", togglePlayback);
     playButton.className = "dock-button play";
     playButton.setAttribute("aria-label", "再生");
+    playButton.setAttribute("aria-keyshortcuts", "Space");
     playButton.append(global.ReaderIcons.create(global.document, "play", 34));
     dock.append(previous, playButton);
     getNodes().controlbar.append(dock);
     getNodes().play = playButton;
     getNodes().transport = dock;
-    updateTransportVisibility();
   }
 
   function renderTextControls() {
@@ -720,6 +730,7 @@
 
   function switchMode(nextMode: ReadingMode): void {
     if (nextMode === mode) return;
+    const previousFocus = readerActiveElement();
     clearPendingLeftTap();
     const currentFlow = flowItems[flowIndex];
     if (nextMode === "text" && currentFlow?.kind === "figure") {
@@ -741,6 +752,9 @@
     }
     mode = nextMode;
     renderReader();
+    if (!containsReaderElement(previousFocus)) {
+      global.requestAnimationFrame(() => findCloseButton()?.focus());
+    }
   }
 
   function rebuildUnits() {
@@ -814,12 +828,10 @@
     else if (playing) pause();
     else play();
     renderUnit();
-    showTransportControls();
   }
 
   function goBackFromControl(): void {
     previousSentence();
-    showTransportControls();
   }
 
   function handleRsvpPointerUp(event: PointerEvent): void {
@@ -830,7 +842,6 @@
     if (!leftSide) {
       clearPendingLeftTap();
       lastLeftTapAt = 0;
-      toggleTransportControls();
       return;
     }
 
@@ -852,7 +863,6 @@
     pendingLeftTap = global.setTimeout(() => {
       pendingLeftTap = null;
       lastLeftTapAt = 0;
-      toggleTransportControls();
     }, 260);
   }
 
@@ -934,7 +944,6 @@
 
   function updatePlayButton() {
     const playButton = getNodes().play;
-    updateTransportVisibility();
     if (!playButton) return;
     const state = playing ? "pause" : "play";
     if (playButton.dataset.state !== state) {
@@ -942,26 +951,7 @@
       playButton.dataset.state = state;
     }
     playButton.setAttribute("aria-label", playing ? "一時停止" : "再生");
-  }
-
-  function updateTransportVisibility(): void {
-    const transport = getNodes().transport;
-    if (transport) transport.hidden = !controlsVisible;
-  }
-
-  function toggleTransportControls(): void {
-    if (controlsVisible) hideTransportControls();
-    else showTransportControls();
-  }
-
-  function showTransportControls(): void {
-    controlsVisible = true;
-    updateTransportVisibility();
-  }
-
-  function hideTransportControls(): void {
-    controlsVisible = false;
-    updateTransportVisibility();
+    playButton.setAttribute("aria-pressed", playing ? "true" : "false");
   }
 
   function scheduleNext() {
@@ -992,7 +982,6 @@
 
   function showFigure(figure: ReaderFigure): void {
     pause();
-    showTransportControls();
     figurePanel?.remove();
     currentOffset = figure.sourceOffset;
     textFigureOffset = figure.sourceOffset;
@@ -1064,6 +1053,41 @@
     if (global.document.body) global.document.body.style.overflow = "hidden";
   }
 
+  function makeBackgroundInert(readerHost: HTMLElement | null): void {
+    if (!readerHost || backgroundInert) return;
+    backgroundInert = true;
+    const documentChildren = Array.from(global.document.documentElement.children) as HTMLElement[];
+    for (const element of documentChildren) {
+      if (element === readerHost || element.contains?.(readerHost)) continue;
+      const wasInert = element.inert === true;
+      inertedElements.push({ element, wasInert });
+      element.inert = true;
+    }
+  }
+
+  function restoreBackgroundInert(): void {
+    const entries = inertedElements;
+    inertedElements = [];
+    backgroundInert = false;
+    for (const { element, wasInert } of entries) element.inert = wasInert;
+  }
+
+  function findCloseButton(): HTMLButtonElement | null {
+    if (!overlay) return null;
+    const find = (element: Element): HTMLButtonElement | null => {
+      for (const child of Array.from(element.children)) {
+        const candidate = child as HTMLElement;
+        if (candidate.tagName.toLowerCase() === "button" && candidate.getAttribute?.("aria-label") === "readerを閉じる") {
+          return candidate as HTMLButtonElement;
+        }
+        const nested = find(candidate);
+        if (nested) return nested;
+      }
+      return null;
+    };
+    return find(overlay);
+  }
+
   function handleKeyDown(event: KeyboardEvent): void {
     if (!overlay || event.repeat) return;
     if (event.key === "Escape") {
@@ -1071,44 +1095,142 @@
       close();
       return;
     }
-    if (event.key !== "Tab") return;
-    const focusable = [...overlay.querySelectorAll<HTMLElement>(
-      'button:not([hidden]):not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    )].filter((element) => element.getClientRects().length > 0);
-    if (focusable.length === 0) return;
-    const currentIndex = focusable.indexOf(shadow?.activeElement as HTMLElement);
-    let nextIndex = event.shiftKey ? currentIndex - 1 : currentIndex + 1;
-    if (currentIndex < 0) nextIndex = event.shiftKey ? focusable.length - 1 : 0;
-    if (nextIndex < 0) nextIndex = focusable.length - 1;
-    if (nextIndex >= focusable.length) nextIndex = 0;
-    event.preventDefault();
-    focusable[nextIndex]?.focus();
+    if (event.key === "Tab") {
+      const focusable = focusableReaderElements();
+      if (focusable.length === 0) return;
+      const currentIndex = focusable.indexOf(readerActiveElement() as HTMLElement);
+      const atStart = currentIndex === 0;
+      const atEnd = currentIndex === focusable.length - 1;
+      const outsideReader = currentIndex < 0;
+      if (!outsideReader && !(event.shiftKey ? atStart : atEnd)) return;
+      const nextIndex = event.shiftKey ? focusable.length - 1 : 0;
+      event.preventDefault();
+      focusable[nextIndex]?.focus();
+      return;
+    }
+    if (mode !== "rsvp" || isEditableTarget(event) || isButtonTarget(event)) return;
+    if (event.code === "Space" || event.key === " ") {
+      event.preventDefault();
+      togglePlayback();
+    } else if (event.code === "ArrowLeft" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      previousSentence();
+    }
+  }
+
+  function focusableReaderElements(): HTMLElement[] {
+    if (!overlay) return [];
+    const focusable: HTMLElement[] = [];
+    const visit = (element: Element): void => {
+      for (const child of Array.from(element.children)) {
+        const candidate = child as HTMLElement;
+        if (isFocusableReaderElement(candidate)) focusable.push(candidate);
+        visit(candidate);
+      }
+    };
+    visit(overlay);
+    return focusable;
+  }
+
+  function isFocusableReaderElement(element: HTMLElement): boolean {
+    const tagName = element.tagName.toLowerCase();
+    const hasHref = element.hasAttribute?.("href") === true;
+    const tabIndex = element.getAttribute?.("tabindex");
+    const explicitTabIndex = typeof tabIndex === "string" && tabIndex !== "-1";
+    const isCandidate = tagName === "button"
+      || hasHref
+      || tagName === "input"
+      || tagName === "select"
+      || tagName === "textarea"
+      || explicitTabIndex;
+    if (!isCandidate) return false;
+    if (element.hidden || element.getAttribute?.("hidden") !== null) return false;
+    if (element.getAttribute?.("aria-hidden") === "true") return false;
+    if ((element as HTMLButtonElement | HTMLInputElement).disabled === true) return false;
+    if (typeof element.getClientRects === "function" && element.getClientRects().length === 0) return false;
+    return true;
+  }
+
+  function readerActiveElement(): HTMLElement | null {
+    const activeElement = shadow?.activeElement || (global.document as Document).activeElement;
+    return activeElement && typeof (activeElement as HTMLElement).focus === "function"
+      ? activeElement as HTMLElement
+      : null;
+  }
+
+  function containsReaderElement(element: HTMLElement | null): boolean {
+    if (!element || !overlay) return false;
+    if (typeof overlay.contains === "function") return overlay.contains(element);
+    let current: HTMLElement | null = element;
+    while (current) {
+      if (current === overlay) return true;
+      current = current.parentElement;
+    }
+    return false;
+  }
+
+  function eventPath(event: KeyboardEvent): EventTarget[] {
+    if (typeof event.composedPath === "function") return event.composedPath();
+    return event.target ? [event.target] : [];
+  }
+
+  function isEditableTarget(event: KeyboardEvent): boolean {
+    for (const target of eventPath(event)) {
+      if (typeof target !== "object" || target === null) continue;
+      const candidate = target as HTMLElement;
+      const tagName = typeof candidate.tagName === "string" ? candidate.tagName.toLowerCase() : "";
+      if (candidate.isContentEditable === true || tagName === "input" || tagName === "textarea" || tagName === "select") return true;
+    }
+    return false;
+  }
+
+  function isButtonTarget(event: KeyboardEvent): boolean {
+    return eventPath(event).some((target) => (
+      typeof target === "object"
+      && target !== null
+      && (target as HTMLElement).tagName?.toLowerCase() === "button"
+    ));
   }
 
   function close() {
     const restoreFocus = launchFocus;
-    clearPendingLeftTap();
-    lastLeftTapAt = 0;
-    hideTransportControls();
-    pause();
-    overlay?.remove();
-    overlay = null;
-    content = null;
-    units = [];
-    flowItems = [];
-    flowIndex = 0;
-    figurePanel = null;
-    textFigureOffset = null;
-    mode = "rsvp";
-    nodes = null;
-    opening = false;
-    global.removeEventListener?.("keydown", handleKeyDown);
-    global.document.documentElement.style.overflow = sourceOverflow ?? "";
-    if (global.document.body && sourceBodyOverflow !== null) global.document.body.style.overflow = sourceBodyOverflow;
-    if (handle) handle.hidden = false;
-    global.scrollTo({ top: sourceScrollY, left: 0, behavior: "auto" });
-    launchFocus = null;
-    restoreFocus?.focus?.();
+    try {
+      clearPendingLeftTap();
+      lastLeftTapAt = 0;
+      if (nodes) pause();
+      try {
+        overlay?.remove();
+      } finally {
+        overlay = null;
+        content = null;
+        units = [];
+        flowItems = [];
+        flowIndex = 0;
+        figurePanel = null;
+        textFigureOffset = null;
+        mode = "rsvp";
+        nodes = null;
+        opening = false;
+        global.removeEventListener?.("keydown", handleKeyDown);
+      }
+    } finally {
+      try {
+        global.document.documentElement.style.overflow = sourceOverflow ?? "";
+        if (global.document.body && sourceBodyOverflow !== null) global.document.body.style.overflow = sourceBodyOverflow;
+        if (handle) handle.hidden = false;
+        global.scrollTo({ top: sourceScrollY, left: 0, behavior: "auto" });
+      } finally {
+        try {
+          restoreBackgroundInert();
+        } finally {
+          launchFocus = null;
+          const focusTarget = restoreFocus && restoreFocus.isConnected !== false
+            ? restoreFocus
+            : handle;
+          focusTarget?.focus?.();
+        }
+      }
+    }
   }
 
   function fadeHandleDuringScroll() {

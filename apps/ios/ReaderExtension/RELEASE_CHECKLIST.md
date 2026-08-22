@@ -28,6 +28,7 @@ Playwright WebKitではSafari Web Extensionの権限、実機のsafe area、Voic
 
 ## VoiceOverとキーボード
 
+- readerを開いた直後から、再生／一時停止と1文戻るが表示され、VoiceOverと外付けキーボードで操作できる
 - VoiceOverの読み上げ順が、閉じる、mode、本文、1文戻る、再生の順で理解できる
 - 閉じる、mode、再生／一時停止、1文戻るの名前と状態が読み上げられる
 - RSVPの高速なunit更新が毎回読み上げられない
