@@ -9,6 +9,8 @@
   const SOFT_BOUNDARY_WORDS = new Set(["を","に","へ","と","から","まで","より","が","は","も","て","で","ので","のに","なら","れば","けど","けれど"]);
   const PHRASE_BOUNDARY_PUNCTUATION = new Set(["、","，",";","；",":","："]);
   const SENTENCE_END_PUNCTUATION = new Set(["。","．","！","？",".","!","?"]);
+  const LINE_START_CLOSING_PUNCTUATION = new Set(["、","。","，","．","！","？","!","?","）",")","」","』","】","]","〉","》","〕","］","｝","}"]);
+  const LINE_END_OPENING_PUNCTUATION = new Set(["（","(","「","『","【","[","〈","《","〔","［","｛","{"]);
   const QUOTE_PAIRS = new Map([["「","」"],["『","』"]]);
   const ASIDE_PAIRS = new Map([["（","）"],["(",")"]]);
   const BASE_UNIT_MS = 180;
@@ -130,7 +132,7 @@
       wordBoundaries.add(pieceEnd);
     }
 
-    const parts: ReaderUnit[] = [];
+    const partRanges: Array<{ start: number; end: number }> = [];
     let graphemeStart = 0;
     while (graphemeStart < graphemes.length) {
       const candidateGraphemeEnd = Math.min(graphemes.length, graphemeStart + limit);
@@ -148,14 +150,38 @@
         ? unit.text.length
         : graphemes[safeEndGrapheme]?.index ?? candidateEnd;
 
-      parts.push({
-        ...unit,
-        text: unit.text.slice(start, safeEnd),
-        start: unit.start + start,
-        end: unit.start + safeEnd,
-      });
+      partRanges.push({ start: graphemeStart, end: safeEndGrapheme });
       graphemeStart = safeEndGrapheme;
     }
+    for (let index = 1; index < partRanges.length; index += 1) {
+      const previous = partRanges[index - 1];
+      const current = partRanges[index];
+      if (!previous || !current) continue;
+      const startsWithClosingPunctuation = LINE_START_CLOSING_PUNCTUATION.has(
+        graphemes[current.start]?.segment || "",
+      );
+      const endsWithOpeningPunctuation = LINE_END_OPENING_PUNCTUATION.has(
+        graphemes[previous.end - 1]?.segment || "",
+      );
+      if ((!startsWithClosingPunctuation && !endsWithOpeningPunctuation) || previous.end - previous.start <= 1) continue;
+
+      previous.end -= 1;
+      current.start -= 1;
+      if (current.end - current.start > limit) {
+        const overflow = { start: current.start + limit, end: current.end };
+        current.end = current.start + limit;
+        partRanges.splice(index + 1, 0, overflow);
+      }
+    }
+    const parts = partRanges.map(({ start, end }) => ({
+      ...unit,
+      text: unit.text.slice(
+        start === graphemes.length ? unit.text.length : graphemes[start]?.index ?? unit.text.length,
+        end === graphemes.length ? unit.text.length : graphemes[end]?.index ?? unit.text.length,
+      ),
+      start: unit.start + (start === graphemes.length ? unit.text.length : graphemes[start]?.index ?? unit.text.length),
+      end: unit.start + (end === graphemes.length ? unit.text.length : graphemes[end]?.index ?? unit.text.length),
+    }));
     return parts.reduce<ReaderUnit[]>((merged, part) => {
       const previous = merged.at(-1);
       if (

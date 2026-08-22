@@ -129,6 +129,33 @@ test("splitLongUnits caps unbroken text and preserves grapheme and source offset
   }
 });
 
+test("splitLongUnits adjusts Japanese punctuation without breaking the grapheme limit", () => {
+  const cases = [
+    { source: "あいう）えお", expected: ["あい", "う）え", "お"] },
+    { source: "abcdef）ghij", expected: ["abc", "de", "f）", "ghi", "j"] },
+    { source: "あい（うえお", expected: ["あい", "（うえ", "お"] },
+  ];
+
+  for (const { source, expected } of cases) {
+    const sourceWithPrefix = `prefix:${source}:suffix`;
+    const sourceStart = "prefix:".length;
+    const units = splitLongUnits([{
+      text: source,
+      sentenceIndex: 0,
+      kind: "body",
+      start: sourceStart,
+      end: sourceStart + source.length,
+    }], "ja", 3);
+
+    assert.deepEqual(units.map((unit) => unit.text), expected);
+    assert.equal(units.map((unit) => unit.text).join(""), source);
+    assert.ok(units.every((unit) => [
+      ...new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(unit.text),
+    ].length <= 3));
+    for (const unit of units) assert.equal(sourceWithPrefix.slice(unit.start, unit.end), unit.text);
+  }
+});
+
 test("long Japanese corner-bracket quotes are split without losing quote styling", () => {
   const units = segmentText("「これはとても長い引用なので一度では表示せず注視点を固定したまま分割する」");
   assert.deepEqual(units.map((unit) => unit.text), [
