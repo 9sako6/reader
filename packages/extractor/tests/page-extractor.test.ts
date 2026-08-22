@@ -6,6 +6,101 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { fromPage: extractPage, fromText } = require("../../../.build/packages/extractor/src/extractor.js");
 
+function createTextNode(value) {
+  return { nodeType: 3, nodeValue: value, childNodes: [], textContent: value };
+}
+
+function selectorMatches(element, selector) {
+  return selector
+    .split(",")
+    .map((value) => value.trim().toUpperCase())
+    .includes(String(element.tagName || "").toUpperCase());
+}
+
+function createElementNode(tagName, children = [], attributes: any = {}) {
+  const node = {
+    nodeType: 1,
+    tagName: tagName.toUpperCase(),
+    childNodes: children,
+    parentElement: null,
+    currentSrc: attributes.currentSrc,
+    src: attributes.src,
+    getAttribute(name) {
+      return attributes[name] ?? null;
+    },
+    querySelector(selector) {
+      return this.querySelectorAll(selector)[0] || null;
+    },
+    querySelectorAll(selector) {
+      const descendants = [];
+      const visit = (candidate) => {
+        for (const child of candidate.childNodes || []) {
+          if (child.nodeType !== 3) {
+            if (selectorMatches(child, selector)) descendants.push(child);
+            visit(child);
+          }
+        }
+      };
+      visit(this);
+      return descendants;
+    },
+    closest(selector) {
+      let current = this;
+      while (current) {
+        if (selectorMatches(current, selector)) return current;
+        current = current.parentElement;
+      }
+      return null;
+    },
+  };
+  for (const child of children) child.parentElement = node;
+  Object.defineProperty(node, "textContent", {
+    get() {
+      return children.map((child) => child.nodeType === 3 ? child.nodeValue : child.textContent || "").join("");
+    },
+  });
+  return node;
+}
+
+function createFixturePage(children) {
+  const root = createElementNode("ROOT", children);
+  const stats = { rangeCalls: 0 };
+  const document = {
+    createElement() {
+      return root;
+    },
+    createRange() {
+      stats.rangeCalls += 1;
+      throw new Error("unexpected Range fallback");
+    },
+  };
+  class FakeDefuddle {
+    parse() {
+      return { content: "<fixture></fixture>" };
+    }
+  }
+  return { document, Defuddle: FakeDefuddle, stats };
+}
+
+function assertReaderContentRanges(content) {
+  for (const block of content.readingContext.blocks) {
+    assert.ok(0 <= block.start && block.start <= block.end);
+    assert.ok(block.end <= content.text.length);
+    assert.equal(content.text.slice(block.start, block.end), block.text);
+  }
+
+  for (const figure of content.readingContext.figures) {
+    assert.ok(0 <= figure.sourceOffset);
+    assert.ok(figure.sourceOffset <= figure.sourceEnd);
+    assert.ok(figure.sourceEnd <= content.text.length);
+  }
+
+  assert.deepEqual(
+    [...content.readingContext.sectionOffsets].sort((left, right) => left - right),
+    content.readingContext.sectionOffsets,
+  );
+}
+
 test("fromText produces the same Content contract as page extraction", () => {
   assert.deepEqual(fromText("  選択した文章  "), {
     text: "選択した文章",
@@ -23,6 +118,147 @@ test("fromText produces the same Content contract as page extraction", () => {
 
 test("fromText returns no content for whitespace", () => {
   assert.equal(fromText("  "), null);
+});
+
+test("extractPage keeps a br inside a block in the canonical source range", () => {
+  const paragraph = createElementNode("p", [
+    createTextNode("foo"),
+    createElementNode("br"),
+    createTextNode("bar"),
+  ]);
+  const { document, Defuddle, stats } = createFixturePage([paragraph]);
+
+  const result = extractPage(document, Defuddle);
+
+  assert.equal(result.text, "foo\nbar");
+  assert.deepEqual(result.readingContext.blocks, [
+    { text: "foo\nbar", kind: "paragraph", level: null, start: 0, end: 7 },
+  ]);
+  assert.equal(stats.rangeCalls, 0);
+  assertReaderContentRanges(result);
+});
+
+test("extractPage shares canonical ranges across nested blocks and figures", () => {
+  const firstParagraph = createElementNode("p", [
+    createTextNode("foo"),
+    createElementNode("br"),
+    createTextNode("bar"),
+  ]);
+  const repeatedBreakParagraph = createElementNode("p", [
+    createTextNode("foo"),
+    createElementNode("br"),
+    createElementNode("br"),
+    createTextNode("bar"),
+  ]);
+  const inlineParagraph = createElementNode("p", [
+    createTextNode("前"),
+    createElementNode("strong", [createTextNode("強調")]),
+    createTextNode("後"),
+  ]);
+  const quote = createElementNode("blockquote", [
+    createElementNode("p", [
+      createTextNode("引用"),
+      createElementNode("br"),
+      createTextNode("続き"),
+    ]),
+  ]);
+  const list = createElementNode("ul", [
+    createElementNode("li", [createElementNode("p", [createTextNode("項目")])]),
+  ]);
+  const preformatted = createElementNode("pre", [createTextNode("line 1\n  line 2")]);
+  const table = createElementNode("table", [
+    createElementNode("tr", [
+      createElementNode("td", [createTextNode("セル1")]),
+      createElementNode("td", [createTextNode("セル2")]),
+    ]),
+  ]);
+  const caption = createElementNode("figcaption", [
+    createTextNode("図1"),
+    createElementNode("br"),
+    createTextNode("続き"),
+  ]);
+  const captionFigure = createElementNode("figure", [
+    createElementNode("img", [], {
+      currentSrc: "https://example.com/caption.png",
+      src: "https://example.com/caption.png",
+      alt: "キャプション画像",
+    }),
+    caption,
+  ]);
+  const imageOnlyFigure = createElementNode("figure", [
+    createElementNode("img", [], {
+      currentSrc: "https://example.com/only.png",
+      src: "https://example.com/only.png",
+      alt: "本文画像",
+    }),
+  ]);
+  const { document, Defuddle, stats } = createFixturePage([
+    createTextNode(" \n"),
+    firstParagraph,
+    repeatedBreakParagraph,
+    inlineParagraph,
+    quote,
+    list,
+    preformatted,
+    table,
+    captionFigure,
+    imageOnlyFigure,
+    createTextNode(" \n"),
+  ]);
+
+  const result = extractPage(document, Defuddle);
+
+  assert.equal(result.text, "foo\nbar\nfoo\nbar\n前強調後\n引用\n続き\n項目\nline 1\n  line 2\nセル1セル2\n図1\n続き");
+  assert.deepEqual(result.readingContext.blocks, [
+    { text: "foo\nbar", kind: "paragraph", level: null, start: 0, end: 7 },
+    { text: "foo\nbar", kind: "paragraph", level: null, start: 8, end: 15 },
+    { text: "前強調後", kind: "paragraph", level: null, start: 16, end: 20 },
+    { text: "引用\n続き", kind: "quote", level: null, start: 21, end: 26 },
+    { text: "項目", kind: "paragraph", level: null, start: 27, end: 29 },
+    { text: "line 1\n  line 2", kind: "preformatted", level: null, start: 30, end: 45 },
+  ]);
+  assert.deepEqual(result.readingContext.figures, [
+    {
+      src: "https://example.com/caption.png",
+      alt: "キャプション画像",
+      caption: "図1続き",
+      sourceOffset: 53,
+      sourceEnd: 58,
+    },
+    {
+      src: "https://example.com/only.png",
+      alt: "本文画像",
+      caption: "",
+      sourceOffset: 58,
+      sourceEnd: 58,
+    },
+  ]);
+  assert.equal(result.text.slice(53, 58), "図1\n続き");
+  assert.equal(stats.rangeCalls, 0);
+  assertReaderContentRanges(result);
+});
+
+test("extractPage uses the indexed heading range for section offsets", () => {
+  const heading = createElementNode("h2", [createTextNode("見出し")]);
+  const paragraph = createElementNode("p", [createTextNode("本文")]);
+  const { document, Defuddle, stats } = createFixturePage([
+    createTextNode(" \n"),
+    heading,
+    paragraph,
+    createTextNode(" \n"),
+  ]);
+
+  const result = extractPage(document, Defuddle);
+
+  assert.equal(result.text, "見出し\n本文");
+  assert.deepEqual(result.readingContext.sectionOffsets, [0]);
+  assert.deepEqual(result.readingContext.sectionTransitions, [{ offset: 0, headingIndex: 0 }]);
+  assert.deepEqual(result.readingContext.blocks, [
+    { text: "見出し", kind: "heading", level: 2, start: 0, end: 3 },
+    { text: "本文", kind: "paragraph", level: null, start: 4, end: 6 },
+  ]);
+  assert.equal(stats.rangeCalls, 0);
+  assertReaderContentRanges(result);
 });
 
 test("installed Defuddle bundle exposes its browser constructor", () => {
