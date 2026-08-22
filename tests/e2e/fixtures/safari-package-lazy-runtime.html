@@ -9,6 +9,9 @@
         runtime: {
           getURL(path) {
             const params = new URLSearchParams(location.search);
+            const assetRoot = params.get("asset-root") === "baseline"
+              ? "/__reader-baseline__/apps/ios/ReaderExtension/Resources/generated"
+              : "/apps/ios/ReaderExtension/Resources/generated";
             const query = new URLSearchParams();
             if (params.has("slow")) query.set("delay", "250");
             if (params.has("boundary")) query.set("delay", "600");
@@ -18,7 +21,7 @@
               query.set("token", params.get("runtime") || "retry");
             }
             const suffix = query.toString() ? `?${query}` : "";
-            return `/apps/ios/ReaderExtension/Resources/generated/${path}${suffix}`;
+            return `${assetRoot}/${path}${suffix}`;
           },
         },
       };
@@ -26,7 +29,10 @@
     <script>
       if (!new URLSearchParams(location.search).has("passive-control")) {
         const bootstrap = document.createElement("script");
-        bootstrap.src = "/apps/ios/ReaderExtension/Resources/generated/bootstrap.js";
+        const assetRoot = new URLSearchParams(location.search).get("asset-root") === "baseline"
+          ? "/__reader-baseline__/apps/ios/ReaderExtension/Resources/generated"
+          : "/apps/ios/ReaderExtension/Resources/generated";
+        bootstrap.src = `${assetRoot}/bootstrap.js`;
         document.head.append(bootstrap);
       }
     </script>

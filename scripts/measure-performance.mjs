@@ -8,11 +8,20 @@ const outputPath = resolve(repositoryRoot, "test-results/performance/reader.json
 const webPort = Number(process.env.READER_PERFORMANCE_PORT) || 4173;
 const baseUrl = `http://127.0.0.1:${webPort}`;
 const generatedRoot = resolve(repositoryRoot, "apps/ios/ReaderExtension/Resources/generated");
-const scripts = ["session-wasm-module.js", "session.js", "defuddle.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]
-  .map((name) => resolve(generatedRoot, name));
+const baselineRoot = process.env.READER_PERFORMANCE_BASELINE_ROOT
+  ? resolve(process.env.READER_PERFORMANCE_BASELINE_ROOT)
+  : null;
+const generatedPath = "/apps/ios/ReaderExtension/Resources/generated";
+const baselineGeneratedRoot = baselineRoot ? resolve(baselineRoot, "apps/ios/ReaderExtension/Resources/generated") : null;
+const runtimeScripts = (root) => ["session-wasm-module.js", "session.js", "defuddle.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]
+  .map((name) => resolve(root, name));
+const scripts = runtimeScripts(generatedRoot);
+const baselineScripts = baselineGeneratedRoot ? runtimeScripts(baselineGeneratedRoot) : null;
 const nodeCounts = [1000, 10_000, 50_000, 100_000];
 const runsPerCase = Number(process.env.READER_PERFORMANCE_RUNS) || 10;
-const warmupRunsPerCase = Number(process.env.READER_PERFORMANCE_WARMUP_RUNS) || 2;
+const warmupRunsPerCase = process.env.READER_PERFORMANCE_WARMUP_RUNS === undefined
+  ? (baselineRoot ? 2 : 0)
+  : Number(process.env.READER_PERFORMANCE_WARMUP_RUNS);
 const budgetMargin = 0.25;
 const baseline = {
   source: "github-actions/macos-15 run 32590877670 artifact reader-performance-baseline",
@@ -61,7 +70,11 @@ try {
   } catch {
   fixtureServer = spawn(process.execPath, ["tests/e2e/server.mjs"], {
     cwd: repositoryRoot,
-    env: { ...process.env, READER_E2E_PORT: String(webPort) },
+    env: {
+      ...process.env,
+      READER_E2E_PORT: String(webPort),
+      ...(baselineRoot ? { READER_E2E_BASELINE_ROOT: baselineRoot } : {}),
+    },
     stdio: "ignore",
   });
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -72,6 +85,10 @@ try {
       await new Promise((resolveAttempt) => setTimeout(resolveAttempt, 20));
     }
   }
+}
+if (baselineRoot) {
+  const baselineBootstrap = await fetch(`${baseUrl}/__reader-baseline__/apps/ios/ReaderExtension/Resources/generated/bootstrap.js`);
+  if (!baselineBootstrap.ok) throw new Error(`paired baseline assets are not served: ${baselineBootstrap.status}`);
 }
 
 function median(values) {
@@ -134,16 +151,34 @@ function retainedHeapReport(runs) {
   };
 }
 
-function budgetReport(fixtureName, p90, retainedHeap) {
+function pairedDeltaReport(baselineRuns, candidateRuns) {
+  const numericKeys = [
+    "tapToFirstFeedbackMs",
+    "tapToFirstUnitMs",
+    "sessionInitMs",
+    "extractionMs",
+    "tapToFirstRenderMs",
+    "retainedHeapDeltaBytes",
+  ];
+  const deltas = Object.fromEntries(numericKeys.map((key) => {
+    const samples = candidateRuns.map((run, index) => run[key] - baselineRuns[index][key]);
+    return [key, { samples, p50: percentile(samples, 0.5), p90: percentile(samples, 0.9) }];
+  }));
+  return { baselineRuns, candidateRuns, deltas };
+}
+
+function budgetReport(fixtureName, p90, retainedHeap, pairedBaseline = null) {
   const fixtureBaseline = baseline.fixtures[fixtureName] || baseline.nodeBenchmarks[fixtureName];
   if (!fixtureBaseline) return { status: "not-applicable", metrics: {} };
+  const referenceP90 = pairedBaseline?.p90 || fixtureBaseline;
   const metrics = Object.fromEntries(Object.entries(fixtureBaseline)
     .filter(([metric]) => [
       "tapToFirstUnitMs",
       "tapToFirstRenderMs",
       ...(baseline.nodeBenchmarks[fixtureName] ? ["extractionMs"] : ["tapToFirstFeedbackMs"]),
     ].includes(metric))
-    .map(([metric, baselineP90]) => {
+    .map(([metric]) => {
+    const baselineP90 = referenceP90[metric];
     const budget = baselineP90 * (1 + budgetMargin);
     return [metric, {
       baselineP90,
@@ -153,7 +188,7 @@ function budgetReport(fixtureName, p90, retainedHeap) {
       regression: p90[metric] > budget,
     }];
     }));
-  const retainedBaseline = (baseline.nodeBenchmarks[fixtureName]
+  const retainedBaseline = pairedBaseline?.retainedHeap?.p90Bytes ?? (baseline.nodeBenchmarks[fixtureName]
     ? baseline.retainedHeap.nodeBenchmarks[fixtureName]
     : baseline.retainedHeap.fixtures[fixtureName]);
   if (retainedBaseline !== null && retainedBaseline !== undefined) {
@@ -176,7 +211,7 @@ function budgetReport(fixtureName, p90, retainedHeap) {
   };
 }
 
-async function measurePassivePage(browser, control = false) {
+async function measurePassivePage(browser, control = false, variant = "candidate") {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   page.setDefaultTimeout(120_000);
   const cdp = await page.context().newCDPSession(page);
@@ -191,13 +226,14 @@ async function measurePassivePage(browser, control = false) {
         observer.observe({ type: "longtask", buffered: true });
       }
     });
-    const query = control ? "passive-control=1" : "passive=1";
+    const query = new URLSearchParams(control ? { "passive-control": "1" } : { passive: "1" });
+    if (variant === "baseline") query.set("asset-root", "baseline");
     await page.goto(`${baseUrl}/tests/e2e/fixtures/safari-package-lazy-runtime.html?${query}`, { waitUntil: "load" });
     await page.waitForTimeout(200);
     const browserMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
     return await page.evaluate((metrics) => {
       const scriptEntries = performance.getEntriesByType("resource")
-        .filter((entry) => entry.name.includes("/apps/ios/ReaderExtension/Resources/generated/"));
+        .filter((entry) => entry.name.includes("/generated/"));
       const bootstrapEntry = scriptEntries.find((entry) => entry.name.endsWith("/bootstrap.js"));
       return {
         bootstrapRequestCount: scriptEntries.filter((entry) => entry.name.endsWith("/bootstrap.js")).length,
@@ -228,23 +264,26 @@ async function measurePassivePage(browser, control = false) {
   }
 }
 
-async function measurePage(browser, fixture) {
+async function measurePage(browser, fixture, variant = "candidate") {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   page.setDefaultTimeout(120_000);
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Performance.enable");
   try {
     await page.goto(`${baseUrl}/tests/e2e/fixtures/performance.html`);
-    await page.evaluate((runtimeBaseUrl) => {
+    const variantScripts = variant === "baseline" ? baselineScripts : scripts;
+    if (!variantScripts) throw new Error("baseline generated assets are required for paired measurement");
+    const runtimePrefix = variant === "baseline" ? `/__reader-baseline__${generatedPath}` : generatedPath;
+    await page.evaluate((runtimeConfig) => {
       globalThis.browser = {
         runtime: {
           getURL(path) {
-            return `${runtimeBaseUrl}/apps/ios/ReaderExtension/Resources/generated/${path}`;
+            return `${runtimeConfig.baseUrl}${runtimeConfig.runtimePrefix}/${path}`;
           },
         },
       };
-    }, baseUrl);
-    for (const script of scripts) {
+    }, { baseUrl, runtimePrefix });
+    for (const script of variantScripts) {
       await page.addScriptTag({
         path: script,
         type: script.endsWith("session-wasm-module.js") ? "module" : "text/javascript",
@@ -324,33 +363,74 @@ async function measurePage(browser, fixture) {
 
 const browser = await chromium.launch({ headless: true });
 try {
-  const fixtureReports = {};
-  for (const fixture of fixtures) {
-    for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) await measurePage(browser, fixture);
-    const runs = [];
-    for (let run = 0; run < runsPerCase; run += 1) runs.push(await measurePage(browser, fixture));
-    const median = medianReport(runs);
-    const p50 = percentileReport(runs, 0.5);
-    const p90 = percentileReport(runs, 0.9);
-    const retainedHeap = retainedHeapReport(runs);
-    fixtureReports[fixture.name] = { runs, median, p50, p90, retainedHeap, budget: budgetReport(fixture.name, p90, retainedHeap) };
+  if (process.env.READER_PERFORMANCE_ENFORCE === "1" && !baselineRoot) {
+    throw new Error("READER_PERFORMANCE_BASELINE_ROOT is required when enforcing paired performance budgets");
   }
-
-  const nodeReports = {};
-  for (const nodeCount of nodeCounts) {
-    const fixture = { name: `nodes-${nodeCount}`, nodeCount, extraction: "dominant" };
-    for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) await measurePage(browser, fixture);
+  const fixtureReports = {};
+  const pairedComparison = { fixtures: {}, nodeBenchmarks: {} };
+  for (const fixture of fixtures) {
+    const baselineRuns = [];
+    for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) {
+      if (baselineRoot) await measurePage(browser, fixture, "baseline");
+      await measurePage(browser, fixture);
+    }
     const runs = [];
     for (let run = 0; run < runsPerCase; run += 1) {
+      if (baselineRoot) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
       runs.push(await measurePage(browser, fixture));
     }
     const median = medianReport(runs);
     const p50 = percentileReport(runs, 0.5);
     const p90 = percentileReport(runs, 0.9);
     const retainedHeap = retainedHeapReport(runs);
-    nodeReports[String(nodeCount)] = { runs, median, p50, p90, retainedHeap, budget: budgetReport(String(nodeCount), p90, retainedHeap) };
+    const pairedBaseline = baselineRoot ? {
+      p90: percentileReport(baselineRuns, 0.9),
+      retainedHeap: retainedHeapReport(baselineRuns),
+    } : null;
+    fixtureReports[fixture.name] = {
+      runs,
+      median,
+      p50,
+      p90,
+      retainedHeap,
+      budget: budgetReport(fixture.name, p90, retainedHeap, pairedBaseline),
+    };
+    if (baselineRoot) pairedComparison.fixtures[fixture.name] = pairedDeltaReport(baselineRuns, runs);
   }
 
+  const nodeReports = {};
+  for (const nodeCount of nodeCounts) {
+    const fixture = { name: `nodes-${nodeCount}`, nodeCount, extraction: "dominant" };
+    const baselineRuns = [];
+    for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) {
+      if (baselineRoot) await measurePage(browser, fixture, "baseline");
+      await measurePage(browser, fixture);
+    }
+    const runs = [];
+    for (let run = 0; run < runsPerCase; run += 1) {
+      if (baselineRoot) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
+      runs.push(await measurePage(browser, fixture));
+    }
+    const median = medianReport(runs);
+    const p50 = percentileReport(runs, 0.5);
+    const p90 = percentileReport(runs, 0.9);
+    const retainedHeap = retainedHeapReport(runs);
+    const pairedBaseline = baselineRoot ? {
+      p90: percentileReport(baselineRuns, 0.9),
+      retainedHeap: retainedHeapReport(baselineRuns),
+    } : null;
+    nodeReports[String(nodeCount)] = {
+      runs,
+      median,
+      p50,
+      p90,
+      retainedHeap,
+      budget: budgetReport(String(nodeCount), p90, retainedHeap, pairedBaseline),
+    };
+    if (baselineRoot) pairedComparison.nodeBenchmarks[String(nodeCount)] = pairedDeltaReport(baselineRuns, runs);
+  }
+
+  const passiveBaseline = baselineRoot ? await measurePassivePage(browser, false, "baseline") : null;
   const passiveWithBootstrap = await measurePassivePage(browser);
   const passiveControl = await measurePassivePage(browser, true);
   const passive = {
@@ -359,6 +439,14 @@ try {
     delta: Object.fromEntries(["passiveScriptTransferBytes", "passiveScriptDecodedBytes", "longTaskTotalMs", "scriptDurationMs", "taskDurationMs", "layoutDurationMs", "heapUsedBytes", "scrollDispatchMs"]
       .map((key) => [key, passiveWithBootstrap[key] === null || passiveControl[key] === null ? null : passiveWithBootstrap[key] - passiveControl[key]])),
   };
+  if (baselineRoot) {
+    pairedComparison.passive = {
+      baseline: passiveBaseline,
+      candidate: passiveWithBootstrap,
+      delta: Object.fromEntries(["passiveScriptTransferBytes", "passiveScriptDecodedBytes", "longTaskTotalMs", "scriptDurationMs", "taskDurationMs", "layoutDurationMs", "heapUsedBytes", "scrollDispatchMs"]
+        .map((key) => [key, passiveWithBootstrap[key] === null || passiveBaseline[key] === null ? null : passiveWithBootstrap[key] - passiveBaseline[key]])),
+    };
+  }
   const regressions = Object.entries(fixtureReports)
     .flatMap(([fixtureName, fixtureReport]) => Object.entries(fixtureReport.budget.metrics)
       .filter(([, metric]) => metric.regression)
@@ -370,18 +458,27 @@ try {
   const passiveRegressions = [
     passiveWithBootstrap.bootstrapRequestCount !== 1 ? "bootstrap-request-count" : null,
     passiveWithBootstrap.heavyGlobalsBeforeTap.length > 0 ? "heavy-global-before-tap" : null,
-    passiveWithBootstrap.bootstrapDecodedBytes > baseline.passive.bootstrapDecodedBytes * (1 + budgetMargin) ? "bootstrap-decoded-bytes" : null,
-    passiveWithBootstrap.longTaskCount > baseline.passive.longTaskCount ? "passive-long-task" : null,
+    passiveWithBootstrap.bootstrapDecodedBytes > (passiveBaseline?.bootstrapDecodedBytes ?? baseline.passive.bootstrapDecodedBytes) * (1 + budgetMargin) ? "bootstrap-decoded-bytes" : null,
+    passiveWithBootstrap.longTaskCount > (passiveBaseline?.longTaskCount ?? baseline.passive.longTaskCount) ? "passive-long-task" : null,
   ].filter(Boolean);
   const report = {
     schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     runsPerCase,
     warmupRunsPerCase,
-    baseline,
+    baseline: baselineRoot ? {
+      mode: "paired",
+      baseCommit: process.env.READER_PERFORMANCE_BASE_COMMIT || "unknown",
+      candidateCommit: process.env.READER_PERFORMANCE_CANDIDATE_COMMIT || "unknown",
+      runs: runsPerCase,
+      warmupRunsPerCase,
+      margin: budgetMargin,
+      conditions: "Chromium headless, 390x844 viewport, base/candidate paired in one browser process",
+    } : baseline,
     fixtures: fixtureReports,
     nodeBenchmarks: nodeReports,
     passive,
+    pairedComparison: baselineRoot ? pairedComparison : null,
     regressions: [...regressions, ...nodeRegressions, ...passiveRegressions.map((metric) => ({ metric }))],
     ci: { status: regressions.length === 0 && nodeRegressions.length === 0 && passiveRegressions.length === 0 ? "pass" : "regression" },
   };
