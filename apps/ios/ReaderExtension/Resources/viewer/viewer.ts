@@ -83,6 +83,7 @@
     global.document.documentElement.append(host);
     global.addEventListener("scroll", fadeHandleDuringScroll, { passive: true });
     global.addEventListener("resize", handleViewportChange, { passive: true });
+    global.document.addEventListener?.("visibilitychange", handleVisibilityChange);
   }
 
   function createStyles() {
@@ -675,7 +676,7 @@
     Object.assign(getNodes(), { previousUnit, unit, nextUnit });
     renderRsvpControls();
     contextSentenceIndex = null;
-    if (!renderFlowItem()) play();
+    if (!renderFlowItem() && global.document.visibilityState !== "hidden") play();
   }
 
   function transportButton(label: string, action: () => void): HTMLButtonElement {
@@ -980,6 +981,10 @@
     if (playbackTimer !== null) global.clearTimeout(playbackTimer);
     playbackTimer = null;
     updatePlayButton();
+  }
+
+  function handleVisibilityChange(): void {
+    if (global.document.visibilityState === "hidden") pause();
   }
 
   function updatePlayButton() {

@@ -49,10 +49,12 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
   const body = new FakeElement("body");
   documentElement.append(body);
   const createdElements: FakeElement[] = [];
+  const documentListeners = new Map();
   const document = {
     documentElement,
     body,
     title: "",
+    visibilityState: "visible",
     createElement(tagName) {
       const element = new FakeElement(tagName);
       createdElements.push(element);
@@ -63,6 +65,14 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     },
     getElementById(id) {
       return findElement(documentElement, (element) => element.id === id);
+    },
+    addEventListener(type, listener) {
+      const listeners = documentListeners.get(type) || [];
+      listeners.push(listener);
+      documentListeners.set(type, listeners);
+    },
+    dispatchEvent(event) {
+      for (const listener of documentListeners.get(event.type) || []) listener(event);
     },
   };
   const leadingSentence = "画像より前にあるとても長い文章をここで読んでいます。";
@@ -166,6 +176,10 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     },
     activeContent() {
       return activeContent;
+    },
+    setVisibilityState(state) {
+      document.visibilityState = state;
+      document.dispatchEvent({ type: "visibilitychange" });
     },
   };
 }
@@ -516,6 +530,21 @@ test("Safari reader restores source page state when closed repeatedly", async ()
   assert.equal(documentElement.style.overflow, "scroll");
   assert.equal(body.style.overflow, "auto");
   assert.equal(handle.focused, true);
+});
+
+test("Safari reader pauses without destroying its session in the background", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  await context.MobileViewer.open();
+
+  assert.equal(timers.size, 1);
+  harness.setVisibilityState("hidden");
+  assert.equal(timers.size, 0);
+  assert.ok(findElement(documentElement, (element) => element.className === "reader"));
+
+  harness.setVisibilityState("visible");
+  assert.equal(timers.size, 0);
+  assert.ok(findElement(documentElement, (element) => element.className === "reader"));
 });
 
 test("Safari reader destroys paused text mode state when closed", async () => {
