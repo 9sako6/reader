@@ -60,9 +60,17 @@ declare global {
     | "canonical_text"
     | "blocks_figures";
 
+  interface ReaderExtractionMetrics {
+    dominantArticleMs: number;
+    defuddleMs: number;
+    indexMs: number;
+    contextMs: number;
+  }
+
   interface ReaderExtractionOptions {
     signal?: AbortSignal;
-    onPhase?: (phase: ReaderExtractionPhase) => void;
+    onPhase?: (phase: ReaderExtractionPhase, durationMs: number) => void;
+    onMetrics?: (metrics: ReaderExtractionMetrics) => void;
   }
 
   interface ReaderExtractor {
