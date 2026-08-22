@@ -12,6 +12,7 @@ export type ReaderViewModel =
     figure: ReaderFigureView | null;
     playing: boolean;
     progress: number;
+    loadingCover?: boolean;
     headings: ReaderHeading[];
     activeHeadingIndex: number;
     mobile?: boolean;
@@ -319,7 +320,7 @@ function renderDesktopRsvp(model: Extract<ReaderViewModel, { kind: "rsvp" }>, ha
     createElement("div", { key: "next", "data-reader-context-next": "true", "aria-hidden": "true", style: { position: "absolute", left: "50%", top: "calc(50% + 82px)", transform: "translateX(-50%)", width: "min(100%, 640px)", maxWidth: "calc(100% - 32px)", color: "rgba(255,255,255,0.26)", fontSize: "clamp(16px, 1.5vw, 20px)", lineHeight: "1.4", textAlign: "center", opacity: "0.26", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: "2", whiteSpace: "nowrap", textOverflow: "ellipsis" }, children: model.next }),
     createElement("div", { key: "controls", style: { position: "absolute", left: "50%", bottom: "8px", transform: "translateX(-50%)", width: "min(100%, 264px)", minHeight: "56px", display: "grid", gridTemplateColumns: "1fr 56px 1fr", alignItems: "center" }, children: [iconButton("1文戻る", handlers.previousSentence, { width: "52px", height: "52px", color: "rgba(245,245,247,0.66)" }), transport, createElement("span", { key: "spacer" })] }),
     createElement("span", { key: "progress", "data-reader-progress": "true", style: { position: "absolute", right: "16px", bottom: "16px", zIndex: "3", color: "rgba(235,235,235,0.58)", fontSize: "13px", fontVariantNumeric: "tabular-nums", pointerEvents: "none" }, children: `${model.progress}%` }),
-  ] })] });
+  ] }), model.loadingCover ? createElement(LoadingIndicator, { key: "loading-cover", mobile: false, reducedMotion: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true }) : null] });
 }
 
 function renderDesktopText(model: Extract<ReaderViewModel, { kind: "text" }>, handlers: ReaderViewHandlers): ReactElement {

@@ -55,6 +55,7 @@ class FakeElement {
 
   append(...children) {
     for (const child of children) {
+      if (child.parent) child.remove();
       child.parent = this;
       child.ownerDocument ||= this.ownerDocument;
       this.children.push(child);
@@ -67,6 +68,7 @@ class FakeElement {
   }
 
   insertBefore(child, before) {
+    if (child.parent) child.remove();
     child.parent = this;
     child.ownerDocument ||= this.ownerDocument;
     const index = this.children.indexOf(before);
@@ -125,7 +127,9 @@ class FakeElement {
     const selectors = selector.split(",").map((value) => value.trim());
     return findElements(this, (element) => selectors.some((candidate) => {
       const attribute = candidate.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/u);
-      if (attribute) return element.getAttribute(attribute[1]) === (attribute[2] === undefined ? element.getAttribute(attribute[1]) : attribute[2]);
+      if (attribute) return attribute[2] === undefined
+        ? element.hasAttribute(attribute[1])
+        : element.getAttribute(attribute[1]) === attribute[2];
       if (/^[a-z]+$/iu.test(candidate)) return element.tagName.toLowerCase() === candidate.toLowerCase();
       return false;
     }));
@@ -169,6 +173,7 @@ class FakeElement {
   }
 
   replaceChildren(...children) {
+    for (const child of this.children) child.parent = null;
     this.children = [];
     this.append(...children);
   }
@@ -618,6 +623,22 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
     sessionCommands,
   };
 }
+
+test("Chrome React harness preserves attribute presence and DOM move semantics", () => {
+  const root = new FakeElement("div");
+  const first = new FakeElement("div");
+  const second = new FakeElement("div");
+  const child = new FakeElement("span");
+  first.setAttribute("data-reader-marker", "true");
+  root.append(first, second);
+  first.append(child);
+  assert.deepEqual(root.querySelectorAll("[data-reader-marker]"), [first]);
+  assert.deepEqual(root.querySelectorAll("[data-reader-missing]"), []);
+  second.append(child);
+  assert.equal(first.children.includes(child), false);
+  assert.equal(second.children.includes(child), true);
+  assert.equal(child.parentNode, second);
+});
 
 test("reader replaces loading only for the matching request", () => {
   const harness = createOutlineReaderHarness();
