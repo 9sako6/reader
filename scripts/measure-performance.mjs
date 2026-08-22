@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { chromium } from "@playwright/test";
+import { evaluateFeedbackBudget } from "./performance-budget.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const outputPath = resolve(repositoryRoot, "test-results/performance/reader.json");
@@ -23,7 +24,6 @@ const warmupRunsPerCase = process.env.READER_PERFORMANCE_WARMUP_RUNS === undefin
   ? (baselineRoot ? 2 : 0)
   : Number(process.env.READER_PERFORMANCE_WARMUP_RUNS);
 const budgetMargin = 0.25;
-const timingFloorMs = 16;
 const baseline = {
   source: "github-actions/macos-15 run 32590877670 artifact reader-performance-baseline",
   runs: 10,
@@ -168,7 +168,7 @@ function pairedDeltaReport(baselineRuns, candidateRuns) {
   return { baselineRuns, candidateRuns, deltas };
 }
 
-function budgetReport(fixtureName, p90, retainedHeap, pairedBaseline = null) {
+function budgetReport(fixtureName, p90, retainedHeap, pairedBaseline = null, pairedDelta = null) {
   const fixtureBaseline = baseline.fixtures[fixtureName] || baseline.nodeBenchmarks[fixtureName];
   if (!fixtureBaseline) return { status: "not-applicable", metrics: {} };
   const referenceP90 = pairedBaseline?.p90 || fixtureBaseline;
@@ -180,15 +180,18 @@ function budgetReport(fixtureName, p90, retainedHeap, pairedBaseline = null) {
     ].includes(metric))
     .map(([metric]) => {
     const baselineP90 = referenceP90[metric];
-    const floorMs = metric === "tapToFirstFeedbackMs" ? timingFloorMs : 0;
-    const budget = Math.max(baselineP90 * (1 + budgetMargin), floorMs);
+    const feedbackBudget = metric === "tapToFirstFeedbackMs"
+      ? evaluateFeedbackBudget({ observedP90: p90[metric], pairedP50DeltaMs: pairedDelta?.tapToFirstFeedbackMs?.p50 ?? null })
+      : null;
+    const budget = feedbackBudget?.absoluteBudgetMs ?? baselineP90 * (1 + budgetMargin);
     return [metric, {
       baselineP90,
-      floorMs,
+      relativeBudget: baselineP90 * (1 + budgetMargin),
       budget,
       observedP90: p90[metric],
       increaseRate: (p90[metric] - baselineP90) / baselineP90,
-      regression: p90[metric] > budget,
+      ...(feedbackBudget || {}),
+      regression: feedbackBudget?.regression ?? p90[metric] > budget,
     }];
     }));
   const retainedBaseline = pairedBaseline?.retainedHeap?.p90Bytes ?? (baseline.nodeBenchmarks[fixtureName]
@@ -374,13 +377,17 @@ try {
   for (const fixture of fixtures) {
     const baselineRuns = [];
     for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) {
-      if (baselineRoot) await measurePage(browser, fixture, "baseline");
+      const baselineFirst = warmup % 2 === 0;
+      if (baselineRoot && baselineFirst) await measurePage(browser, fixture, "baseline");
       await measurePage(browser, fixture);
+      if (baselineRoot && !baselineFirst) await measurePage(browser, fixture, "baseline");
     }
     const runs = [];
     for (let run = 0; run < runsPerCase; run += 1) {
-      if (baselineRoot) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
+      const baselineFirst = run % 2 === 0;
+      if (baselineRoot && baselineFirst) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
       runs.push(await measurePage(browser, fixture));
+      if (baselineRoot && !baselineFirst) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
     }
     const median = medianReport(runs);
     const p50 = percentileReport(runs, 0.5);
@@ -390,15 +397,16 @@ try {
       p90: percentileReport(baselineRuns, 0.9),
       retainedHeap: retainedHeapReport(baselineRuns),
     } : null;
+    const pairedDelta = baselineRoot ? pairedDeltaReport(baselineRuns, runs) : null;
     fixtureReports[fixture.name] = {
       runs,
       median,
       p50,
       p90,
       retainedHeap,
-      budget: budgetReport(fixture.name, p90, retainedHeap, pairedBaseline),
+      budget: budgetReport(fixture.name, p90, retainedHeap, pairedBaseline, pairedDelta?.deltas),
     };
-    if (baselineRoot) pairedComparison.fixtures[fixture.name] = pairedDeltaReport(baselineRuns, runs);
+    if (baselineRoot) pairedComparison.fixtures[fixture.name] = pairedDelta;
   }
 
   const nodeReports = {};
@@ -406,13 +414,17 @@ try {
     const fixture = { name: `nodes-${nodeCount}`, nodeCount, extraction: "dominant" };
     const baselineRuns = [];
     for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) {
-      if (baselineRoot) await measurePage(browser, fixture, "baseline");
+      const baselineFirst = warmup % 2 === 0;
+      if (baselineRoot && baselineFirst) await measurePage(browser, fixture, "baseline");
       await measurePage(browser, fixture);
+      if (baselineRoot && !baselineFirst) await measurePage(browser, fixture, "baseline");
     }
     const runs = [];
     for (let run = 0; run < runsPerCase; run += 1) {
-      if (baselineRoot) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
+      const baselineFirst = run % 2 === 0;
+      if (baselineRoot && baselineFirst) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
       runs.push(await measurePage(browser, fixture));
+      if (baselineRoot && !baselineFirst) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
     }
     const median = medianReport(runs);
     const p50 = percentileReport(runs, 0.5);
@@ -422,15 +434,16 @@ try {
       p90: percentileReport(baselineRuns, 0.9),
       retainedHeap: retainedHeapReport(baselineRuns),
     } : null;
+    const pairedDelta = baselineRoot ? pairedDeltaReport(baselineRuns, runs) : null;
     nodeReports[String(nodeCount)] = {
       runs,
       median,
       p50,
       p90,
       retainedHeap,
-      budget: budgetReport(String(nodeCount), p90, retainedHeap, pairedBaseline),
+      budget: budgetReport(String(nodeCount), p90, retainedHeap, pairedBaseline, pairedDelta?.deltas),
     };
-    if (baselineRoot) pairedComparison.nodeBenchmarks[String(nodeCount)] = pairedDeltaReport(baselineRuns, runs);
+    if (baselineRoot) pairedComparison.nodeBenchmarks[String(nodeCount)] = pairedDelta;
   }
 
   const passiveBaseline = baselineRoot ? await measurePassivePage(browser, false, "baseline") : null;
@@ -476,7 +489,6 @@ try {
       runs: runsPerCase,
       warmupRunsPerCase,
       margin: budgetMargin,
-      timingFloorMs,
       conditions: "Chromium headless, 390x844 viewport, base/candidate paired in one browser process",
     } : baseline,
     fixtures: fixtureReports,
