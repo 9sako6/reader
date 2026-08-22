@@ -77,10 +77,15 @@
   let preparationController: AbortController | null = null;
   let activePreparation: PreparationState = { kind: "idle" };
   let sessionState: ReaderSessionState | null = null;
+  let sessionHandle: ReaderSessionHandle | null = null;
+  let sessionInitPromise: Promise<void> | null = null;
+  let pendingSessionCommands: ReaderSessionCommand[] = [];
+  let sessionInitFailure = false;
   let sessionEnabled = false;
   let applyingSession = false;
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
+  let performanceUnitMarked = false;
 
   function markPerformance(name: string): void {
     global.performance?.mark?.(name);
@@ -207,10 +212,13 @@
     markPerformance("reader:tap");
     performanceRenderMarked = false;
     performanceControlsMarked = false;
+    performanceUnitMarked = false;
+    sessionInitFailure = false;
     const generation = ++sessionGeneration;
     preparationGeneration = generation;
     opening = true;
     activePreparation = { kind: "preparing", requestId: String(generation), startedAt: Date.now() };
+    beginReaderSession(String(generation));
     launchFocus = handle;
     makeBackgroundInert(host);
     sourceScrollY = global.scrollY || 0;
@@ -311,9 +319,16 @@
       const reason = classifyPreparationFailure(preparationError);
       activePreparation = { kind: "failed", requestId: String(generation), reason };
       showError(reason);
+    } else if (sessionInitFailure) {
+      activePreparation = { kind: "failed", requestId: String(generation), reason: "session_unavailable" };
+      showError("session_unavailable");
     } else {
       activePreparation = { kind: "ready", requestId: String(generation) };
-      if (readerSessionAvailable()) await initializeReaderSession(String(generation));
+      dispatchSession({
+        type: "prepareSucceeded",
+        requestId: String(generation),
+        flow: sessionPreparation(),
+      });
       if (!isCurrentSession(generation)) return;
       renderReader();
     }
@@ -455,6 +470,7 @@
   function cancelOpening(generation: number): void {
     if (!isCurrentSession(generation)) return;
     preparationController?.abort();
+    dispatchSession({ type: "cancel", requestId: String(generation) });
     activePreparation = { kind: "cancelled", requestId: String(generation) };
     close();
   }
@@ -507,6 +523,13 @@
   }
 
   function showError(reason: PreparationFailure) {
+    if (reason !== "session_unavailable" && activePreparation.kind !== "idle") {
+      dispatchSession({
+        type: "prepareFailed",
+        requestId: activePreparation.requestId,
+        reason,
+      });
+    }
     getNodes().transport?.remove();
     getNodes().transport = null;
     getNodes().modeButton.hidden = true;
@@ -549,41 +572,83 @@
     const candidate = global.ReaderSession;
     return typeof candidate?.init === "function"
       && typeof candidate.create === "function"
-      && typeof candidate.reduce === "function";
+      && typeof candidate.dispatch === "function";
   }
 
-  async function initializeReaderSession(requestId: string): Promise<void> {
-    if (!readerSessionAvailable()) return;
-    try {
-      await global.ReaderSession.init();
-      if (activePreparation.kind !== "ready" || activePreparation.requestId !== requestId || !content) return;
-      const sessionUnits = units.map((unit, index) => ({
-        ...unit,
-        durationMs: global.Engine.displayDuration(unit, units[index + 1]),
-      }));
-      sessionState = global.ReaderSession.create({
-        requestId,
-        textLength: content.text.length,
-        units: sessionUnits,
-        figures: content.readingContext?.figures || [],
-        flow: flowItems,
-        timingProfile: {},
-      });
+  function sessionPreparation(): ReaderSessionPreparation {
+    const sourceText = content?.text || "";
+    const sourceFigures = content?.readingContext?.figures || [];
+    return {
+      textLength: sourceText.length,
+      units: units.map((unit, index) => {
+        const nextUnit = units[index + 1];
+        return {
+          sentenceIndex: unit.sentenceIndex,
+          kind: unit.kind,
+          start: unit.start,
+          end: unit.end,
+          durationMs: global.Engine.displayDuration(
+            unit,
+            nextUnit,
+            crossesSectionBoundary(unit, nextUnit),
+          ),
+        };
+      }),
+      figures: sourceFigures.map((figure) => ({
+        sourceOffset: figure.sourceOffset,
+        sourceEnd: figure.sourceEnd,
+      })),
+      flow: flowItems,
+    };
+  }
+
+  function beginReaderSession(requestId: string): void {
+    pendingSessionCommands = [{ type: "open", requestId }];
+    if (!readerSessionAvailable()) {
+      sessionInitFailure = true;
+      return;
+    }
+    if (global.ReaderSession.ready()) {
+      if (sessionHandle) {
+        if (!applyingSession) dispatchSession({ type: "close" });
+        global.ReaderSession.destroy(sessionHandle);
+        sessionHandle = null;
+        sessionState = null;
+        sessionEnabled = false;
+      }
+      sessionHandle = global.ReaderSession.create();
+      sessionState = sessionHandle.state;
       sessionEnabled = true;
-      syncReaderSessionState();
-      applyingSession = true;
-      try {
-        renderSessionState();
-      } finally {
-        applyingSession = false;
-      }
-      if (sessionState.phase === "reading" && sessionState.position?.kind === "text") {
-        dispatchSession({ type: "pause" });
-        dispatchSession({ type: "play" });
-      }
-    } catch {
-      sessionState = null;
-      sessionEnabled = false;
+      const queued = pendingSessionCommands;
+      pendingSessionCommands = [];
+      for (const command of queued) dispatchSession(command);
+      return;
+    }
+    if (!sessionInitPromise) {
+      markPerformance("reader:session-init-start");
+      sessionInitPromise = global.ReaderSession.init()
+        .then(() => {
+          markPerformance("reader:session-init-end");
+          if (activePreparation.kind === "idle" || activePreparation.kind === "cancelled") return;
+          if (sessionHandle) {
+            if (!applyingSession) dispatchSession({ type: "close" });
+            global.ReaderSession.destroy(sessionHandle);
+            sessionHandle = null;
+            sessionState = null;
+            sessionEnabled = false;
+          }
+          sessionHandle = global.ReaderSession.create();
+          sessionState = sessionHandle.state;
+          sessionEnabled = true;
+          const queued = pendingSessionCommands;
+          pendingSessionCommands = [];
+          for (const command of queued) dispatchSession(command);
+        })
+        .catch(() => {
+          sessionInitPromise = null;
+          sessionInitFailure = true;
+          if (activePreparation.kind === "ready") showError("session_unavailable");
+        });
     }
   }
 
@@ -591,8 +656,6 @@
     const state = sessionState;
     if (!state) return;
     if (state.phase === "reading") {
-      if (state.units) units = state.units;
-      if (state.flow) flowItems = state.flow;
       if (typeof state.flowIndex === "number") flowIndex = state.flowIndex;
       if (state.position) currentPosition = state.position;
       const item = flowItems[flowIndex];
@@ -613,8 +676,13 @@
   }
 
   function dispatchSession(command: ReaderSessionCommand): void {
-    if (!sessionEnabled || !sessionState || applyingSession) return;
-    const transition = global.ReaderSession.reduce(sessionState, command);
+    if (applyingSession) return;
+    if (!sessionEnabled || !sessionHandle || !sessionState) {
+      if (command.type === "open") pendingSessionCommands = [command];
+      else pendingSessionCommands.push(command);
+      return;
+    }
+    const transition = global.ReaderSession.dispatch(sessionHandle, command);
     sessionState = transition.state;
     syncReaderSessionState();
     applyingSession = true;
@@ -625,10 +693,14 @@
           playbackTimer = null;
         } else if (effect.type === "scheduleTick") {
           if (playbackTimer !== null) global.clearTimeout(playbackTimer);
-          playbackTimer = global.setTimeout(() => {
+          const scheduledHandle = sessionHandle;
+          const scheduledTimerId = global.setTimeout(() => {
+            if (playbackTimer !== scheduledTimerId) return;
             playbackTimer = null;
+            if (!scheduledHandle || sessionHandle !== scheduledHandle || sessionState?.phase === "ended") return;
             dispatchSession({ type: "tick", generation: effect.generation });
           }, effect.delayMs);
+          playbackTimer = scheduledTimerId;
         }
       }
       renderSessionState();
@@ -646,7 +718,6 @@
 
   function renderTextView() {
     if (!content) return;
-    pause();
     const scroller = global.document.createElement("div");
     scroller.className = "text-view";
     const articleNode = global.document.createElement("article");
@@ -686,8 +757,15 @@
     scroller.addEventListener("scroll", updatePosition, { passive: true });
     getNodes().textScroller = scroller;
     getNodes().textMarkers = positionMarkers;
+    restoreTextPosition(scroller, positionMarkers);
+    getNodes().textRestoreScrollTop = scroller.scrollTop;
+    const initialTextScrollTop = scroller.scrollTop;
     global.requestAnimationFrame(() => {
       if (!isCurrentSession(generation) || !nodes || !content) return;
+      if (Math.abs(scroller.scrollTop - initialTextScrollTop) >= 1) {
+        getNodes().textRestoreScrollTop = scroller.scrollTop;
+        return;
+      }
       restoreTextPosition(scroller, positionMarkers);
       getNodes().textRestoreScrollTop = scroller.scrollTop;
     });
@@ -831,6 +909,7 @@
     positionMarkers: HTMLElement[],
     progress: HTMLElement,
     preferVisualTop = false,
+    syncSession = true,
   ): void {
     if (!content) return;
     const scrollerRect = scroller.getBoundingClientRect();
@@ -849,13 +928,34 @@
         firstVisible = element;
         firstVisibleTop = rect.top;
       }
-      const isFullyReadable = rect.top >= readableTop && rect.bottom <= readableBottom;
+      const isFullyReadable = rect.top >= readableTop - 1 && rect.bottom <= readableBottom + 1;
       if (isFullyReadable && rect.top < firstReadableTop) {
         firstReadable = element;
         firstReadableTop = rect.top;
       }
     }
-    if (preferVisualTop) firstVisible = firstReadable || firstVisible;
+    const anchoredFigureIndex = currentPosition.kind === "figure" ? currentPosition.figureIndex : -1;
+    const anchoredMarker = currentPosition.kind === "figure"
+      ? positionMarkers.find((element) => (
+        element.dataset.readerPositionKind === "figure"
+        && Number(element.dataset.figureIndex) === anchoredFigureIndex
+      ))
+      : positionMarkers.find((element) => (
+        element.dataset.readerPositionKind === "text"
+        && Number(element.dataset.sourceStart) <= currentPosition.sourceOffset
+        && Number(element.dataset.sourceEnd) > currentPosition.sourceOffset
+      ));
+    const anchoredRect = anchoredMarker?.getBoundingClientRect();
+    const anchoredVisible = anchoredRect !== undefined
+      && anchoredRect.bottom > visibleTop
+      && anchoredRect.top < visibleBottom;
+    const anchoredReadable = anchoredVisible
+      && anchoredRect !== undefined
+      && anchoredRect.top >= readableTop - 1
+      && anchoredRect.bottom <= readableBottom + 1;
+    if (preferVisualTop) firstVisible = anchoredReadable
+      ? anchoredMarker
+      : firstReadable || (anchoredVisible ? anchoredMarker : firstVisible);
     if (firstVisible) {
       const sourceOffset = Number(firstVisible.dataset.sourceStart);
       currentPosition = firstVisible.dataset.readerPositionKind === "figure"
@@ -866,7 +966,7 @@
         }
         : { kind: "text", sourceOffset };
       unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
-      if (sessionEnabled && !applyingSession) {
+      if (syncSession && !applyingSession) {
         dispatchSession({
           type: sessionState?.mode === "text" ? "switchToText" : "switchToRsvp",
           position: currentPosition,
@@ -884,10 +984,11 @@
     positionMarkers: HTMLElement[],
     progress: HTMLElement,
     force = false,
+    syncSession = true,
   ): void {
     const restoredScrollTop = getNodes().textRestoreScrollTop;
     if (!force && (restoredScrollTop === null || Math.abs(scroller.scrollTop - restoredScrollTop) < 1)) return;
-    updateTextPosition(scroller, positionMarkers, progress, force);
+    updateTextPosition(scroller, positionMarkers, progress, force, syncSession);
   }
 
   function restoreTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[]): void {
@@ -997,14 +1098,10 @@
 
   function renderFlowItem(): boolean {
     const item = flowItems[flowIndex];
-    if (!item) {
-      pause();
-      return true;
-    }
+    if (!item) return true;
     if (item.kind === "figure") {
       const figure = content?.readingContext?.figures?.[item.figureIndex];
       if (figure) {
-        currentPosition = global.Engine.positionForFlowItem(item, units);
         showFigure(figure, item.figureIndex);
         return true;
       }
@@ -1021,6 +1118,10 @@
     const value = units[unitIndex];
     const { unit, previousUnit, nextUnit, progress } = getNodes();
     if (!value || !unit || !previousUnit || !nextUnit) return;
+    if (!performanceUnitMarked) {
+      performanceUnitMarked = true;
+      markPerformance("reader:first-unit");
+    }
     unit.textContent = value.text;
     unit.className = `rsvp-unit ${value.kind}`;
     unit.dataset.readerPositionKind = "text";
@@ -1051,9 +1152,16 @@
     if (nextMode === mode) return;
     const previousFocus = readerActiveElement();
     clearPendingLeftTap();
-    const currentFlow = flowItems[flowIndex];
-    if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
-    if (sessionEnabled && !applyingSession) {
+    if (nextMode === "rsvp" && mode === "text") {
+      const { textScroller, textMarkers, progress } = getNodes();
+      if (textScroller) {
+        captureTextPosition(textScroller, textMarkers, progress, true, false);
+      }
+    } else {
+      const currentFlow = flowItems[flowIndex];
+      if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
+    }
+    if (!applyingSession) {
       dispatchSession({
         type: nextMode === "text" ? "switchToText" : "switchToRsvp",
         position: currentPosition,
@@ -1061,26 +1169,6 @@
     }
     figurePanel?.remove();
     figurePanel = null;
-    if (nextMode === "rsvp") {
-      const { textScroller, textMarkers, progress } = getNodes();
-      const restoredScrollTop = getNodes().textRestoreScrollTop;
-      const textPositionChanged = textScroller && (
-        restoredScrollTop === null || Math.abs(textScroller.scrollTop - restoredScrollTop) >= 1
-      );
-      if (textScroller && textPositionChanged) captureTextPosition(textScroller, textMarkers, progress, true);
-      if (currentPosition.kind === "figure") {
-        flowIndex = global.Engine.findFlowIndexForPosition(flowItems, units, currentPosition);
-      } else {
-        const visibleUnit = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
-        const sentenceStart = global.Engine.findSentenceStart(units, visibleUnit);
-        flowIndex = global.Engine.findFlowIndexForPosition(
-          flowItems,
-          units,
-          { kind: "text", sourceOffset: units[sentenceStart]?.start ?? currentPosition.sourceOffset },
-        );
-      }
-      if (flowIndex < 0) flowIndex = 0;
-    }
     mode = nextMode;
     renderReader();
     if (!containsReaderElement(previousFocus)) {
@@ -1115,8 +1203,12 @@
       ? global.Engine.positionForFlowItem(item, units)
       : { kind: "text", sourceOffset: previousPosition.sourceOffset };
     unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
-    if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "rebuildUnits", units, position: currentPosition });
+    if (!applyingSession) {
+      dispatchSession({
+        type: "rebuildUnits",
+        units: sessionPreparation().units,
+        position: currentPosition,
+      });
     }
   }
 
@@ -1144,7 +1236,6 @@
     if (figurePanel) advanceFromFigure();
     else if (playing) pause();
     else play();
-    renderUnit();
   }
 
   function goBackFromControl(): void {
@@ -1248,31 +1339,22 @@
   }
 
   function play() {
-    if (sessionEnabled && !applyingSession) {
+    if (!applyingSession) {
       dispatchSession({ type: "play" });
       return;
     }
-    pause();
-    playing = true;
-    updatePlayButton();
-    scheduleNext();
   }
 
   function pause() {
-    if (sessionEnabled && !applyingSession) {
+    if (!applyingSession) {
       dispatchSession({ type: "pause" });
       return;
     }
-    playing = false;
-    if (playbackTimer !== null) global.clearTimeout(playbackTimer);
-    playbackTimer = null;
-    updatePlayButton();
   }
 
   function handleVisibilityChange(): void {
     if (global.document.visibilityState === "hidden") {
-      if (sessionEnabled && !applyingSession) dispatchSession({ type: "visibilityHidden" });
-      else pause();
+      if (!applyingSession) dispatchSession({ type: "visibilityHidden" });
     }
   }
 
@@ -1288,37 +1370,7 @@
     playButton.setAttribute("aria-pressed", playing ? "true" : "false");
   }
 
-  function scheduleNext() {
-    if (sessionEnabled && !applyingSession) return;
-    if (!playing) return;
-    const currentUnit = units[unitIndex];
-    if (!currentUnit) {
-      pause();
-      return;
-    }
-    const nextFlow = flowItems[flowIndex + 1];
-    const nextUnit = nextFlow?.kind === "unit" ? units[nextFlow.unitIndex] : undefined;
-    const generation = sessionGeneration;
-    playbackTimer = global.setTimeout(() => {
-      if (!isCurrentSession(generation)) return;
-      playbackTimer = null;
-      if (flowIndex >= flowItems.length - 1) {
-        pause();
-        renderUnit();
-        return;
-      }
-      flowIndex += 1;
-      if (renderFlowItem()) return;
-      scheduleNext();
-    }, global.Engine.displayDuration(
-      currentUnit,
-      nextUnit,
-      crossesSectionBoundary(currentUnit, nextUnit),
-    ));
-  }
-
   function showFigure(figure: ReaderFigure, figureIndex: number): void {
-    if (!applyingSession) pause();
     figurePanel?.remove();
     currentPosition = {
       kind: "figure",
@@ -1351,28 +1403,7 @@
   }
 
   function advanceFromFigure(): void {
-    if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "resumeFromFigure" });
-      return;
-    }
-    figurePanel?.remove();
-    figurePanel = null;
-    if (flowIndex >= flowItems.length - 1) {
-      pause();
-      return;
-    }
-    flowIndex += 1;
-    if (!renderFlowItem()) play();
-  }
-
-  function seekToUnit(nextUnitIndex: number): void {
-    unitIndex = Math.min(Math.max(nextUnitIndex, 0), Math.max(0, units.length - 1));
-    const matchingFlowIndex = flowItems.findIndex((item) => (
-      item.kind === "unit" && item.unitIndex === unitIndex
-    ));
-    flowIndex = matchingFlowIndex >= 0 ? matchingFlowIndex : 0;
-    const item = flowItems[flowIndex];
-    if (item) currentPosition = global.Engine.positionForFlowItem(item, units);
+    dispatchSession({ type: "resumeFromFigure" });
   }
 
   function crossesSectionBoundary(unit: ReaderUnit | undefined, nextUnit: ReaderUnit | undefined): boolean {
@@ -1382,27 +1413,7 @@
   }
 
   function previousSentence() {
-    if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "previousSentence" });
-      return;
-    }
-    clearPendingLeftTap();
-    lastLeftTapAt = 0;
-    const resumePlayback = playing;
-    pause();
-    if (figurePanel) {
-      const figureOffset = Number(figurePanel.dataset.sourceStart);
-      figurePanel.remove();
-      figurePanel = null;
-      const unitBeforeFigure = global.Engine.findUnitIndex(units, Math.max(0, figureOffset - 1));
-      seekToUnit(global.Engine.findSentenceStart(units, unitBeforeFigure));
-      renderFlowItem();
-      play();
-      return;
-    }
-    seekToUnit(global.Engine.findPreviousSentenceStart(units, unitIndex));
-    renderFlowItem();
-    if (resumePlayback) play();
+    dispatchSession({ type: "previousSentence" });
   }
 
   function lockSourcePage() {
@@ -1574,7 +1585,10 @@
     activePreparation = { kind: "idle" };
     launchFocus = null;
     sessionState = null;
+    sessionHandle = null;
     sessionEnabled = false;
+    pendingSessionCommands = [];
+    sessionInitFailure = false;
     applyingSession = false;
   }
 
@@ -1605,10 +1619,19 @@
     try {
       clearPendingLeftTap();
       lastLeftTapAt = 0;
-      if (sessionEnabled && !applyingSession) dispatchSession({ type: "close" });
+      if (activePreparation.kind === "preparing") {
+        dispatchSession({ type: "cancel", requestId: activePreparation.requestId });
+      }
+      if (sessionHandle && !applyingSession) {
+        dispatchSession({ type: "close" });
+        global.ReaderSession.destroy(sessionHandle);
+      }
+      sessionHandle = null;
       sessionEnabled = false;
       sessionState = null;
-      pause();
+      pendingSessionCommands = [];
+      if (playbackTimer !== null) global.clearTimeout(playbackTimer);
+      playbackTimer = null;
       currentOverlay?.remove();
       global.removeEventListener?.("keydown", handleKeyDown);
       destroySessionState();

@@ -7,6 +7,7 @@ const repositoryRoot = resolve(import.meta.dirname, "../..");
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
+  [".wasm", "application/wasm"],
   [".svg", "image/svg+xml"],
 ]);
 

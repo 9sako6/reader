@@ -4,6 +4,18 @@ import { resolve } from "node:path";
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const outputPath = resolve(repositoryRoot, "test-results/performance/bundle.json");
 const assets = {
+  "session.js": {
+    chrome: "apps/chrome/dist/session.js",
+    safari: "apps/ios/ReaderExtension/Resources/generated/session.js",
+  },
+  "session-wasm.js": {
+    chrome: "apps/chrome/dist/session-wasm.js",
+    safari: "apps/ios/ReaderExtension/Resources/generated/session-wasm.js",
+  },
+  "reader_session_bg.wasm": {
+    chrome: "apps/chrome/dist/reader_session_bg.wasm",
+    safari: "apps/ios/ReaderExtension/Resources/generated/reader_session_bg.wasm",
+  },
   "defuddle.js": {
     chrome: "apps/chrome/dist/vendor/defuddle/defuddle.js",
     safari: "apps/ios/ReaderExtension/Resources/generated/defuddle.js",

@@ -8,6 +8,140 @@ const path = require("node:path");
 const vm = require("node:vm");
 const Engine = require("../../../.build/packages/engine/src/engine.js");
 
+function createSessionStub(commands) {
+  let nextId = 1;
+  const handles = new Map();
+  const initialState = () => ({
+    phase: "idle",
+    mode: "rsvp",
+    playback: "paused",
+    flowIndex: 0,
+    flowLength: 0,
+    generation: 0,
+    sourceOffset: 0,
+    currentKind: "none",
+    requestId: "",
+    timerPending: false,
+    contentPresent: false,
+  });
+  const stateForFlow = (state, flow, index, playback) => {
+    const item = flow.flow[index];
+    if (!item) return { ...state, flowIndex: index, currentKind: "none", playback, timerPending: false };
+    const position = item.kind === "figure"
+      ? { kind: "figure", sourceOffset: item.sourceOffset, figureIndex: item.figureIndex }
+      : {
+        kind: "text",
+        sourceOffset: flow.units[item.unitIndex]?.start ?? item.sourceOffset,
+      };
+    return {
+      ...state,
+      phase: "reading",
+      mode: state.mode || "rsvp",
+      playback,
+      flowIndex: index,
+      flowLength: flow.flow.length,
+      sourceOffset: position.sourceOffset,
+      currentKind: item.kind,
+      position,
+      unitIndex: item.kind === "unit" ? item.unitIndex : undefined,
+      figureIndex: item.kind === "figure" ? item.figureIndex : undefined,
+      timerPending: playback === "playing",
+      contentPresent: true,
+    };
+  };
+  const flowIndexForPosition = (flow, position) => {
+    if (position.kind === "figure") {
+      return flow.flow.findIndex((item) => item.kind === "figure" && item.figureIndex === position.figureIndex);
+    }
+    const unitIndex = flow.units.findIndex((unit) => unit.start <= position.sourceOffset && position.sourceOffset < unit.end);
+    return flow.flow.findIndex((item) => item.kind === "unit" && item.unitIndex === Math.max(0, unitIndex));
+  };
+  const api = {
+    async init() {},
+    ready: () => true,
+    create() {
+      const handle = { id: nextId++, state: initialState(), destroyed: false, flow: null };
+      handles.set(handle.id, handle);
+      return handle;
+    },
+    dispatch(handle, command) {
+      if (handle.destroyed) throw new Error("destroyed");
+      commands.push(command);
+      const previous = handle.state;
+      let state = previous;
+      let effects = [];
+      if (command.type === "open") {
+        state = { ...initialState(), phase: "preparing", requestId: command.requestId, generation: previous.generation + 1 };
+      } else if (command.type === "prepareSucceeded") {
+        if (previous.phase === "preparing" && previous.requestId === command.requestId) {
+          handle.flow = command.flow;
+          state = stateForFlow({ ...previous, generation: previous.generation + 1 }, command.flow, 0, "playing");
+          effects = [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.units[command.flow.flow[0]?.unitIndex || 0]?.durationMs || 1 }];
+        }
+      } else if (command.type === "prepareFailed") {
+        if (previous.phase === "preparing" && previous.requestId === command.requestId) {
+          state = { ...previous, phase: "error", reason: command.reason, generation: previous.generation + 1 };
+          effects = [{ type: "cancelTimer" }];
+        }
+      } else if (command.type === "cancel") {
+        if (previous.phase === "preparing" && previous.requestId === command.requestId) {
+          state = { ...initialState(), generation: previous.generation + 1 };
+          effects = [{ type: "cancelTimer" }];
+        }
+      } else if (command.type === "close") {
+        state = { ...initialState(), phase: "ended", generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      } else if (command.type === "play" && previous.phase === "reading" && previous.currentKind === "unit") {
+        state = { ...previous, playback: "playing", timerPending: true, generation: previous.generation + 1 };
+        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[previous.unitIndex]?.durationMs || 1 }];
+      } else if (command.type === "pause" && previous.phase === "reading") {
+        state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      } else if (command.type === "tick" && previous.phase === "reading" && previous.playback === "playing" && previous.generation === command.generation) {
+        const nextIndex = previous.flowIndex + 1;
+        const nextItem = handle.flow?.flow[nextIndex];
+        if (!nextItem) {
+          state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
+          effects = [{ type: "cancelTimer" }];
+        } else {
+          state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, nextItem.kind === "figure" ? "paused" : "playing");
+          effects = nextItem.kind === "figure"
+            ? [{ type: "cancelTimer" }]
+            : [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[nextItem.unitIndex]?.durationMs || 1 }];
+        }
+      } else if (command.type === "previousSentence" && previous.phase === "reading") {
+        const target = handle.flow.flow.findIndex((item) => item.kind === "unit");
+        const playback = previous.currentKind === "figure" || previous.playback === "playing" ? "playing" : "paused";
+        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, Math.max(0, target), playback);
+        effects = [{ type: "cancelTimer" }];
+        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
+      } else if ((command.type === "switchToText" || command.type === "switchToRsvp") && previous.phase === "reading") {
+        const index = flowIndexForPosition(handle.flow, command.position);
+        const target = Math.max(0, index);
+        const playback = command.type === "switchToText" || handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
+        state = stateForFlow({ ...previous, mode: command.type === "switchToText" ? "text" : "rsvp", generation: previous.generation + 1 }, handle.flow, target, playback);
+        state = { ...state, mode: command.type === "switchToText" ? "text" : "rsvp", position: command.position, sourceOffset: command.position.sourceOffset };
+        effects = [{ type: "cancelTimer" }];
+        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
+      } else if (command.type === "resumeFromFigure" && previous.phase === "reading" && previous.currentKind === "figure") {
+        const nextIndex = previous.flowIndex + 1;
+        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, "playing");
+        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }];
+      } else if (command.type === "visibilityHidden" && previous.phase === "reading") {
+        state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      }
+      handle.state = state;
+      return { state, effects };
+    },
+    destroy(handle) {
+      handles.delete(handle.id);
+      handle.destroyed = true;
+    },
+  };
+  return api;
+}
+
 const root = path.join(__dirname, "..");
 const manifestPath = path.join(root, "ReaderExtension", "Resources", "manifest.json");
 
@@ -47,12 +181,14 @@ test("Xcode project embeds every manifest script in the extension", () => {
   assert.match(project, /session-wasm\.js in Resources/);
   assert.match(project, /session\.js in Resources/);
   assert.match(project, /reader_session_bg\.wasm in Resources/);
+  assert.match(project, /reader-session-dependencies\.txt in Resources/);
   assert.match(project, /engine\.js in Resources/);
   assert.match(project, /extractor\.js in Resources/);
   assert.match(project, /icons\.js in Resources/);
   assert.match(project, /viewer\.js in Resources/);
   assert.match(project, /bootstrap\.js in Resources/);
   assert.match(project, /reader-extension\.appex in Embed Foundation Extensions/);
+  assert.equal(project.includes("RELEASE_CHECKLIST.md"), false);
 });
 
 function createSafariReaderHarness(engine = Engine, language = "ja") {
@@ -130,6 +266,7 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
   let extractionCount = 0;
   let now = 0;
   const performanceMarks = [];
+  const sessionCommands = [];
   const globalListeners = new Map();
   const animationFrames = [];
   const context: any = {
@@ -148,6 +285,7 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
       },
     },
     ReaderIcons: { create: () => new FakeElement("svg") },
+    ReaderSession: createSessionStub(sessionCommands),
     Defuddle: class {},
     innerWidth: 390,
     innerHeight: 844,
@@ -214,6 +352,9 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     performanceMarks() {
       return performanceMarks;
     },
+    sessionCommands() {
+      return sessionCommands;
+    },
     setActiveContent(content) {
       activeContent = content;
     },
@@ -239,6 +380,7 @@ test("Safari reader marks startup phases without including page content", async 
     "reader:extraction-end",
     "reader:segmentation-end",
     "reader:controls-ready",
+    "reader:first-unit",
     "reader:first-render",
   ]);
 });
@@ -853,4 +995,5 @@ test("Safari reader exposes a cancel action only for slow preparation", async ()
   assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
   assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
   assert.equal(context.document.documentElement.style.overflow, "");
+  assert.deepEqual(harness.sessionCommands().map(({ type }) => type), ["open", "cancel", "close"]);
 });

@@ -14,6 +14,10 @@
   const SLOW_PREPARATION_DELAY_MS = 400;
   const LOADING_COVER_TRANSITION_MS = 220;
 
+  function markPerformance(name: string): void {
+    globalThis.performance?.mark?.(name);
+  }
+
   let baseUnits: ReaderUnit[] = [];
   let units: ReaderUnit[] = [];
   let segmentationLocale = "ja";
@@ -64,10 +68,14 @@
   let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
   let backgroundInert = false;
   let keydownListenerAttached = false;
+  let lastReaderFocusedElement: HTMLElement | null = null;
   let dialogCancelListener: ((event: Event) => void) | null = null;
   let closeInProgress = false;
   let activePreparation: PreparationState = { kind: "idle" };
   let sessionState: ReaderSessionState | null = null;
+  let sessionHandle: ReaderSessionHandle | null = null;
+  let sessionInitPromise: Promise<void> | null = null;
+  let pendingSessionCommands: ReaderSessionCommand[] = [];
   let sessionEnabled = false;
   let applyingSession = false;
 
@@ -116,6 +124,7 @@
       : null);
     activeRequestId = requestId;
     activePreparation = { kind: "preparing", requestId, startedAt: Date.now() };
+    beginReaderSession(requestId);
     loadingStartedAt = Date.now();
     loadingRevealRequestId = requestId;
     loadingRevealTimerId = globalThis.setTimeout(() => {
@@ -198,63 +207,108 @@
     createOverlay();
     rebuildUnitsForViewport();
     activePreparation = { kind: "ready", requestId };
-    if (readerSessionAvailable()) {
-      playbackState = "paused";
-      renderCurrentFlowItem();
-      void initializeReaderSession(requestId);
-    } else if (!renderCurrentFlowItem()) play();
+    playbackState = "paused";
+    renderCurrentFlowItem();
+    dispatchSession({
+      type: "prepareSucceeded",
+      requestId,
+      flow: sessionPreparation(),
+    });
   }
 
   function readerSessionAvailable(): boolean {
     const candidate = globalThis.ReaderSession;
     return typeof candidate?.init === "function"
       && typeof candidate.create === "function"
-      && typeof candidate.reduce === "function";
+      && typeof candidate.dispatch === "function";
   }
 
-  async function initializeReaderSession(requestId: string): Promise<void> {
-    if (!readerSessionAvailable()) return;
-    try {
-      await globalThis.ReaderSession.init();
-      if (requestId !== activeRequestId) return;
-      const sessionUnits = units.map((unit, index) => ({
-        ...unit,
-        durationMs: globalThis.Engine.displayDuration(unit, units[index + 1]),
-      }));
-      sessionState = globalThis.ReaderSession.create({
-        requestId,
-        textLength: sourceText.length,
-        units: sessionUnits,
-        figures,
-        flow: flowItems,
-        timingProfile: {},
-      });
-      sessionEnabled = true;
-      syncReaderSessionState();
-      applyingSession = true;
-      try {
-        renderCurrentFlowItem();
-      } finally {
-        applyingSession = false;
-      }
-      if (sessionState.phase === "reading" && sessionState.position?.kind === "text") {
-        dispatchSession({ type: "pause" });
-        dispatchSession({ type: "play" });
-      }
-    } catch {
-      sessionState = null;
-      sessionEnabled = false;
-      if (requestId === activeRequestId && !renderCurrentFlowItem()) play();
+  function sessionPreparation(): ReaderSessionPreparation {
+    return {
+      textLength: sourceText.length,
+      units: units.map((unit, index) => {
+        const nextUnit = units[index + 1];
+        return {
+          sentenceIndex: unit.sentenceIndex,
+          kind: unit.kind,
+          start: unit.start,
+          end: unit.end,
+          durationMs: globalThis.Engine.displayDuration(
+            unit,
+            nextUnit,
+            Boolean(nextUnit) && activeHeadingAt(unit.start) !== activeHeadingAt(nextUnit?.start ?? unit.start),
+          ),
+        };
+      }),
+      figures: figures.map((figure) => ({
+        sourceOffset: figure.sourceOffset,
+        sourceEnd: figure.sourceEnd,
+      })),
+      flow: flowItems,
+    };
+  }
+
+  function beginReaderSession(requestId: string): void {
+    pendingSessionCommands = [{ type: "open", requestId }];
+    if (!readerSessionAvailable()) {
+      showSessionUnavailable(requestId);
+      return;
     }
+    if (globalThis.ReaderSession.ready()) {
+      if (sessionHandle) {
+        if (!applyingSession) dispatchSession({ type: "close" });
+        globalThis.ReaderSession.destroy(sessionHandle);
+        sessionHandle = null;
+        sessionState = null;
+        sessionEnabled = false;
+      }
+      sessionHandle = globalThis.ReaderSession.create();
+      sessionState = sessionHandle.state;
+      sessionEnabled = true;
+      const queued = pendingSessionCommands;
+      pendingSessionCommands = [];
+      for (const command of queued) dispatchSession(command);
+      return;
+    }
+    if (!sessionInitPromise) {
+      markPerformance("reader:session-init-start");
+      sessionInitPromise = globalThis.ReaderSession.init()
+        .then(() => {
+          markPerformance("reader:session-init-end");
+          const currentRequestId = activeRequestId;
+          if (!currentRequestId || activePreparation.kind === "cancelled") return;
+          if (sessionHandle) {
+            if (!applyingSession) dispatchSession({ type: "close" });
+            globalThis.ReaderSession.destroy(sessionHandle);
+            sessionHandle = null;
+            sessionState = null;
+            sessionEnabled = false;
+          }
+          sessionHandle = globalThis.ReaderSession.create();
+          sessionState = sessionHandle.state;
+          sessionEnabled = true;
+          const queued = pendingSessionCommands;
+          pendingSessionCommands = [];
+          for (const command of queued) dispatchSession(command);
+        })
+        .catch(() => {
+          sessionInitPromise = null;
+          const currentRequestId = activeRequestId;
+          if (currentRequestId) showSessionUnavailable(currentRequestId);
+        });
+    }
+  }
+
+  function showSessionUnavailable(requestId: string): void {
+    if (requestId !== activeRequestId) return;
+    dispatchSession({ type: "prepareFailed", requestId, reason: "session_unavailable" });
+    showError(requestId, "session_unavailable");
   }
 
   function syncReaderSessionState(): void {
     const state = sessionState;
     if (!state) return;
     if (state.phase === "reading") {
-      if (state.units) units = state.units;
-      if (state.figures) figures = state.figures;
-      if (state.flow) flowItems = state.flow;
       if (typeof state.flowIndex === "number") flowIndex = state.flowIndex;
       if (state.position) currentPosition = state.position;
       const item = flowItems[flowIndex];
@@ -269,9 +323,13 @@
   }
 
   function dispatchSession(command: ReaderSessionCommand): void {
-    if (!sessionEnabled || !sessionState || applyingSession) return;
-    const api = globalThis.ReaderSession;
-    const transition = api.reduce(sessionState, command);
+    if (applyingSession) return;
+    if (!sessionEnabled || !sessionHandle || !sessionState) {
+      if (command.type === "open") pendingSessionCommands = [command];
+      else pendingSessionCommands.push(command);
+      return;
+    }
+    const transition = globalThis.ReaderSession.dispatch(sessionHandle, command);
     sessionState = transition.state;
     syncReaderSessionState();
     applyingSession = true;
@@ -281,10 +339,14 @@
           stopTimer();
         } else if (effect.type === "scheduleTick") {
           stopTimer();
-          timerId = globalThis.setTimeout(() => {
+          const scheduledHandle = sessionHandle;
+          const scheduledTimerId = globalThis.setTimeout(() => {
+            if (timerId !== scheduledTimerId) return;
             timerId = null;
+            if (!scheduledHandle || sessionHandle !== scheduledHandle || !sessionEnabled) return;
             dispatchSession({ type: "tick", generation: effect.generation });
           }, effect.delayMs);
+          timerId = scheduledTimerId;
         }
       }
       renderSessionState();
@@ -403,12 +465,16 @@
     const requestId = activeRequestId;
     if (!requestId) return;
     sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
+    dispatchSession({ type: "cancel", requestId });
     activePreparation = { kind: "cancelled", requestId };
     close(false);
   }
 
   function showError(requestId: string, reason: PreparationFailure = "extraction_failed"): void {
     if (requestId !== activeRequestId) return;
+    if (reason !== "session_unavailable") {
+      dispatchSession({ type: "prepareFailed", requestId, reason });
+    }
     cancelLoadingReveal();
     loadingIndicatorAnimation?.cancel?.();
     loadingIndicatorAnimation = null;
@@ -665,7 +731,7 @@
 
     if (typeof globalThis.ResizeObserver === "function") {
       displayResizeObserver = new globalThis.ResizeObserver(() => {
-        if (rebuildUnitsForViewport() && !sessionEnabled) renderCurrentFlowItem();
+        if (rebuildUnitsForViewport()) renderCurrentFlowItem();
       });
       displayResizeObserver.observe(main);
     }
@@ -941,6 +1007,7 @@
     else host.append(style, dialog);
 
     root = dialog;
+    root.addEventListener("focusin", rememberReaderFocus, true);
     dialogCancelListener = (event: Event) => {
       event.preventDefault();
       close();
@@ -1023,6 +1090,16 @@
       : null;
   }
 
+  function rememberReaderFocus(event: FocusEvent): void {
+    const focused = eventPath(event).find((target) => (
+      typeof target === "object"
+      && target !== null
+      && target instanceof HTMLElement
+      && containsReaderElement(target)
+    ));
+    if (focused instanceof HTMLElement) lastReaderFocusedElement = focused;
+  }
+
   function containsReaderElement(element: HTMLElement | null): boolean {
     if (!element || !root || element === root) return false;
     if (typeof root.contains === "function") return root.contains(element);
@@ -1037,15 +1114,26 @@
   function focusCloseIfNeeded(previousFocus: HTMLElement | null): void {
     if (containsReaderElement(previousFocus)) return;
     const closeButton = findCloseButton();
-    focusAfterPaint(closeButton);
-    const refocus = () => {
+    const focusClose = () => {
+      if (readerHasFocus()) return;
       if (containsReaderElement(closeButton)) closeButton?.focus?.({ preventScroll: true });
     };
     if (typeof globalThis.requestAnimationFrame === "function") {
-      globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(refocus));
+      globalThis.requestAnimationFrame(() => {
+        focusClose();
+        globalThis.requestAnimationFrame(focusClose);
+      });
     } else {
-      refocus();
+      focusClose();
     }
+  }
+
+  function readerHasFocus(): boolean {
+    if (containsReaderElement(readerActiveElement())) return true;
+    return lastReaderFocusedElement !== null
+      && containsReaderElement(lastReaderFocusedElement)
+      && rootHost !== null
+      && document.activeElement === rootHost;
   }
 
   function attachKeydownListener(): void {
@@ -1231,7 +1319,7 @@
   function showTextView() {
     if (!root || !sourceText) return;
     const activeElement = readerActiveElement();
-    if (sessionEnabled && !applyingSession) {
+    if (!applyingSession) {
       dispatchSession({ type: "switchToText", position: currentPosition });
     }
     pause();
@@ -1288,8 +1376,9 @@
     textPositionMarkers = positionMarkers;
     textPositionDirty = false;
     textRestoreScrollTop = null;
+    const initialTextScrollTop = scroller.scrollTop;
     const topbar = createTopbar("RSVPで読む", () => {
-      if (textPositionDirty) updateTextPosition(scroller, positionMarkers, true);
+      updateTextPosition(scroller, positionMarkers, true, false);
       showRsvpView();
     });
     Object.assign(topbar.style, { left: "16px", right: "16px" });
@@ -1321,6 +1410,11 @@
     };
     scroller.addEventListener("scroll", updatePosition, { passive: true });
     globalThis.requestAnimationFrame?.(() => {
+      if (Math.abs(scroller.scrollTop - initialTextScrollTop) >= 1) {
+        textRestoreScrollTop = scroller.scrollTop;
+        textPositionDirty = true;
+        return;
+      }
       textRestoring = true;
       restoreTextPosition(scroller, positionMarkers);
       textRestoreScrollTop = scroller.scrollTop;
@@ -1332,21 +1426,7 @@
 
   function showRsvpView() {
     if (!root || units.length === 0) return;
-    if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "switchToRsvp", position: currentPosition });
-    }
-    if (currentPosition.kind === "figure") {
-      flowIndex = globalThis.Engine.findFlowIndexForPosition(flowItems, units, currentPosition);
-    } else {
-      const visibleUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
-      const sentenceStart = globalThis.Engine.findSentenceStart(units, visibleUnitIndex);
-      flowIndex = globalThis.Engine.findFlowIndexForPosition(
-        flowItems,
-        units,
-        { kind: "text", sourceOffset: units[sentenceStart]?.start ?? currentPosition.sourceOffset },
-      );
-    }
-    if (flowIndex < 0) flowIndex = 0;
+    dispatchSession({ type: "switchToRsvp", position: currentPosition });
     clearRenderedView();
     createOverlay();
     if (!renderCurrentFlowItem()) play();
@@ -1550,7 +1630,12 @@
     return surface;
   }
 
-  function updateTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[], preferReadableTop = false): void {
+  function updateTextPosition(
+    scroller: HTMLElement,
+    positionMarkers: HTMLElement[],
+    preferReadableTop = false,
+    syncSession = true,
+  ): void {
     const scrollerRect = elementRect(scroller, 0, scroller.clientHeight || 500);
     const visibleTop = scrollerRect.top;
     const visibleBottom = scrollerRect.bottom;
@@ -1584,7 +1669,7 @@
         figureIndex: Number(selected.dataset.figureIndex),
       }
       : { kind: "text", sourceOffset };
-    if (sessionEnabled && !applyingSession) {
+    if (syncSession && !applyingSession) {
       dispatchSession({
         type: sessionState?.mode === "text" ? "switchToText" : "switchToRsvp",
         position: currentPosition,
@@ -1638,10 +1723,7 @@
 
   function renderCurrentFlowItem(): boolean {
     const item = flowItems[flowIndex];
-    if (!item) {
-      pause();
-      return true;
-    }
+    if (!item) return true;
     if (item.kind === "figure") {
       const figure = figures[item.figureIndex];
       if (figure) {
@@ -1660,6 +1742,9 @@
 
     const unit = units[currentUnitIndex];
     if (!unit) return;
+    if (globalThis.performance?.getEntriesByName?.("reader:first-unit", "mark").length === 0) {
+      globalThis.performance?.mark?.("reader:first-unit");
+    }
     currentPosition = { kind: "text", sourceOffset: unit.start };
     if (unit.sentenceIndex !== contextSentenceIndex) {
       const context = globalThis.Engine.surroundingSentences(units, currentUnitIndex);
@@ -1718,8 +1803,12 @@
       ? globalThis.Engine.positionForFlowItem(item, units)
       : { kind: "text", sourceOffset: position.sourceOffset };
     currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
-    if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "rebuildUnits", units, position: currentPosition });
+    if (!applyingSession) {
+      dispatchSession({
+        type: "rebuildUnits",
+        units: sessionPreparation().units,
+        position: currentPosition,
+      });
     }
     return true;
   }
@@ -1774,37 +1863,6 @@
     });
   }
 
-  function scheduleNext() {
-    if (sessionEnabled && !applyingSession) return;
-    stopTimer();
-    if (playbackState !== "playing") return;
-
-    const currentItem = flowItems[flowIndex];
-    const currentUnit = currentItem?.kind === "unit" ? units[currentItem.unitIndex] : undefined;
-    if (!currentUnit) {
-      pause();
-      return;
-    }
-    const nextItem = flowItems[flowIndex + 1];
-    const followingUnit = nextItem?.kind === "unit" ? units[nextItem.unitIndex] : undefined;
-
-    timerId = globalThis.setTimeout(() => {
-      if (playbackState !== "playing") return;
-      if (flowIndex >= flowItems.length - 1) {
-        pause();
-        return;
-      }
-      flowIndex += 1;
-      if (renderCurrentFlowItem()) return;
-      scheduleNext();
-    }, globalThis.Engine.displayDuration(
-      currentUnit,
-      followingUnit,
-      Boolean(followingUnit)
-        && activeHeadingAt(currentUnit.start) !== activeHeadingAt(followingUnit?.start ?? currentUnit.start),
-    ));
-  }
-
   function activeHeadingAt(offset: number): number {
     return globalThis.Engine.findActiveHeadingIndex(
       sectionTransitions,
@@ -1815,7 +1873,6 @@
 
   function showFigure(figure: ReaderFigure, figureIndex: number): void {
     if (!readerMain || !display) return;
-    if (!applyingSession) pause();
 
     currentPosition = {
       kind: "figure",
@@ -1873,18 +1930,7 @@
   }
 
   function advanceFromFigure() {
-    if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "resumeFromFigure" });
-      return;
-    }
-    if (!figurePanel) return;
-    dismissFigurePanel();
-    if (flowIndex >= flowItems.length - 1) {
-      pause();
-      return;
-    }
-    flowIndex += 1;
-    if (!renderCurrentFlowItem()) play();
+    dispatchSession({ type: "resumeFromFigure" });
   }
 
   function dismissFigurePanel() {
@@ -1901,25 +1947,11 @@
   }
 
   function play() {
-    if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "play" });
-      return;
-    }
-    const currentItem = flowItems[flowIndex];
-    if (!currentItem || currentItem.kind === "figure") return;
-    playbackState = "playing";
-    updatePlayPauseButton();
-    scheduleNext();
+    dispatchSession({ type: "play" });
   }
 
   function pause() {
-    if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "pause" });
-      return;
-    }
-    if (playbackState !== "idle") playbackState = "paused";
-    stopTimer();
-    updatePlayPauseButton();
+    dispatchSession({ type: "pause" });
   }
 
   function togglePlayPause() {
@@ -1935,58 +1967,19 @@
   }
 
   function goBackOneSentence() {
-    if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "previousSentence" });
-      return;
-    }
-    if (units.length === 0) return;
-    if (figurePanel) {
-      const figureOffset = Number(figurePanel.dataset.sourceStart);
-      dismissFigurePanel();
-      const unitBeforeFigure = globalThis.Engine.findUnitIndex(units, Math.max(0, figureOffset - 1));
-      currentUnitIndex = globalThis.Engine.findSentenceStart(units, unitBeforeFigure);
-      flowIndex = globalThis.Engine.findFlowIndexForPosition(
-        flowItems,
-        units,
-        { kind: "text", sourceOffset: units[currentUnitIndex]?.start ?? 0 },
-      );
-      renderCurrentUnit();
-      play();
-      return;
-    }
-    dismissFigurePanel();
-    currentUnitIndex = globalThis.Engine.findPreviousSentenceStart(units, currentUnitIndex);
-    flowIndex = globalThis.Engine.findFlowIndexForPosition(
-      flowItems,
-      units,
-      { kind: "text", sourceOffset: units[currentUnitIndex]?.start ?? 0 },
-    );
-    renderCurrentUnit();
-    if (playbackState === "playing") scheduleNext();
+    dispatchSession({ type: "previousSentence" });
   }
 
   function jumpToHeading(headingIndex: number): void {
     if (units.length === 0) return;
-    dismissFigurePanel();
     const transition = sectionTransitions.find((entry) => entry.headingIndex === headingIndex);
     const targetOffset = transition?.offset ?? 0;
     const targetIndex = units.findIndex((unit) => unit.end > targetOffset);
-    if (sessionEnabled && !applyingSession) {
-      dispatchSession({
-        type: "switchToRsvp",
-        position: { kind: "text", sourceOffset: units[targetIndex < 0 ? units.length - 1 : targetIndex]?.start ?? targetOffset },
-      });
-      return;
-    }
-    stopTimer();
-    currentUnitIndex = targetIndex < 0 ? units.length - 1 : targetIndex;
-    flowIndex = globalThis.Engine.findFlowIndexForPosition(
-      flowItems,
-      units,
-      { kind: "text", sourceOffset: units[currentUnitIndex]?.start ?? targetOffset },
-    );
-    renderCurrentUnit();
-    if (playbackState === "playing") scheduleNext();
+    dispatchSession({
+      type: "switchToRsvp",
+      position: { kind: "text", sourceOffset: units[targetIndex < 0 ? units.length - 1 : targetIndex]?.start ?? targetOffset },
+    });
+    pause();
   }
 
   function updatePlayPauseButton() {
@@ -2025,7 +2018,12 @@
     if (!root) return;
     const focusable = focusableReaderElements();
     if (focusable.length === 0) return;
-    const active = readerActiveElement();
+    const active = readerActiveElement() || eventPath(event).find((target) => (
+      typeof target === "object"
+      && target !== null
+      && target instanceof HTMLElement
+      && containsReaderElement(target)
+    )) as HTMLElement | undefined;
     const currentIndex = focusable.indexOf(active as HTMLElement);
     const atStart = currentIndex === 0;
     const atEnd = currentIndex === focusable.length - 1;
@@ -2071,11 +2069,10 @@
     if (element.hidden || element.getAttribute?.("hidden") !== null) return false;
     if (element.getAttribute?.("aria-hidden") === "true") return false;
     if ((element as HTMLButtonElement | HTMLInputElement).disabled === true) return false;
-    if (typeof element.getClientRects === "function" && element.getClientRects().length === 0) return false;
     return true;
   }
 
-  function eventPath(event: KeyboardEvent): EventTarget[] {
+  function eventPath(event: Event): EventTarget[] {
     if (typeof event.composedPath === "function") return event.composedPath();
     return event.target ? [event.target] : [];
   }
@@ -2172,6 +2169,7 @@
       textPositionDirty = false;
       textRestoreScrollTop = null;
       textRestoring = false;
+      lastReaderFocusedElement = null;
     }
   }
 
@@ -2186,9 +2184,17 @@
     closeInProgress = true;
     const requestId = activeRequestId;
     try {
-      if (sessionEnabled && !applyingSession) dispatchSession({ type: "close" });
+      if (activePreparation.kind === "preparing" && requestId && !applyingSession) {
+        dispatchSession({ type: "cancel", requestId });
+      }
+      if (sessionHandle && !applyingSession) {
+        dispatchSession({ type: "close" });
+        globalThis.ReaderSession.destroy(sessionHandle);
+      }
+      sessionHandle = null;
       sessionEnabled = false;
       sessionState = null;
+      pendingSessionCommands = [];
       if (notifyServiceWorker && requestId) {
         sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
         if (activePreparation.kind !== "idle") activePreparation = { kind: "cancelled", requestId };
@@ -2196,7 +2202,7 @@
       const restoreFocus = launchFocus;
       const restoreScroll = sourceScrollPosition;
       try {
-        pause();
+        stopTimer();
         removeOverlay();
       } finally {
         try {
