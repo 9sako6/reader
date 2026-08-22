@@ -19,16 +19,16 @@ const baseline = {
   margin: budgetMargin,
   conditions: "Chromium headless, 390x844 viewport, 10 runs/case, main-equivalent product artifacts on GitHub Actions macos-15",
   fixtures: {
-    "short-article": { tapToFirstUnitMs: 412.6, tapToFirstRenderMs: 413.1, tapToFirstFeedbackMs: 1.5, sessionInitMs: 0 },
-    "long-article": { tapToFirstUnitMs: 1089.5, tapToFirstRenderMs: 1090.9, tapToFirstFeedbackMs: 5.9, sessionInitMs: 0 },
-    "dominant-article": { tapToFirstUnitMs: 1068.4, tapToFirstRenderMs: 1069.8, tapToFirstFeedbackMs: 5.6, sessionInitMs: 0 },
-    "defuddle-fallback": { tapToFirstUnitMs: 1101, tapToFirstRenderMs: 1102.4, tapToFirstFeedbackMs: 5.1, sessionInitMs: 0 },
+    "short-article": { tapToFirstUnitMs: 412.6, tapToFirstRenderMs: 413.1, tapToFirstFeedbackMs: 1.5, sessionInitMs: 4.3 },
+    "long-article": { tapToFirstUnitMs: 1089.5, tapToFirstRenderMs: 1090.9, tapToFirstFeedbackMs: 5.9, sessionInitMs: 8.1 },
+    "dominant-article": { tapToFirstUnitMs: 1068.4, tapToFirstRenderMs: 1069.8, tapToFirstFeedbackMs: 5.6, sessionInitMs: 7.9 },
+    "defuddle-fallback": { tapToFirstUnitMs: 1101, tapToFirstRenderMs: 1102.4, tapToFirstFeedbackMs: 5.1, sessionInitMs: 7.8 },
   },
   nodeBenchmarks: {
-    "1000": { tapToFirstUnitMs: 406.6, tapToFirstRenderMs: 407.2, tapToFirstFeedbackMs: 8.5, extractionMs: 152, sessionInitMs: 0 },
-    "10000": { tapToFirstUnitMs: 1081.4, tapToFirstRenderMs: 1082.9, tapToFirstFeedbackMs: 5.9, extractionMs: 153.2, sessionInitMs: 0 },
-    "50000": { tapToFirstUnitMs: 4313.3, tapToFirstRenderMs: 4318.9, tapToFirstFeedbackMs: 178, extractionMs: 178.1, sessionInitMs: 0 },
-    "100000": { tapToFirstUnitMs: 11881.5, tapToFirstRenderMs: 11898.4, tapToFirstFeedbackMs: 53.1, extractionMs: 378.9, sessionInitMs: 0 },
+    "1000": { tapToFirstUnitMs: 406.6, tapToFirstRenderMs: 407.2, tapToFirstFeedbackMs: 8.5, extractionMs: 152, sessionInitMs: 11.1 },
+    "10000": { tapToFirstUnitMs: 1081.4, tapToFirstRenderMs: 1082.9, tapToFirstFeedbackMs: 5.9, extractionMs: 153.2, sessionInitMs: 8.0 },
+    "50000": { tapToFirstUnitMs: 4313.3, tapToFirstRenderMs: 4318.9, tapToFirstFeedbackMs: 178, extractionMs: 178.1, sessionInitMs: 209.7 },
+    "100000": { tapToFirstUnitMs: 11881.5, tapToFirstRenderMs: 11898.4, tapToFirstFeedbackMs: 53.1, extractionMs: 378.9, sessionInitMs: 160.9 },
   },
   passive: { bootstrapDecodedBytes: 10210, longTaskCount: 0 },
   retainedHeap: {
@@ -43,8 +43,8 @@ const baseline = {
   },
   localSameHostComparison: {
     source: "origin/main product artifacts, local same-host 10-run measurement",
-    fixtures: { "short-article": 289.5, "long-article": 834.2, "dominant-article": 831.9, "defuddle-fallback": 872.7 },
-    nodeBenchmarks: { "1000": 292.7, "10000": 817.6, "50000": 3415.7, "100000": 6649.4 },
+    fixtures: { tapToFirstUnitMs: { "short-article": 289.5, "long-article": 834.2, "dominant-article": 831.9, "defuddle-fallback": 872.7 } },
+    nodeBenchmarks: { tapToFirstUnitMs: { "1000": 292.7, "10000": 817.6, "50000": 3415.7, "100000": 6649.4 } },
   },
 };
 const fixtures = [
