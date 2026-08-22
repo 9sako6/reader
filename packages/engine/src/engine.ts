@@ -268,6 +268,84 @@
     });
   }
 
+  function buildReadingFlow(units: ReaderUnit[], figures: ReaderFigure[]): ReaderFlowItem[] {
+    const items: Array<ReaderFlowItem & { order: number }> = [];
+    for (const [unitIndex, unit] of (Array.isArray(units) ? units : []).entries()) {
+      if (!unit) continue;
+      items.push({
+        kind: "unit",
+        sourceOffset: unit.start,
+        unitIndex,
+        order: unitIndex,
+      });
+    }
+    for (const [figureIndex, figure] of (Array.isArray(figures) ? figures : []).entries()) {
+      if (!figure) continue;
+      items.push({
+        kind: "figure",
+        sourceOffset: figure.sourceOffset,
+        figureIndex,
+        order: figureIndex,
+      });
+    }
+    return items
+      .sort((left, right) => (
+        left.sourceOffset - right.sourceOffset
+        || (left.kind === right.kind ? left.order - right.order : left.kind === "figure" ? -1 : 1)
+      ))
+      .map(({ order: _order, ...item }) => item);
+  }
+
+  function findFlowIndexForPosition(
+    flow: ReaderFlowItem[],
+    units: ReaderUnit[],
+    position: ReaderPosition,
+  ): number {
+    if (!Array.isArray(flow) || flow.length === 0) return -1;
+    if (position?.kind === "text") {
+      const unitIndex = findUnitIndex(units, position.sourceOffset);
+      const exact = flow.findIndex((item) => item.kind === "unit" && item.unitIndex === unitIndex);
+      return exact >= 0 ? exact : flow.findIndex((item) => item.kind === "unit");
+    }
+
+    if (position?.kind === "figure") {
+      const exactFigure = flow.findIndex((item) => (
+        item.kind === "figure" && item.figureIndex === position.figureIndex
+      ));
+      if (exactFigure >= 0) return exactFigure;
+
+      const sameOffset = flow.findIndex((item) => item.sourceOffset === position.sourceOffset);
+      if (sameOffset >= 0) return sameOffset;
+
+      const textItems = flow
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => item.kind === "unit")
+        .sort((left, right) => (
+          Math.abs(left.item.sourceOffset - position.sourceOffset)
+          - Math.abs(right.item.sourceOffset - position.sourceOffset)
+          || left.item.sourceOffset - right.item.sourceOffset
+          || left.index - right.index
+        ));
+      return textItems[0]?.index ?? 0;
+    }
+
+    return 0;
+  }
+
+  function positionForFlowItem(flowItem: ReaderFlowItem, units: ReaderUnit[]): ReaderPosition {
+    if (flowItem.kind === "figure") {
+      return {
+        kind: "figure",
+        sourceOffset: flowItem.sourceOffset,
+        figureIndex: flowItem.figureIndex,
+      };
+    }
+    return {
+      kind: "text",
+      sourceOffset: units[flowItem.unitIndex]?.start ?? flowItem.sourceOffset,
+    };
+  }
+
   function findSentenceStart(units: ReaderUnit[], currentUnitIndex: number): number {
     if (!Array.isArray(units) || units.length === 0) return 0;
     const safeIndex = Math.min(Math.max(Number.isInteger(currentUnitIndex) ? currentUnitIndex : 0, 0), units.length - 1);
@@ -392,6 +470,9 @@
     splitSentenceSpans,
     splitLongUnits,
     splitStructuralSpans,
+    buildReadingFlow,
+    findFlowIndexForPosition,
+    positionForFlowItem,
     findSentenceStart,
     findPreviousSentenceStart,
     findActiveHeadingIndex,

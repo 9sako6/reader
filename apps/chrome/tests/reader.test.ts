@@ -20,7 +20,10 @@ class FakeElement {
     this.children = [];
     this.parent = null;
     this.clientWidth = 1000;
+    this.clientHeight = 500;
     this.scrollWidth = 1000;
+    this.scrollTop = 0;
+    this.rect = null;
     this.inert = false;
     this.hidden = false;
     this.disabled = false;
@@ -77,6 +80,10 @@ class FakeElement {
     this.append(...children);
   }
 
+  getBoundingClientRect() {
+    return this.rect || { top: 0, bottom: 100, left: 0, right: 390, width: 390, height: 100 };
+  }
+
   getClientRects() {
     return this.hidden ? [] : [{}];
   }
@@ -99,6 +106,13 @@ function findElement(root, predicate) {
     if (match) return match;
   }
   return null;
+}
+
+function findElements(root, predicate) {
+  if (!root) return [];
+  const matches = predicate(root) ? [root] : [];
+  for (const child of root.children) matches.push(...findElements(child, predicate));
+  return matches;
 }
 
 function revealLoading(timers) {
@@ -775,6 +789,114 @@ test("reader follows page headings and switches to text mode", () => {
   assert.ok(textScroller);
   assert.equal(rsvpModeButton.parent.attributes["data-reader-topbar"], "true");
   assert.ok(findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる"));
+});
+
+test("reader uses sentence and figure markers to preserve a shared position", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  const text = "前の文です。図の前です。\n図1\n図の後です。";
+  const figureOffset = "前の文です。図の前です。".length + 1;
+  const readingContext = {
+    language: "ja",
+    title: "",
+    blocks: [
+      { text: "前の文です。図の前です。", kind: "paragraph", level: null, start: 0, end: figureOffset - 1 },
+      { text: "図の後です。", kind: "paragraph", level: null, start: figureOffset + 3, end: text.length },
+    ],
+    headings: [],
+    sectionOffsets: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [{
+      src: "https://example.com/figure.png",
+      alt: "図1",
+      caption: "図1",
+      sourceOffset: figureOffset,
+      sourceEnd: figureOffset + 2,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "position-request" });
+  messageListener({ type: "START_RSVP", text, requestId: "position-request", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const modeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
+  modeButton.dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
+  const figureMarker = findElement(textShell, (element) => element.dataset.readerPositionKind === "figure");
+  const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
+  const textModeButton = findElement(textShell, (element) => element.textContent === "RSVPで読む");
+
+  assert.equal(textMarkers.length, 3);
+  assert.equal(figureMarker.dataset.figureIndex, "0");
+  assert.equal(figureMarker.dataset.sourceStart, String(figureOffset));
+  scroller.rect = { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
+  textMarkers[0].rect = { top: -120, bottom: -20, left: 0, right: 300, width: 300, height: 100 };
+  textMarkers[1].rect = { top: -80, bottom: 20, left: 0, right: 300, width: 300, height: 100 };
+  figureMarker.rect = { top: 120, bottom: 260, left: 0, right: 300, width: 300, height: 140 };
+  textMarkers[2].rect = { top: 280, bottom: 380, left: 0, right: 300, width: 300, height: 100 };
+  scroller.dispatchEvent({ type: "scroll" });
+  textModeButton.dispatchEvent({ type: "click" });
+
+  const figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  assert.ok(figurePanel);
+  assert.equal(figurePanel.dataset.figureIndex, "0");
+  assert.equal(figurePanel.dataset.sourceStart, String(figureOffset));
+});
+
+test("reader ignores a clipped figure even when its center is readable", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  const text = "前の文です。図の前です。\n図1\n図の後です。";
+  const figureOffset = "前の文です。図の前です。".length + 1;
+  const trailingOffset = figureOffset + 3;
+  const readingContext = {
+    language: "ja",
+    title: "",
+    blocks: [
+      { text: "前の文です。図の前です。", kind: "paragraph", level: null, start: 0, end: figureOffset - 1 },
+      { text: "図の後です。", kind: "paragraph", level: null, start: trailingOffset, end: text.length },
+    ],
+    headings: [],
+    sectionOffsets: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [{
+      src: "https://example.com/figure.png",
+      alt: "図1",
+      caption: "図1",
+      sourceOffset: figureOffset,
+      sourceEnd: figureOffset + 2,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "clipped-figure-request" });
+  messageListener({ type: "START_RSVP", text, requestId: "clipped-figure-request", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
+  const figureMarker = findElement(textShell, (element) => element.dataset.readerPositionKind === "figure");
+  const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
+  const textModeButton = findElement(textShell, (element) => element.textContent === "RSVPで読む");
+
+  scroller.rect = { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
+  textMarkers[0].rect = { top: -160, bottom: -60, left: 0, right: 300, width: 300, height: 100 };
+  textMarkers[1].rect = { top: -120, bottom: -20, left: 0, right: 300, width: 300, height: 100 };
+  figureMarker.rect = { top: 20, bottom: 220, left: 0, right: 300, width: 300, height: 200 };
+  textMarkers[2].rect = { top: 280, bottom: 380, left: 0, right: 300, width: 300, height: 100 };
+  scroller.scrollTop = 120;
+  scroller.dispatchEvent({ type: "scroll" });
+  textModeButton.dispatchEvent({ type: "click" });
+
+  const figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  const display = findElement(
+    overlay,
+    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+  );
+  assert.equal(figurePanel, null);
+  assert.equal(display.dataset.readerPositionKind, "text");
+  assert.equal(display.dataset.sourceStart, String(trailingOffset));
 });
 
 test("reader disables loading and stage animations for reduced motion", () => {
