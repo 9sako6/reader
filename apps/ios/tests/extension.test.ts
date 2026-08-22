@@ -49,11 +49,13 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
   const body = new FakeElement("body");
   documentElement.append(body);
   const createdElements: FakeElement[] = [];
+  const documentListeners = new Map();
   const document = {
     documentElement,
     body,
     activeElement: null,
     title: "",
+    visibilityState: "visible",
     createElement(tagName) {
       const element = new FakeElement(tagName);
       element.ownerDocument = document;
@@ -65,6 +67,14 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     },
     getElementById(id) {
       return findElement(documentElement, (element) => element.id === id);
+    },
+    addEventListener(type, listener) {
+      const listeners = documentListeners.get(type) || [];
+      listeners.push(listener);
+      documentListeners.set(type, listeners);
+    },
+    dispatchEvent(event) {
+      for (const listener of documentListeners.get(event.type) || []) listener(event);
     },
   };
   documentElement.ownerDocument = document;
@@ -108,6 +118,7 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
   let extractionCount = 0;
   let now = 0;
   const globalListeners = new Map();
+  const animationFrames = [];
   const context: any = {
     document,
     location: { href: "https://example.com/articles/first" },
@@ -146,6 +157,7 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
       for (const listener of globalListeners.get(event.type) || []) listener(event);
     },
     requestAnimationFrame(callback) {
+      animationFrames.push(callback);
       callback();
       return 1;
     },
@@ -172,6 +184,7 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     context,
     documentElement,
     createdElements,
+    animationFrames,
     timers,
     launchFeedbackDuringExtraction() {
       return launchFeedbackDuringExtraction;
@@ -181,6 +194,13 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     },
     setActiveContent(content) {
       activeContent = content;
+    },
+    activeContent() {
+      return activeContent;
+    },
+    setVisibilityState(state) {
+      document.visibilityState = state;
+      document.dispatchEvent({ type: "visibilitychange" });
     },
   };
 }
@@ -521,30 +541,12 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   assert.match(firstCompleteUnit.textContent, /さらに後/u);
 });
 
-test("Safari reader caches one article and extracts again after navigation", async () => {
+test("Safari reader discards the closed article and extracts fresh content", async () => {
   const harness = createSafariReaderHarness();
-  const { context, documentElement, createdElements } = harness;
+  const { context, documentElement } = harness;
   await context.MobileViewer.open();
 
   context.MobileViewer.close();
-  await context.MobileViewer.open();
-  assert.equal(harness.extractionCount(), 1);
-  const launchFeedbacks = createdElements.filter((element) => element.className === "launch-feedback");
-  const cachedLaunchFeedback = launchFeedbacks[launchFeedbacks.length - 1];
-  const cachedProgressIndicator = findElement(
-    cachedLaunchFeedback,
-    (element) => element.className === "launch-progress-indicator",
-  );
-  const cachedLaunchLoader = findElement(
-    cachedLaunchFeedback,
-    (element) => element.className === "launch-loader",
-  );
-  assert.equal(cachedProgressIndicator.animations.length, 1);
-  assert.notEqual(cachedLaunchLoader.style.opacity, "1");
-  assert.equal(cachedLaunchFeedback.animations.length, 0);
-
-  context.MobileViewer.close();
-  context.location.href = "https://example.com/articles/second";
   harness.setActiveContent({
     text: "別の記事の本文です。",
     readingContext: {
@@ -570,4 +572,167 @@ test("Safari reader caches one article and extracts again after navigation", asy
     (element) => element.className.startsWith("rsvp-unit"),
   );
   assert.match(secondArticleUnit.textContent, /別の記事/u);
+  assert.equal(findElement(
+    documentElement,
+    (element) => element.className.startsWith("rsvp-unit") && /画像より前/u.test(element.textContent),
+  ), null);
+});
+
+test("Safari reader destroys autoplay state when closed", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  await context.MobileViewer.open();
+
+  assert.equal(timers.size, 1);
+  context.MobileViewer.close();
+
+  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
+  assert.equal(timers.size, 0);
+  assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
+});
+
+test("Safari reader ignores a saved playback timer after close and reopen", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  await context.MobileViewer.open();
+  const savedPlaybackCallback = [...timers.values()][0].callback;
+
+  context.MobileViewer.close();
+  await context.MobileViewer.open();
+  const unit = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
+  const progress = findElement(documentElement, (element) => element.className === "progress");
+  const unitText = unit.textContent;
+  const progressText = progress.textContent;
+  savedPlaybackCallback();
+
+  assert.equal(unit.textContent, unitText);
+  assert.equal(progress.textContent, progressText);
+  assert.equal(timers.size, 1);
+  context.MobileViewer.close();
+  assert.equal(timers.size, 0);
+});
+
+test("Safari reader ignores a saved text restore frame after close", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, animationFrames } = harness;
+  await context.MobileViewer.open();
+  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  modeButton.dispatchEvent({ type: "click" });
+  const savedRestoreFrame = animationFrames.at(-1);
+
+  context.MobileViewer.close();
+  assert.doesNotThrow(() => savedRestoreFrame());
+  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
+});
+
+test("Safari reader restores source page state when closed repeatedly", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement } = harness;
+  const body = documentElement.children[0];
+  const handle = findElement(documentElement, (element) => element.className === "entry");
+  documentElement.style.overflow = "scroll";
+  body.style.overflow = "auto";
+  context.scrollY = 240;
+
+  await context.MobileViewer.open();
+  context.MobileViewer.close();
+  context.MobileViewer.close();
+
+  assert.equal(documentElement.style.overflow, "scroll");
+  assert.equal(body.style.overflow, "auto");
+  assert.equal(handle.focused, true);
+});
+
+test("Safari reader pauses without destroying its session in the background", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  await context.MobileViewer.open();
+
+  assert.equal(timers.size, 1);
+  harness.setVisibilityState("hidden");
+  assert.equal(timers.size, 0);
+  assert.ok(findElement(documentElement, (element) => element.className === "reader"));
+
+  harness.setVisibilityState("visible");
+  assert.equal(timers.size, 0);
+  assert.ok(findElement(documentElement, (element) => element.className === "reader"));
+});
+
+test("Safari reader destroys paused text mode state when closed", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  await context.MobileViewer.open();
+  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  modeButton.dispatchEvent({ type: "click" });
+
+  assert.ok(findElement(documentElement, (element) => element.className === "text-view"));
+  assert.equal(timers.size, 0);
+  context.MobileViewer.close();
+
+  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
+  assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
+});
+
+test("Safari reader destroys figure state when closed", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  await context.MobileViewer.open();
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+
+  assert.ok(findElement(documentElement, (element) => element.className === "rsvp-figure"));
+  context.MobileViewer.close();
+
+  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
+  assert.equal(findElement(documentElement, (element) => element.className === "rsvp-figure"), null);
+  assert.equal(timers.size, 0);
+});
+
+test("Safari reader destroys pending double tap state when closed", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  await context.MobileViewer.open();
+  const rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
+  rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+
+  assert.equal(timers.size, 2);
+  context.MobileViewer.close();
+
+  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
+  assert.equal(timers.size, 0);
+});
+
+test("Safari reader destroys error state when closed", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement } = harness;
+  harness.setActiveContent(null);
+  await context.MobileViewer.open();
+
+  assert.ok(findElement(documentElement, (element) => element.className === "error"));
+  context.MobileViewer.close();
+
+  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
+  assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
+});
+
+test("Safari reader ignores extraction completion after close", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement } = harness;
+  let resolveExtraction: (value: unknown) => void = () => {};
+  const extraction = new Promise((resolve) => {
+    resolveExtraction = resolve;
+  });
+  context.Extractor.fromPage = () => extraction;
+
+  const opening = context.MobileViewer.open();
+  await Promise.resolve();
+  context.MobileViewer.close();
+  resolveExtraction(harness.activeContent());
+  await opening;
+
+  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
+  assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
 });

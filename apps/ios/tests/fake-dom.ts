@@ -95,6 +95,7 @@ export class FakeElement {
   }
 
   focus() {
+    this.focused = true;
     if (this.ownerDocument) this.ownerDocument.activeElement = this;
   }
 
