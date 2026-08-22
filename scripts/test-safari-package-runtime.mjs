@@ -30,6 +30,12 @@ async function waitFor(url, predicate = (response) => response.status === 200) {
   throw new Error(`service did not become ready: ${url}`);
 }
 
+function freshPageUrl() {
+  const url = new URL(pageUrl);
+  url.searchParams.set("runtime", `${Date.now()}-${process.pid}`);
+  return url.href;
+}
+
 async function findFreePort() {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
@@ -122,15 +128,19 @@ async function verifySafariRuntime() {
       capabilities: { alwaysMatch: { browserName: "safari" } },
     });
   } catch (error) {
-    throw new SafariWebDriverUnavailableError(error.message);
+    if (/session not created|remote automation|not reachable|connection refused/i.test(error.message)) {
+      throw new SafariWebDriverUnavailableError(error.message);
+    }
+    throw error;
   }
   if (typeof created?.sessionId !== "string") {
     throw new Error(`Safari WebDriver returned an invalid session: ${JSON.stringify(created)}`);
   }
   sessionId = created.sessionId;
-  await driverRequest("POST", `/session/${sessionId}/url`, { url: pageUrl });
+  await driverRequest("POST", `/session/${sessionId}/url`, { url: freshPageUrl() });
   const result = await executeScript(`
     const done = arguments[arguments.length - 1];
+    globalThis.MobileViewer.close();
     const originalInit = globalThis.ReaderSession.init;
     const originalCreate = globalThis.ReaderSession.create;
     let initCount = 0;
@@ -151,18 +161,41 @@ async function verifySafariRuntime() {
       }
       return response;
     });
-    globalThis.MobileViewer.open().then(() => {
+    const unitDeadline = Date.now() + 5000;
+    function finishWhenRuntimeIsReady() {
       const host = document.getElementById("__reader-host");
       const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
-      done({
-        initialized: globalThis.ReaderSession.ready(),
-        initCount,
-        createCount,
-        wasmResponses,
-        host: Boolean(host),
-        unit: Boolean(unit),
-      });
-    }).catch((error) => done({ error: String(error) }));
+      const initialized = globalThis.ReaderSession.ready() === true;
+      const unitText = unit?.textContent?.trim() || "";
+      const wasmReady = wasmResponses.some(({ status, contentType }) => status === 200 && contentType === "application/wasm");
+      if (initialized && initCount === 1 && createCount === 1 && wasmReady && unitText) {
+        done({
+          initialized,
+          initCount,
+          createCount,
+          wasmResponses,
+          host: Boolean(host),
+          unit: true,
+          unitText,
+        });
+        return;
+      }
+      if (Date.now() >= unitDeadline) {
+        done({
+          error: "ReaderSession and first reader unit did not become ready together",
+          initialized,
+          initCount,
+          createCount,
+          wasmResponses,
+          host: Boolean(host),
+          unit: Boolean(unit),
+          unitText,
+        });
+        return;
+      }
+      setTimeout(finishWhenRuntimeIsReady, 16);
+    }
+    globalThis.MobileViewer.open().then(finishWhenRuntimeIsReady).catch((error) => done({ error: String(error) }));
   `);
   assert.equal(result.error, undefined, JSON.stringify(result));
   assert.equal(result.initialized, true);
@@ -171,14 +204,16 @@ async function verifySafariRuntime() {
   assert.deepEqual(result.wasmResponses, [{ status: 200, contentType: "application/wasm" }]);
   assert.equal(result.host, true);
   assert.equal(result.unit, true);
+  assert.notEqual(result.unitText, "");
 }
 
 async function verifyGeneratedRuntimeInWebKit() {
   const browser = await webkit.launch({ headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(pageUrl, { waitUntil: "load" });
+    await page.goto(freshPageUrl(), { waitUntil: "load" });
     const result = await page.evaluate(async () => {
+      globalThis.MobileViewer.close();
       const originalInit = globalThis.ReaderSession.init;
       const originalCreate = globalThis.ReaderSession.create;
       let initCount = 0;
@@ -200,15 +235,44 @@ async function verifyGeneratedRuntimeInWebKit() {
         return response;
       });
       await globalThis.MobileViewer.open();
+      await new Promise((resolve, reject) => {
+        const deadline = performance.now() + 3000;
+        const poll = () => {
+          const host = document.getElementById("__reader-host");
+          const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+          const initialized = globalThis.ReaderSession.ready() === true;
+          const unitText = unit?.textContent?.trim() || "";
+          const wasmReady = wasmResponses.some(({ status, contentType }) => status === 200 && contentType === "application/wasm");
+          if (initialized && initCount === 1 && createCount === 1 && wasmReady && unitText) {
+            resolve();
+            return;
+          }
+          if (performance.now() >= deadline) {
+            reject(new Error(JSON.stringify({
+              error: "ReaderSession and first reader unit did not become ready together",
+              initialized,
+              initCount,
+              createCount,
+              wasmResponses,
+              host: Boolean(host),
+              unit: Boolean(unit),
+              unitText,
+            })));
+            return;
+          }
+          requestAnimationFrame(poll);
+        };
+        poll();
+      });
       const host = document.getElementById("__reader-host");
-      const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
       return {
         initialized: globalThis.ReaderSession.ready(),
         initCount,
         createCount,
         wasmResponses,
         host: Boolean(host),
-        unit: Boolean(unit),
+        unit: Boolean(host?.shadowRoot?.querySelector('[data-reader-unit="true"]')),
+        unitText: host?.shadowRoot?.querySelector('[data-reader-unit="true"]')?.textContent?.trim() || "",
       };
     });
     assert.equal(result.initialized, true);
@@ -217,6 +281,7 @@ async function verifyGeneratedRuntimeInWebKit() {
     assert.deepEqual(result.wasmResponses, [{ status: 200, contentType: "application/wasm" }]);
     assert.equal(result.host, true);
     assert.equal(result.unit, true);
+    assert.notEqual(result.unitText, "");
   } finally {
     await browser.close();
   }
