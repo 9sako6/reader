@@ -5,6 +5,43 @@ async function loadViewer(page: Page, viewer: "chrome" | "mobile"): Promise<void
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
 }
 
+async function readReaderPosition(dialog: ReturnType<Page["getByRole"]>): Promise<{
+  kind: "text" | "figure";
+  sourceStart: number;
+  figureIndex: number | null;
+}> {
+  const figure = dialog.locator('[data-reader-position-kind="figure"]:visible').first();
+  if (await figure.count() > 0) {
+    return {
+      kind: "figure",
+      sourceStart: Number(await figure.getAttribute("data-source-start")),
+      figureIndex: Number(await figure.getAttribute("data-figure-index")),
+    };
+  }
+  const unit = dialog.locator('[data-reader-position-kind="text"][data-reader-unit]:visible').first();
+  return {
+    kind: "text",
+    sourceStart: Number(await unit.getAttribute("data-source-start")),
+    figureIndex: null,
+  };
+}
+
+async function pauseReaderIfPlaying(dialog: ReturnType<Page["getByRole"]>): Promise<void> {
+  await expect(dialog.getByRole("button", { name: /^(文章で読む|RSVPで読む)$/ })).toBeVisible();
+  const pause = dialog.getByRole("button", { name: "一時停止" });
+  if (await pause.count() > 0 && await pause.isVisible()) await pause.click();
+}
+
+async function placeTextMarker(marker: ReturnType<Page["getByRole"]>, targetTop: number): Promise<void> {
+  await marker.evaluate((element, desiredTop) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    const markerRect = element.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    scroller.scrollTop += markerRect.top - scrollerRect.top - desiredTop;
+  }, targetTop);
+}
+
 type ChromeOpenOptions = {
   delay?: number;
   text?: string;
@@ -444,6 +481,91 @@ test("Chrome viewer keeps its focal point after 25 mode round trips", async ({ p
   expect(Math.abs(finalCenter.y - initialCenter.y)).toBeLessThanOrEqual(1);
 });
 
+test("Chrome viewer preserves the first complete sentence after 50 mode round trips", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await loadViewer(page, "chrome");
+  const launchButton = page.getByRole("button", { name: "Chrome readerを開く" });
+  await launchButton.click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const textMarker = dialog.locator('[data-reader-position-kind="text"][data-reader-text-anchor]').nth(1);
+  await placeTextMarker(textMarker, 180);
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await pauseReaderIfPlaying(dialog);
+  const expected = await readReaderPosition(dialog);
+  expect(expected.kind).toBe("text");
+  expect(expected.sourceStart).toBe(0);
+
+  for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
+    await dialog.getByRole("button", { name: "文章で読む" }).click();
+    await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+    await pauseReaderIfPlaying(dialog);
+    expect(await readReaderPosition(dialog)).toEqual(expected);
+  }
+});
+
+test("Chrome viewer preserves an image position after 50 mode round trips", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await page.getByRole("button", { name: "Chrome readerを開く" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const imageMarker = dialog.locator('[data-reader-position-kind="figure"]').first();
+  await imageMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    scroller.style.paddingBottom = "600px";
+  });
+  await placeTextMarker(imageMarker, 100);
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  const expected = await readReaderPosition(dialog);
+  expect(expected.kind).toBe("figure");
+  expect(expected.sourceStart).toBe(44);
+  expect(expected.figureIndex).toBe(0);
+
+  for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
+    await dialog.getByRole("button", { name: "文章で読む" }).click();
+    await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+    expect(await readReaderPosition(dialog)).toEqual(expected);
+  }
+});
+
+test("Chrome viewer preserves the sentence after an image after 50 mode round trips", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await loadViewer(page, "chrome");
+  await page.getByRole("button", { name: "Chrome readerを開く" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const textMarkers = dialog.locator('[data-reader-position-kind="text"][data-reader-text-anchor]');
+  const afterImageMarker = textMarkers.last();
+  await afterImageMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    scroller.scrollTop = scroller.scrollHeight;
+  });
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await pauseReaderIfPlaying(dialog);
+  const expected = await readReaderPosition(dialog);
+  expect(expected.kind).toBe("text");
+  expect(expected.sourceStart).toBe(52);
+
+  for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
+    await dialog.getByRole("button", { name: "文章で読む" }).click();
+    await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+    await pauseReaderIfPlaying(dialog);
+    expect(await readReaderPosition(dialog)).toEqual(expected);
+  }
+});
+
 test("mobile viewer keeps RSVP text readable without overflow", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await loadViewer(page, "mobile");
@@ -519,6 +641,90 @@ test("mobile viewer keeps its focal point and pause state after 25 mode round tr
   });
   expect(Math.abs(finalCenter.x - initialCenter.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(finalCenter.y - initialCenter.y)).toBeLessThanOrEqual(1);
+});
+
+test("mobile viewer preserves the first complete sentence after 50 mode round trips", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 390, height: 500 });
+  await loadViewer(page, "mobile");
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const textMarker = dialog.locator('[data-reader-position-kind="text"][data-reader-text-anchor]').nth(1);
+  await placeTextMarker(textMarker, 180);
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await pauseReaderIfPlaying(dialog);
+  const expected = await readReaderPosition(dialog);
+  expect(expected.kind).toBe("text");
+  expect(expected.sourceStart).toBe(0);
+
+  for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
+    await dialog.getByRole("button", { name: "文章で読む" }).click();
+    await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+    await pauseReaderIfPlaying(dialog);
+    expect(await readReaderPosition(dialog)).toEqual(expected);
+  }
+});
+
+test("mobile viewer preserves an image position after 50 mode round trips", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const imageMarker = dialog.locator('[data-reader-position-kind="figure"]').first();
+  await imageMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    scroller.style.paddingBottom = "600px";
+  });
+  await placeTextMarker(imageMarker, 100);
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  const expected = await readReaderPosition(dialog);
+  expect(expected.kind).toBe("figure");
+  expect(expected.sourceStart).toBe(44);
+  expect(expected.figureIndex).toBe(0);
+
+  for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
+    await dialog.getByRole("button", { name: "文章で読む" }).click();
+    await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+    expect(await readReaderPosition(dialog)).toEqual(expected);
+  }
+});
+
+test("mobile viewer preserves the sentence after an image after 50 mode round trips", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 390, height: 500 });
+  await loadViewer(page, "mobile");
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const textMarkers = dialog.locator('[data-reader-position-kind="text"][data-reader-text-anchor]');
+  const afterImageMarker = textMarkers.last();
+  await afterImageMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    scroller.scrollTop = scroller.scrollHeight;
+  });
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await pauseReaderIfPlaying(dialog);
+  const expected = await readReaderPosition(dialog);
+  expect(expected.kind).toBe("text");
+  expect(expected.sourceStart).toBe(52);
+
+  for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
+    await dialog.getByRole("button", { name: "文章で読む" }).click();
+    await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+    await pauseReaderIfPlaying(dialog);
+    expect(await readReaderPosition(dialog)).toEqual(expected);
+  }
 });
 
 test("Chrome viewer pauses for an image and exposes its context", async ({ page }) => {

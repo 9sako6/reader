@@ -17,6 +17,14 @@ declare global {
     end: number;
   }
 
+  type ReaderPosition =
+    | { kind: "text"; sourceOffset: number }
+    | { kind: "figure"; sourceOffset: number; figureIndex: number };
+
+  type ReaderFlowItem =
+    | { kind: "unit"; sourceOffset: number; unitIndex: number }
+    | { kind: "figure"; sourceOffset: number; figureIndex: number };
+
   interface ReaderSectionTransition {
     offset: number;
     headingIndex: number;
@@ -36,6 +44,9 @@ declare global {
     splitLongUnits(units: ReaderUnit[], locale?: string, maxGraphemes?: number): ReaderUnit[];
     splitSentenceSpans(text: string, locale?: string): SentenceSpan[];
     splitStructuralSpans(text: string): Array<{ text: string; kind: ReaderUnitKind; start: number; end: number }>;
+    buildReadingFlow(units: ReaderUnit[], figures: ReaderFigure[]): ReaderFlowItem[];
+    findFlowIndexForPosition(flow: ReaderFlowItem[], units: ReaderUnit[], position: ReaderPosition): number;
+    positionForFlowItem(flowItem: ReaderFlowItem, units: ReaderUnit[]): ReaderPosition;
     findSentenceStart(units: ReaderUnit[], currentUnitIndex: number): number;
     findPreviousSentenceStart(units: ReaderUnit[], currentUnitIndex: number): number;
     findActiveHeadingIndex(transitions: ReaderSectionTransition[], currentOffset: number, fallbackIndex?: number): number;
