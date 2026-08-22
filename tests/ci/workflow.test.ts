@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const workflow = fs.readFileSync(path.resolve(__dirname, "../../../.github/workflows/ci.yml"), "utf8");
+const workflow = fs.readFileSync(path.resolve(__dirname, "../../.github/workflows/ci.yml"), "utf8");
 const chromiumJobStart = workflow.indexOf("\n  e2e:\n");
 const iosJobStart = workflow.indexOf("\n  ios:\n", chromiumJobStart);
 const chromiumJob = workflow.slice(chromiumJobStart, iosJobStart);
