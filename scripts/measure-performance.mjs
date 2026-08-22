@@ -28,6 +28,7 @@ const baseline = {
     "1000": { tapToFirstUnitMs: 292.7, tapToFirstRenderMs: 293.1, tapToFirstFeedbackMs: 6.8, extractionMs: 100, sessionInitMs: 9.0 },
     "10000": { tapToFirstUnitMs: 817.6, tapToFirstRenderMs: 837.7, tapToFirstFeedbackMs: 26.4, extractionMs: 92.3, sessionInitMs: 31.1 },
     "50000": { tapToFirstUnitMs: 3415.7, tapToFirstRenderMs: 3419.4, tapToFirstFeedbackMs: 119.2, extractionMs: 130.5, sessionInitMs: 138.5 },
+    "100000": { tapToFirstUnitMs: 6649.4, tapToFirstRenderMs: 6715.5, tapToFirstFeedbackMs: 237.3, extractionMs: 189.9, sessionInitMs: 267.9 },
   },
   passive: { bootstrapDecodedBytes: 10210, longTaskCount: 0 },
 };
@@ -80,6 +81,9 @@ function medianReport(runs) {
     "defuddleMs",
     "indexMs",
     "contextMs",
+    "heapBeforeOpenBytes",
+    "retainedHeapAfterCloseBytes",
+    "retainedHeapDeltaBytes",
   ];
   return Object.fromEntries(numericKeys.map((key) => [key, median(runs.map((run) => run[key]))]));
 }
@@ -97,8 +101,21 @@ function percentileReport(runs, percentileRank) {
     "defuddleMs",
     "indexMs",
     "contextMs",
+    "heapBeforeOpenBytes",
+    "retainedHeapAfterCloseBytes",
+    "retainedHeapDeltaBytes",
   ];
   return Object.fromEntries(numericKeys.map((key) => [key, percentile(runs.map((run) => run[key]), percentileRank)]));
+}
+
+function retainedHeapReport(runs) {
+  const deltas = runs.map((run) => run.retainedHeapDeltaBytes).filter((value) => value !== null);
+  return {
+    samples: deltas.length,
+    p50Bytes: percentile(deltas, 0.5),
+    p90Bytes: percentile(deltas, 0.9),
+    maxBytes: Math.max(...deltas, 0),
+  };
 }
 
 function budgetReport(fixtureName, p90) {
@@ -181,6 +198,8 @@ async function measurePassivePage(browser, control = false) {
 async function measurePage(browser, fixture) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   page.setDefaultTimeout(120_000);
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Performance.enable");
   try {
     await page.goto(`${baseUrl}/tests/e2e/fixtures/performance.html`);
     await page.evaluate((runtimeBaseUrl) => {
@@ -198,7 +217,7 @@ async function measurePage(browser, fixture) {
         type: script.endsWith("session-wasm-module.js") ? "module" : "text/javascript",
       });
     }
-    return await page.evaluate(({ nodeCount, extraction }) => {
+    await page.evaluate(({ nodeCount, extraction }) => {
       const sourceMarkup = (() => {
         const rootTag = extraction === "dominant" ? "article" : "main";
         const spanCount = Math.max(3, nodeCount - 4);
@@ -217,8 +236,12 @@ async function measurePage(browser, fixture) {
       }
       globalThis.Defuddle = FixtureDefuddle;
       globalThis.__READER_PERFORMANCE_ENABLED = true;
-      const beforeInstall = performance.now();
       globalThis.MobileViewer.install();
+    }, fixture);
+    await cdp.send("HeapProfiler.enable");
+    await cdp.send("HeapProfiler.collectGarbage");
+    const beforeOpenMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
+    const result = await page.evaluate(() => {
       const openPromise = globalThis.MobileViewer.open();
       return openPromise.then(() => {
         const mark = (name) => performance.getEntriesByName(name, "mark").at(-1)?.startTime;
@@ -234,7 +257,7 @@ async function measurePage(browser, fixture) {
         const wasmRequestsBeforeTap = performance.getEntriesByType("resource")
           .filter((entry) => entry.name.endsWith("reader_session_bg.wasm"));
         return {
-          bootstrapMs: Math.max(0, (mark("reader:bootstrap-ready") || beforeInstall) - beforeInstall),
+          bootstrapMs: 0,
           tapToFirstFeedbackMs: Math.max(0, (firstFeedback || tap || 0) - (tap || 0)),
           tapToFirstUnitMs: Math.max(0, (firstUnit || tap || 0) - (tap || 0)),
           sessionInitMs: Math.max(0, (sessionInitEnd || sessionInitStart || 0) - (sessionInitStart || 0)),
@@ -248,7 +271,19 @@ async function measurePage(browser, fixture) {
           contextMs: metrics.contextMs || 0,
         };
       });
-    }, fixture);
+      });
+    await page.evaluate(() => globalThis.MobileViewer.close());
+    await cdp.send("HeapProfiler.enable");
+    await cdp.send("HeapProfiler.collectGarbage");
+    const afterCloseMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
+    return {
+      ...result,
+      heapBeforeOpenBytes: beforeOpenMetrics.JSHeapUsedSize ?? null,
+      retainedHeapAfterCloseBytes: afterCloseMetrics.JSHeapUsedSize ?? null,
+      retainedHeapDeltaBytes: beforeOpenMetrics.JSHeapUsedSize === undefined || afterCloseMetrics.JSHeapUsedSize === undefined
+        ? null
+        : afterCloseMetrics.JSHeapUsedSize - beforeOpenMetrics.JSHeapUsedSize,
+    };
   } finally {
     await page.close();
   }
@@ -262,7 +297,7 @@ try {
     for (let run = 0; run < runsPerCase; run += 1) runs.push(await measurePage(browser, fixture));
     const median = medianReport(runs);
     const p90 = percentileReport(runs, 0.9);
-    fixtureReports[fixture.name] = { runs, median, p50: median, p90, budget: budgetReport(fixture.name, p90) };
+    fixtureReports[fixture.name] = { runs, median, p50: median, p90, retainedHeap: retainedHeapReport(runs), budget: budgetReport(fixture.name, p90) };
   }
 
   const nodeReports = {};
@@ -273,7 +308,7 @@ try {
     }
     const median = medianReport(runs);
     const p90 = percentileReport(runs, 0.9);
-    nodeReports[String(nodeCount)] = { runs, median, p50: median, p90, budget: budgetReport(String(nodeCount), p90) };
+    nodeReports[String(nodeCount)] = { runs, median, p50: median, p90, retainedHeap: retainedHeapReport(runs), budget: budgetReport(String(nodeCount), p90) };
   }
 
   const passiveWithBootstrap = await measurePassivePage(browser);
