@@ -1014,8 +1014,8 @@
       textRestoreScrollTop = scroller.scrollTop;
       textPositionDirty = false;
       textRestoring = false;
-      focusCloseIfNeeded(activeElement);
     });
+    focusCloseIfNeeded(activeElement);
   }
 
   function showRsvpView() {
@@ -1814,7 +1814,6 @@
       playPauseButton = null;
       headingNodes = [];
       progressLabel = null;
-      progressBar = null;
       figurePanel = null;
       textScroller = null;
       textPositionMarkers = [];

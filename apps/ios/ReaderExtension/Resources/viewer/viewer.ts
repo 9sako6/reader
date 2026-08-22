@@ -1310,7 +1310,6 @@
     mode = "rsvp";
     nodes = null;
     opening = false;
-    textFigureOffset = null;
     lastLeftTapAt = 0;
     lastLeftTapX = 0;
     lastLeftTapY = 0;
