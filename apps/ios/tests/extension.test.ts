@@ -124,6 +124,7 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
   let launchFeedbackDuringExtraction = null;
   let extractionCount = 0;
   let now = 0;
+  const performanceMarks = [];
   const globalListeners = new Map();
   const animationFrames = [];
   const context: any = {
@@ -147,6 +148,12 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     innerHeight: 844,
     scrollY: 0,
     console,
+    performance: {
+      mark(name) {
+        performanceMarks.push(name);
+      },
+    },
+    __READER_PERFORMANCE_ENABLED: true,
     Date: { now: () => now },
     matchMedia: () => ({ matches: false }),
     addEventListener(type, listener) {
@@ -199,6 +206,9 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     extractionCount() {
       return extractionCount;
     },
+    performanceMarks() {
+      return performanceMarks;
+    },
     setActiveContent(content) {
       activeContent = content;
     },
@@ -211,6 +221,22 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     },
   };
 }
+
+test("Safari reader marks startup phases without including page content", async () => {
+  const harness = createSafariReaderHarness();
+  await harness.context.MobileViewer.open();
+
+  assert.deepEqual(harness.performanceMarks(), [
+    "reader:bootstrap-ready",
+    "reader:tap",
+    "reader:first-feedback",
+    "reader:extraction-start",
+    "reader:extraction-end",
+    "reader:segmentation-end",
+    "reader:controls-ready",
+    "reader:first-render",
+  ]);
+});
 
 test("Safari reader shows extraction progress before opening", async () => {
   const harness = createSafariReaderHarness();

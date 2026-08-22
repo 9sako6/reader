@@ -55,32 +55,51 @@
   ): Promise<ReaderContent | null> {
     if (typeof DefuddleClass !== "function" || typeof sourceDocument.createRange !== "function") return null;
 
+    const metrics: ReaderExtractionMetrics = {
+      dominantArticleMs: 0,
+      defuddleMs: 0,
+      indexMs: 0,
+      contextMs: 0,
+    };
+
     const dominantArticle = await runExtractionPhase(
       "dominant_article",
       options,
       () => extractDominantArticle(sourceDocument),
+      metrics,
     );
     const result = dominantArticle || await runExtractionPhase(
       "defuddle_parse",
       options,
       () => parseWithDefuddle(sourceDocument, DefuddleClass),
+      metrics,
     );
     if (dominantArticle) {
-      await runExtractionPhase("defuddle_parse", options, () => dominantArticle);
+      await runExtractionPhase("defuddle_parse", options, () => dominantArticle, metrics);
     }
-    if (!result || typeof result.content !== "string" || !result.content.trim()) return null;
+    if (!result || typeof result.content !== "string" || !result.content.trim()) {
+      options.onMetrics?.(metrics);
+      return null;
+    }
 
     const canonical = await runExtractionPhase(
       "canonical_text",
       options,
       () => createCanonicalPageData(sourceDocument, result),
+      metrics,
     );
-    if (!canonical) return null;
-    return runExtractionPhase(
+    if (!canonical) {
+      options.onMetrics?.(metrics);
+      return null;
+    }
+    const content = await runExtractionPhase(
       "blocks_figures",
       options,
       () => buildReaderContent(sourceDocument, result, canonical),
+      metrics,
     );
+    options.onMetrics?.(metrics);
+    return content;
   }
 
   function extractPageResult(
@@ -199,18 +218,22 @@
     phase: ReaderExtractionPhase,
     options: ReaderExtractionOptions,
     work: () => T,
+    metrics: ReaderExtractionMetrics,
   ): Promise<T> {
     throwIfAborted(options.signal);
     await yieldToAnimationFrame(options.signal);
-    const startedAt = phaseNow();
+    const startedAt = options.onPhase || options.onMetrics ? phaseNow() : 0;
     const result = work();
     throwIfAborted(options.signal);
     await yieldToAnimationFrame(options.signal);
-    options.onPhase?.(phase);
-    globalThis.console?.debug?.("reader preparation phase", {
-      phase,
-      durationMs: Math.max(0, Math.round(phaseNow() - startedAt)),
-    });
+    if (options.onPhase || options.onMetrics) {
+      const durationMs = Math.max(0, Math.round(phaseNow() - startedAt));
+      options.onPhase?.(phase, durationMs);
+      if (phase === "dominant_article") metrics.dominantArticleMs = durationMs;
+      if (phase === "defuddle_parse") metrics.defuddleMs = durationMs;
+      if (phase === "canonical_text") metrics.indexMs = durationMs;
+      if (phase === "blocks_figures") metrics.contextMs = durationMs;
+    }
     return result;
   }
 

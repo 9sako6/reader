@@ -495,6 +495,32 @@ test("fromPageAsync reports preparation phases and keeps the page extraction con
   ]);
 });
 
+test("fromPageAsync reports phase durations only through the metrics callback", async () => {
+  const { document, Defuddle } = createLanguagePageFixture("en-US");
+  const phases = [];
+  let metrics = null;
+
+  const result = await extractPageAsync(document, Defuddle, {
+    onPhase(phase, durationMs) {
+      phases.push({ phase, durationMs });
+    },
+    onMetrics(value) {
+      metrics = value;
+    },
+  });
+
+  assert.equal(result.text, "ページ本文です。");
+  assert.equal(phases.length, 4);
+  assert.ok(phases.every(({ durationMs }) => Number.isFinite(durationMs) && durationMs >= 0));
+  assert.deepEqual(Object.keys(metrics).sort(), [
+    "contextMs",
+    "defuddleMs",
+    "dominantArticleMs",
+    "indexMs",
+  ]);
+  assert.ok(Object.values(metrics || {}).every((durationMs) => Number.isFinite(Number(durationMs)) && Number(durationMs) >= 0));
+});
+
 test("fromPageAsync rejects with AbortError before committing a later phase", async () => {
   const { document, Defuddle } = createLanguagePageFixture("en-US");
   const controller = new AbortController();

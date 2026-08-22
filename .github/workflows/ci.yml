@@ -38,6 +38,14 @@ jobs:
         run: mise run check
       - name: Test
         run: mise run test
+      - name: Measure extension bundles
+        run: mise run measure:bundle
+      - name: Upload bundle baseline
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: extension-bundle-baseline
+          path: test-results/performance/bundle.json
+          if-no-files-found: error
 
   e2e:
     name: Chromium viewer E2E
@@ -57,8 +65,16 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install Chromium
         run: pnpm exec playwright install chromium
+      - name: Measure reader performance
+        run: mise run measure:performance
       - name: Run Chromium E2E
         run: mise run test:e2e -- --project=chromium
+      - name: Upload reader performance baseline
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reader-performance-baseline
+          path: test-results/performance/reader.json
+          if-no-files-found: error
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
