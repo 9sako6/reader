@@ -47,9 +47,9 @@ test("extension runtime loader imports each heavy asset in order", async () => {
 
   await loadRuntime();
   assert.deepEqual(importedURLs, [
-    "safari-extension://reader/defuddle.js",
-    "safari-extension://reader/session-wasm-module.js",
-    "safari-extension://reader/session.js",
+    "safari-extension://reader/defuddle.js?readerAttempt=1",
+    "safari-extension://reader/session-wasm-module.js?readerAttempt=1",
+    "safari-extension://reader/session.js?readerAttempt=1",
   ]);
 });
 

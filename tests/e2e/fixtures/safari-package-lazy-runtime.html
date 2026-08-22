@@ -8,8 +8,15 @@
       globalThis.browser = {
         runtime: {
           getURL(path) {
-            const query = new URLSearchParams(location.search).has("slow") ? "?delay=250" : "";
-            return `/apps/ios/ReaderExtension/Resources/generated/${path}${query}`;
+            const params = new URLSearchParams(location.search);
+            const query = new URLSearchParams();
+            if (params.has("slow")) query.set("delay", "250");
+            if (params.has("retry")) {
+              query.set("fail-once", "extractor.js");
+              query.set("token", params.get("runtime") || "retry");
+            }
+            const suffix = query.toString() ? `?${query}` : "";
+            return `/apps/ios/ReaderExtension/Resources/generated/${path}${suffix}`;
           },
         },
       };

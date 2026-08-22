@@ -307,7 +307,7 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
     const page = await browser.newPage();
     const assetRequests = new Map();
     page.on("request", (request) => {
-      const asset = request.url().match(/generated\/(.+)$/)?.[1];
+      const asset = new URL(request.url()).pathname.match(/generated\/([^/]+)$/)?.[1];
       if (asset) assetRequests.set(asset, (assetRequests.get(asset) || 0) + 1);
     });
     await page.goto(`${lazyPageUrl}?runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
@@ -369,6 +369,53 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
   }
 }
 
+async function verifyGeneratedLazyRuntimeRetryInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.goto(`${lazyPageUrl}?retry=1&runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    const requestedAssets = new Map();
+    page.on("request", (request) => {
+      const asset = new URL(request.url()).pathname.match(/generated\/([^/]+)$/)?.[1];
+      if (asset) requestedAssets.set(asset, (requestedAssets.get(asset) || 0) + 1);
+    });
+    const bootstrap = page.locator("#__reader-bootstrap");
+    await bootstrap.getByRole("button", { name: "readerで読む" }).click();
+    await bootstrap.getByRole("button", { name: "再試行" }).waitFor();
+    await bootstrap.getByRole("button", { name: "再試行" }).click();
+    const result = await page.evaluate(async () => {
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const host = document.getElementById("__reader-host");
+        const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+        if (globalThis.ReaderSession?.ready?.() === true && unit?.textContent?.trim()) {
+          return { initialized: true, unitText: unit.textContent.trim() };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 16));
+      }
+      return {
+        initialized: globalThis.ReaderSession?.ready?.() === true,
+        unitText: "",
+        mobileViewer: typeof globalThis.MobileViewer,
+        readerSession: typeof globalThis.ReaderSession,
+        host: Boolean(document.getElementById("__reader-host")),
+      };
+    });
+    assert.equal(result.initialized, true, JSON.stringify({ ...result, requestedAssets: Object.fromEntries(requestedAssets), pageErrors }));
+    assert.notEqual(result.unitText, "");
+    for (const asset of ["defuddle.js", "session-wasm-module.js", "session.js", "engine.js", "extractor.js"]) {
+      assert.equal(requestedAssets.get(asset), 2, `${asset} should reload after the intermediate failure`);
+    }
+    for (const asset of ["icons.js", "viewer.js"]) {
+      assert.equal(requestedAssets.get(asset), 1, `${asset} should load once after retry`);
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
 async function verifyGeneratedLazyRuntimeCancelInWebKit() {
   const browser = await webkit.launch({ headless: true });
   try {
@@ -401,6 +448,7 @@ try {
   await verifyPackage();
   await verifyGeneratedRuntimeInWebKit();
   await verifyGeneratedLazyRuntimeInWebKit();
+  await verifyGeneratedLazyRuntimeRetryInWebKit();
   await verifyGeneratedLazyRuntimeCancelInWebKit();
   process.stdout.write("Generated Safari resources initialized ReaderSession in WebKit\n");
   try {

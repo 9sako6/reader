@@ -11,8 +11,14 @@ export function createExtensionRuntimeLoader(
   getRuntimeURL: (resourceName: string) => string,
   importRuntime: ExtensionRuntimeImporter,
 ): () => Promise<void> {
+  let attempt = 0;
   return async () => {
-    for (const asset of assets) await importRuntime(getRuntimeURL(asset));
+    attempt += 1;
+    for (const asset of assets) {
+      const runtimeURL = new URL(getRuntimeURL(asset), globalThis.location?.href || "https://reader.invalid/");
+      runtimeURL.searchParams.set("readerAttempt", String(attempt));
+      await importRuntime(runtimeURL.href);
+    }
   };
 }
 
