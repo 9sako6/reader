@@ -443,7 +443,7 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
   };
 }
 
-function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
+function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOnce?: boolean } = {}) {
   const headingBeforeSelection = new FakeElement("h1", "記事タイトル");
   const headingInSelection = new FakeElement("h2", "次の節");
   const documentElement = new FakeElement("html");
@@ -588,6 +588,17 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
   context.globalThis = context;
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   loadReaderView(context, document);
+  if (options.mountFailsOnce) {
+    const mount = context.ReaderReactViewer.mount;
+    let failed = false;
+    context.ReaderReactViewer.mount = (host) => {
+      if (!failed) {
+        failed = true;
+        throw new Error("reader_view_mount_failed");
+      }
+      return mount(host);
+    };
+  }
   vm.runInNewContext(source, context);
 
   return {
@@ -1477,6 +1488,32 @@ test("reader does not resurrect a fast error after the stale loading reveal call
   revealTimer.callback();
   assert.equal(document.getElementById("__rsvp-reader-root"), errorOverlay);
   assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 1);
+});
+
+test("reader removes a failed React mount before reopening", () => {
+  const harness = createOutlineReaderHarness({ mountFailsOnce: true });
+  const { document, documentElement, messageListener, timers } = harness;
+  const reactRoots = () => findElements(
+    documentElement,
+    (element) => element.attributes["data-reader-react-root"] === "true",
+  );
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mount-failure-request" });
+  const revealTimer = [...timers.values()].find((timer) => timer.delay === 100);
+  assert.ok(revealTimer);
+  assert.throws(() => revealTimer.callback(), /reader_view_mount_failed/u);
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 0);
+  assert.equal(reactRoots().length, 0);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mount-reopen-request" });
+  messageListener({ type: "START_RSVP", text: "再開後の本文です。", requestId: "mount-reopen-request" });
+  assert.ok(document.getElementById("__rsvp-reader-root"));
+  assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 1);
+  assert.equal(reactRoots().length, 1);
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(reactRoots().length, 0);
 });
 
 test("reader keeps keyboard focus trapped after switching to text mode", () => {

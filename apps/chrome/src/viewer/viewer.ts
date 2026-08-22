@@ -123,7 +123,12 @@
     dialog.append(host);
     const viewer = globalThis.ReaderReactViewer;
     if (!viewer) throw new Error("reader_view_unavailable");
-    reactViewMount = viewer.mount(host);
+    try {
+      reactViewMount = viewer.mount(host);
+    } catch (error) {
+      host.remove();
+      throw error;
+    }
   }
 
   function unmountReactViewer(): void {
@@ -205,7 +210,7 @@
       return { kind: "loading", slow: loadingSlowVisible, revealed: loadingRevealTimerId === null, reducedMotion: prefersReducedMotion() };
     }
     if (activePreparation.kind === "failed") {
-      return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: activePreparation.reason !== "session_unavailable" };
+      return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: true };
     }
     const state = readingSessionState();
     if (state?.mode === "text") {
@@ -885,7 +890,16 @@
     else host.append(style, dialog);
 
     root = dialog;
-    mountReactViewer(dialog);
+    try {
+      mountReactViewer(dialog);
+    } catch (error) {
+      host.remove();
+      root = null;
+      rootHost = null;
+      readerShadow = null;
+      rootStyle = null;
+      throw error;
+    }
     root.addEventListener("focusin", rememberReaderFocus, true);
     dialogCancelListener = (event: Event) => {
       event.preventDefault();

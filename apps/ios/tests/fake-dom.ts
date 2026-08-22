@@ -68,6 +68,11 @@ export class FakeElement {
         this.append(text);
         continue;
       }
+      let ancestor: FakeElement | null = this;
+      while (ancestor) {
+        if (ancestor === child) throw new Error("invalid DOM hierarchy");
+        ancestor = ancestor.parent;
+      }
       if (child.parent) child.parent.removeChild(child);
       child.parent = this;
       child.ownerDocument ||= this.ownerDocument;
@@ -83,6 +88,12 @@ export class FakeElement {
 
   insertBefore(child: FakeElement, reference: FakeElement | null) {
     if (!reference) return this.appendChild(child);
+    let ancestor: FakeElement | null = this;
+    while (ancestor) {
+      if (ancestor === child) throw new Error("invalid DOM hierarchy");
+      ancestor = ancestor.parent;
+    }
+    if (child === reference) return child;
     if (child.parent) child.parent.removeChild(child);
     const index = this.children.indexOf(reference);
     if (index < 0) return this.appendChild(child);
@@ -220,8 +231,16 @@ export class FakeElement {
   }
 
   contains(element: FakeElement) {
-    if (element === this) return true;
-    return this.children.some((child) => child.contains?.(element));
+    const pending = [this];
+    const visited = new Set<FakeElement>();
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (!current || visited.has(current)) continue;
+      if (current === element) return true;
+      visited.add(current);
+      pending.push(...current.children);
+    }
+    return false;
   }
 
   focus() {
@@ -295,10 +314,14 @@ export function findElement(
   predicate: (element: FakeElement) => boolean,
 ): FakeElement | null {
   if (!root) return null;
-  if (predicate(root)) return root;
-  for (const child of root.children) {
-    const match = findElement(child, predicate);
-    if (match) return match;
+  const pending = [root];
+  const visited = new Set<FakeElement>();
+  while (pending.length > 0) {
+    const element = pending.pop();
+    if (!element || visited.has(element)) continue;
+    visited.add(element);
+    if (predicate(element)) return element;
+    pending.push(...[...element.children].reverse());
   }
   return null;
 }
@@ -308,7 +331,15 @@ export function findElements(
   predicate: (element: FakeElement) => boolean,
 ): FakeElement[] {
   if (!root) return [];
-  const matches = predicate(root) ? [root] : [];
-  for (const child of root.children) matches.push(...findElements(child, predicate));
+  const matches: FakeElement[] = [];
+  const pending = [root];
+  const visited = new Set<FakeElement>();
+  while (pending.length > 0) {
+    const element = pending.pop();
+    if (!element || visited.has(element)) continue;
+    visited.add(element);
+    if (predicate(element)) matches.push(element);
+    pending.push(...[...element.children].reverse());
+  }
   return matches;
 }

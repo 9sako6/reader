@@ -229,10 +229,25 @@ test("Safari viewer leaves loading and rendering to ReaderView", () => {
   }
 });
 
+test("Safari React harness preserves DOM move and hierarchy semantics", () => {
+  const root = new FakeElement("div");
+  const first = new FakeElement("div");
+  const second = new FakeElement("div");
+  const child = new FakeElement("span");
+  root.append(first, second);
+  first.append(child);
+  second.append(child);
+  assert.equal(first.children.includes(child), false);
+  assert.equal(second.children.includes(child), true);
+  assert.equal(second.insertBefore(child, child), child);
+  assert.deepEqual(second.children, [child]);
+  assert.throws(() => child.append(root), /invalid DOM hierarchy/u);
+});
+
 function createSafariReaderHarness(
   engine = Engine,
   language = "ja",
-  options: { pageOwnedHost?: boolean; init?: () => Promise<void>; ready?: () => boolean } = {},
+  options: { pageOwnedHost?: boolean; init?: () => Promise<void>; ready?: () => boolean; mountFailsOnce?: boolean; reducedMotion?: boolean } = {},
 ) {
   const documentElement = new FakeElement("html");
   documentElement.lang = language;
@@ -377,7 +392,7 @@ function createSafariReaderHarness(
     },
     __READER_PERFORMANCE_ENABLED: true,
     Date: { now: () => now },
-    matchMedia: () => ({ matches: false }),
+    matchMedia: () => ({ matches: options.reducedMotion === true }),
     addEventListener(type, listener) {
       const listeners = globalListeners.get(type) || [];
       listeners.push(listener);
@@ -436,6 +451,17 @@ function createSafariReaderHarness(
   );
   vm.runInNewContext(sessionSource, context);
   assert.equal(typeof context.ReaderReactViewer?.mount, "function");
+  if (options.mountFailsOnce) {
+    const mount = context.ReaderReactViewer.mount;
+    let failed = false;
+    context.ReaderReactViewer.mount = (root) => {
+      if (!failed) {
+        failed = true;
+        throw new Error("reader_view_mount_failed");
+      }
+      return mount(root);
+    };
+  }
   context.ReaderSession = session;
   const source = fs.readFileSync(
     path.join(root, "ReaderExtension", "Resources", "generated", "viewer.js"),
@@ -525,6 +551,22 @@ test("Safari mounts one React root per open session and removes it on close", as
   await context.MobileViewer.open();
   assert.equal(reactRoots().length, 1);
   context.MobileViewer.close();
+  assert.equal(reactRoots().length, 0);
+  await context.MobileViewer.open();
+  assert.equal(reactRoots().length, 1);
+  context.MobileViewer.close();
+  assert.equal(reactRoots().length, 0);
+});
+
+test("Safari removes a failed React mount before reopening", async () => {
+  const harness = createSafariReaderHarness(Engine, "ja", { mountFailsOnce: true });
+  const { context, documentElement } = harness;
+  const reactRoots = () => findElements(
+    documentElement,
+    (element) => element.attributes["data-reader-react-root"] === "true",
+  );
+
+  await assert.rejects(context.MobileViewer.open(), /reader_view_mount_failed/u);
   assert.equal(reactRoots().length, 0);
   await context.MobileViewer.open();
   assert.equal(reactRoots().length, 1);
@@ -911,8 +953,17 @@ test("Safari reader shows rewind feedback without changing pause state", async (
   );
   assert.ok(pausedFeedback);
   assert.equal(pausedFeedback.style.left, "54px");
+  assert.equal(pausedFeedback.style.top, "242px");
   assert.equal(pausedFeedback.children.filter((child) => child.className === "rewind-ring").length, 2);
-  assert.ok(pausedFeedback.children[0].animations.length > 0);
+  const firstRingAnimation = pausedFeedback.children[0].animations[0];
+  const secondRingAnimation = pausedFeedback.children[1].animations[0];
+  const iconAnimation = pausedFeedback.children[2].animations[0];
+  assert.equal(firstRingAnimation.options.duration, 420);
+  assert.equal(secondRingAnimation.options.duration, 420);
+  assert.equal(secondRingAnimation.options.delay, 80);
+  assert.equal(iconAnimation.options.duration, 360);
+  assert.equal(firstRingAnimation.keyframes.at(-1).transform, "scale(2.15)");
+  assert.equal(iconAnimation.keyframes.at(-1).transform, "translateX(-8px) scale(.96)");
   assert.equal(backButton.parent.hidden, false);
   assert.equal(timers.size, 0);
 
@@ -926,6 +977,114 @@ test("Safari reader shows rewind feedback without changing pause state", async (
   assert.equal(backButton.parent.hidden, false);
   assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.equal(timers.size, 1);
+});
+
+test("Safari React rewind feedback keeps a newer animation after a stale completion", async () => {
+  const originalAnimate = FakeElement.prototype.animate;
+  const finishers: Array<() => void> = [];
+  FakeElement.prototype.animate = function (this: FakeElement, keyframes: any, options: any) {
+    const animation = originalAnimate.call(this, keyframes, options);
+    if (this.className === "rewind-ring" || this.tagName === "SVG") {
+      let finish: () => void = () => {};
+      animation.finished = new Promise<void>((resolve) => { finish = resolve; });
+      finishers.push(finish);
+    }
+    return animation;
+  };
+  let context: any = null;
+  try {
+    const harness = createSafariReaderHarness();
+    context = harness.context;
+    const { documentElement, timers } = harness;
+    await context.MobileViewer.open();
+    let rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
+    rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+    rsvpView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
+    const firstFeedback = findElement(documentElement, (element) => element.className === "rewind-feedback");
+    assert.ok(firstFeedback);
+    assert.equal(finishers.length, 3);
+
+    rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
+    rsvpView.dispatchEvent({ type: "pointerup", clientX: 62, clientY: 250, timeStamp: 3000 });
+    rsvpView.dispatchEvent({ type: "pointerup", clientX: 64, clientY: 252, timeStamp: 3200 });
+    const secondFeedback = findElement(documentElement, (element) => element.className === "rewind-feedback");
+    assert.ok(secondFeedback);
+    assert.notEqual(secondFeedback, firstFeedback);
+    assert.equal(finishers.length, 6);
+
+    finishers.slice(0, 3).forEach((finish) => finish());
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(findElement(documentElement, (element) => element.className === "rewind-feedback"), secondFeedback);
+
+    finishers.slice(3).forEach((finish) => finish());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    fireTimerWithDelay(timers, 0);
+    assert.equal(findElement(documentElement, (element) => element.className === "rewind-feedback"), null);
+  } finally {
+    context?.MobileViewer.close();
+    FakeElement.prototype.animate = originalAnimate;
+  }
+});
+
+test("Safari React rewind feedback ignores an unfinished animation after close", async () => {
+  const originalAnimate = FakeElement.prototype.animate;
+  const finishers: Array<() => void> = [];
+  FakeElement.prototype.animate = function (this: FakeElement, keyframes: any, options: any) {
+    const animation = originalAnimate.call(this, keyframes, options);
+    if (this.className === "rewind-ring" || this.tagName === "SVG") {
+      let finish: () => void = () => {};
+      animation.finished = new Promise<void>((resolve) => { finish = resolve; });
+      finishers.push(finish);
+    }
+    return animation;
+  };
+  let context: any = null;
+  try {
+    const harness = createSafariReaderHarness();
+    context = harness.context;
+    const { documentElement } = harness;
+    await context.MobileViewer.open();
+    const rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
+    rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+    rsvpView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
+    assert.equal(finishers.length, 3);
+    context.MobileViewer.close();
+    assert.equal(findElement(documentElement, (element) => element.className === "rewind-feedback"), null);
+    finishers.forEach((finish) => finish());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
+    assert.equal(findElement(documentElement, (element) => element.className === "rewind-feedback"), null);
+  } finally {
+    context?.MobileViewer.close();
+    FakeElement.prototype.animate = originalAnimate;
+  }
+});
+
+test("Safari React rewind feedback keeps the reduced-motion animation contract", async () => {
+  const harness = createSafariReaderHarness(Engine, "ja", { reducedMotion: true });
+  const { context, documentElement, timers } = harness;
+  try {
+    await context.MobileViewer.open();
+    const rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
+    rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+    rsvpView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
+    const feedback = findElement(documentElement, (element) => element.className === "rewind-feedback");
+    const firstRingAnimation = feedback.children[0].animations[0];
+    const secondRingAnimation = feedback.children[1].animations[0];
+    const iconAnimation = feedback.children[2].animations[0];
+    assert.equal(firstRingAnimation.options.duration, 160);
+    assert.equal(secondRingAnimation.options.duration, 160);
+    assert.equal(secondRingAnimation.options.delay, 0);
+    assert.equal(iconAnimation.options.duration, 160);
+    assert.equal(firstRingAnimation.keyframes.at(-1).transform, undefined);
+    assert.equal(iconAnimation.keyframes.at(-1).transform, undefined);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    fireTimerWithDelay(timers, 0);
+    assert.equal(findElement(documentElement, (element) => element.className === "rewind-feedback"), null);
+  } finally {
+    context.MobileViewer.close();
+  }
 });
 
 test("Safari reader pauses after returning from an image to the previous sentence", async () => {

@@ -117,7 +117,7 @@ rm -rf apps/ios/ReaderExtension/Resources/generated
 install -d apps/ios/ReaderExtension/Resources/generated
 cp node_modules/defuddle/dist/index.js apps/ios/ReaderExtension/Resources/generated/defuddle.js
 node scripts/build-browser-session.mjs apps/ios/ReaderExtension/Resources/generated/session.js
-cp .build/session-wasm/reader_session.js apps/ios/ReaderExtension/Resources/generated/session-wasm.js
+node scripts/build-session-wasm-module.mjs
 cp .build/session-wasm/reader_session_bg.wasm apps/ios/ReaderExtension/Resources/generated/reader_session_bg.wasm
 cp .build/packages/engine/src/engine.js apps/ios/ReaderExtension/Resources/generated/engine.js
 cp .build/packages/extractor/src/extractor.js apps/ios/ReaderExtension/Resources/generated/extractor.js

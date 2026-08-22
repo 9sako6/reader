@@ -73,6 +73,7 @@
   let reactTextRestoreScrollTop: number | null = null;
   let rewindFeedback: { left: number; top: number; id: number } | null = null;
   let rewindFeedbackId = 0;
+  let rewindFeedbackClearTimer: number | null = null;
   const reactTextFigureCorrections = new WeakMap<HTMLElement, { scroller: HTMLElement; positionMarkers: HTMLElement[] }>();
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
@@ -112,8 +113,13 @@
     root.setAttribute("data-reader-react-root", "true");
     Object.assign(root.style, { position: "absolute", inset: "0", pointerEvents: "auto" });
     shadowRoot.append(root);
-    reactViewMount = globalThis.ReaderReactViewer.mount(root);
-    reactViewHost = root;
+    try {
+      reactViewMount = globalThis.ReaderReactViewer.mount(root);
+      reactViewHost = root;
+    } catch (error) {
+      root.remove();
+      throw error;
+    }
   }
 
   function unmountReactViewer(): void {
@@ -130,7 +136,7 @@
       return { kind: "loading", slow: slowPreparationVisible || elapsed >= SLOW_PREPARATION_DELAY_MS, revealed: launchProgress?.revealed === true, reducedMotion: global.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true, mobile: true };
     }
     if (activePreparation.kind === "failed") {
-      return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: activePreparation.reason !== "session_unavailable", mobile: true };
+      return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: true, mobile: true };
     }
     const state = readingSessionState();
     if (state?.mode === "text") {
@@ -1068,7 +1074,11 @@
   function clearRewindFeedback(id: number): void {
     if (!rewindFeedback || rewindFeedback.id !== id) return;
     rewindFeedback = null;
-    renderReactView();
+    if (rewindFeedbackClearTimer !== null) global.clearTimeout(rewindFeedbackClearTimer);
+    rewindFeedbackClearTimer = global.setTimeout(() => {
+      rewindFeedbackClearTimer = null;
+      renderReactView();
+    }, 0);
   }
 
   function play() {
@@ -1284,6 +1294,8 @@
     if (playbackTimer !== null) global.clearTimeout(playbackTimer);
     playbackTimer = null;
     clearPendingLeftTap();
+    if (rewindFeedbackClearTimer !== null) global.clearTimeout(rewindFeedbackClearTimer);
+    rewindFeedbackClearTimer = null;
     content = null;
     units = [];
     flowItems = [];
