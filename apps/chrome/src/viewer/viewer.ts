@@ -21,8 +21,9 @@
   let currentUnitIndex = 0;
   let playbackState: PlaybackState = "idle";
   let timerId: number | null = null;
-  let root: HTMLDivElement | null = null;
   let rootHost: HTMLDivElement | null = null;
+  let readerShadow: ShadowRoot | null = null;
+  let root: HTMLDialogElement | HTMLDivElement | null = null;
   let rootStyle: HTMLStyleElement | null = null;
   let loadingLayer: HTMLDivElement | null = null;
   let loadingRevealTimerId: number | null = null;
@@ -63,6 +64,8 @@
   let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
   let backgroundInert = false;
   let keydownListenerAttached = false;
+  let dialogCancelListener: ((event: Event) => void) | null = null;
+  let closeInProgress = false;
   let activePreparation: PreparationState = { kind: "idle" };
 
   function isReaderMessage(value: unknown): value is ReaderMessage {
@@ -240,7 +243,6 @@
     track.append(indicator);
     loadingLayer.append(track);
     root.append(loadingLayer);
-    if (rootHost) document.documentElement.append(rootHost);
     attachKeydownListener();
   }
 
@@ -311,7 +313,6 @@
     activePreparation = { kind: "failed", requestId, reason };
     if (!root) {
       root = createRoot();
-      if (rootHost) document.documentElement.append(rootHost);
     }
     root.replaceChildren(...(rootStyle ? [rootStyle] : []));
 
@@ -451,7 +452,6 @@
   function createOverlay() {
     if (!root) {
       root = createRoot();
-      if (rootHost) document.documentElement.append(rootHost);
     }
 
     const stage = document.createElement("div");
@@ -720,26 +720,91 @@
     return element;
   }
 
-  function createRoot() {
+  function createRoot(): HTMLDialogElement | HTMLDivElement {
     const host = document.createElement("div");
     host.id = ROOT_ID;
-    rootHost = host;
-    const element = document.createElement("div");
-    element.setAttribute("role", "dialog");
-    element.setAttribute("aria-modal", "true");
-    element.setAttribute("aria-label", "reader");
-    Object.assign(element.style, {
-      position: "absolute",
+    host.dataset.readerOwned = "true";
+    Object.assign(host.style, {
+      position: "fixed",
       inset: "0",
+      zIndex: "2147483647",
+      display: "block",
+      pointerEvents: "none",
+      colorScheme: "dark",
+    });
+    rootHost = host;
+
+    const dialog = document.createElement("dialog") as HTMLDialogElement;
+    dialog.className = "reader-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-label", "reader");
+    Object.assign(dialog.style, {
+      display: "block",
+      position: "fixed",
+      inset: "0",
+      width: "100vw",
+      height: "100dvh",
+      maxWidth: "none",
+      maxHeight: "none",
+      margin: "0",
+      padding: "0",
+      border: "0",
+      boxSizing: "border-box",
       background: "radial-gradient(circle at 68% 44%, rgba(44,44,44,0.32), transparent 38%), #090909",
       color: "#ffffff",
-      fontFamily:
-        '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif',
+      colorScheme: "dark",
+      lineHeight: "normal",
+      writingMode: "horizontal-tb",
+      pointerEvents: "auto",
+      overflow: "hidden",
       WebkitFontSmoothing: "antialiased",
     });
+
     const style = document.createElement("style");
     style.textContent = `
-      :host { all: initial !important; position: fixed !important; inset: 0 !important; z-index: 2147483647 !important; display: block !important; }
+      :host {
+        all: initial !important;
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 2147483647 !important;
+        display: block !important;
+        pointer-events: none !important;
+        color-scheme: dark !important;
+        contain: layout style paint;
+      }
+
+      *, *::before, *::after { box-sizing: border-box; }
+      button, input, select, textarea { font: inherit; }
+      button { appearance: none; -webkit-appearance: none; }
+      img { max-width: 100%; filter: none; }
+      svg { max-width: 100%; }
+
+      dialog.reader-dialog {
+        all: initial;
+        display: block;
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100dvh;
+        max-width: none;
+        max-height: none;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        box-sizing: border-box;
+        background: #090909;
+        color: #fff;
+        color-scheme: dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif;
+        line-height: normal;
+        writing-mode: horizontal-tb;
+        pointer-events: auto;
+        overflow: hidden;
+      }
+
+      dialog.reader-dialog::backdrop { background: transparent; }
       nav::-webkit-scrollbar { display: none; }
       nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-offset: -2px; }
       @media (max-width: 1080px) {
@@ -758,11 +823,38 @@
       }
     `;
     rootStyle = style;
-    element.append(style);
-    if (typeof host.attachShadow === "function") host.attachShadow({ mode: "open" }).append(element);
-    else host.append(element);
+
+    try {
+      readerShadow = typeof host.attachShadow === "function"
+        ? host.attachShadow({ mode: "open" })
+        : null;
+    } catch {
+      readerShadow = null;
+    }
+    if (readerShadow) readerShadow.append(style, dialog);
+    else host.append(style, dialog);
+
+    root = dialog;
+    dialogCancelListener = (event: Event) => {
+      event.preventDefault();
+      close();
+    };
+    dialog.addEventListener("cancel", dialogCancelListener);
+    document.documentElement.append(host);
     makeBackgroundInert(host);
-    return element;
+    presentDialog(dialog);
+    return dialog;
+  }
+
+  function presentDialog(dialog: HTMLDialogElement): void {
+    if (typeof dialog.showModal === "function") {
+      try {
+        dialog.showModal();
+        return;
+      } catch {
+      }
+    }
+    dialog.setAttribute("open", "");
   }
 
   function makeBackgroundInert(readerHost: HTMLElement): void {
@@ -826,7 +918,7 @@
   }
 
   function containsReaderElement(element: HTMLElement | null): boolean {
-    if (!element || !root) return false;
+    if (!element || !root || element === root) return false;
     if (typeof root.contains === "function") return root.contains(element);
     let current: HTMLElement | null = element;
     while (current) {
@@ -837,19 +929,35 @@
   }
 
   function focusCloseIfNeeded(previousFocus: HTMLElement | null): void {
-    if (!containsReaderElement(previousFocus)) focusAfterPaint(findCloseButton());
+    if (containsReaderElement(previousFocus)) return;
+    const closeButton = findCloseButton();
+    focusAfterPaint(closeButton);
+    const refocus = () => {
+      if (containsReaderElement(closeButton)) closeButton?.focus?.({ preventScroll: true });
+    };
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(refocus));
+    } else {
+      refocus();
+    }
   }
 
   function attachKeydownListener(): void {
     if (keydownListenerAttached) return;
-    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown, true);
     keydownListenerAttached = true;
   }
 
   function detachKeydownListener(): void {
     if (!keydownListenerAttached) return;
-    document.removeEventListener("keydown", handleKeyDown);
+    document.removeEventListener("keydown", handleKeyDown, true);
     keydownListenerAttached = false;
+  }
+
+  function detachDialogCancelListener(): void {
+    if (!root || !dialogCancelListener) return;
+    root.removeEventListener("cancel", dialogCancelListener);
+    dialogCancelListener = null;
   }
 
   function revealReader(stage: HTMLDivElement): void {
@@ -1780,7 +1888,13 @@
     if (!outsideReader && !(event.shiftKey ? atStart : atEnd)) return;
     const nextIndex = event.shiftKey ? focusable.length - 1 : 0;
     event.preventDefault();
-    focusable[nextIndex]?.focus();
+    const next = focusable[nextIndex];
+    next?.focus?.({ preventScroll: true });
+    if (next && typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(() => {
+        if (containsReaderElement(next)) next.focus?.({ preventScroll: true });
+      }));
+    }
   }
 
   function focusableReaderElements(): HTMLElement[] {
@@ -1876,14 +1990,25 @@
     loadingIndicatorAnimation?.cancel?.();
     loadingIndicatorAnimation = null;
     loadingIndicator = null;
+    stopTimer();
     detachKeydownListener();
     displayResizeObserver?.disconnect();
     displayResizeObserver = null;
+    detachDialogCancelListener();
+    const dialog = root;
+    if (dialog && isOpenDialog(dialog)) {
+      try {
+        dialog.close();
+      } catch {
+      }
+    }
+    const host = rootHost;
     try {
-      document.getElementById(ROOT_ID)?.remove();
+      host?.remove();
     } finally {
       root = null;
       rootHost = null;
+      readerShadow = null;
       rootStyle = null;
       loadingLayer = null;
       loadingStatus = null;
@@ -1905,47 +2030,59 @@
     }
   }
 
+  function isOpenDialog(element: HTMLDialogElement | HTMLDivElement): element is HTMLDialogElement {
+    if (element.tagName.toLowerCase() !== "dialog") return false;
+    const dialog = element as HTMLDialogElement;
+    return dialog.open === true || dialog.hasAttribute("open");
+  }
+
   function close(notifyServiceWorker = true, preserveSourceScroll = false) {
-    const requestId = activeRequestId;
-    if (notifyServiceWorker && requestId) {
-      sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
-      if (activePreparation.kind !== "idle") activePreparation = { kind: "cancelled", requestId };
-    }
-    const restoreFocus = launchFocus;
-    const restoreScroll = sourceScrollPosition;
+    if (closeInProgress) return;
+    closeInProgress = true;
     try {
-      pause();
-      removeOverlay();
-    } finally {
+      const requestId = activeRequestId;
+      if (notifyServiceWorker && requestId) {
+        sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
+        if (activePreparation.kind !== "idle") activePreparation = { kind: "cancelled", requestId };
+      }
+      const restoreFocus = launchFocus;
+      const restoreScroll = sourceScrollPosition;
       try {
-        restoreBackgroundInert();
+        pause();
+        removeOverlay();
       } finally {
-        activeRequestId = null;
-        activePreparation = { kind: "idle" };
-        loadingStartedAt = null;
-        units = [];
-        currentUnitIndex = 0;
-        headings = [];
-        sectionTransitions = [];
-        initialHeadingIndex = -1;
-        figures = [];
-        flowItems = [];
-        flowIndex = 0;
-        playbackState = "idle";
-        sourceText = "";
-        blocks = [];
-        baseUnits = [];
-        currentPosition = { kind: "text", sourceOffset: 0 };
-        segmentationLocale = "ja";
-        currentGraphemeLimit = 12;
-        launchFocus = null;
-        sourceScrollPosition = preserveSourceScroll ? restoreScroll : null;
-        if (restoreFocus && restoreFocus.isConnected !== false && typeof restoreFocus.focus === "function") {
-          focusAfterPaint(restoreFocus, restoreScroll);
-        } else if (restoreScroll) {
-          globalThis.scrollTo?.({ ...restoreScroll, behavior: "auto" });
+        try {
+          restoreBackgroundInert();
+        } finally {
+          activeRequestId = null;
+          activePreparation = { kind: "idle" };
+          loadingStartedAt = null;
+          units = [];
+          currentUnitIndex = 0;
+          headings = [];
+          sectionTransitions = [];
+          initialHeadingIndex = -1;
+          figures = [];
+          flowItems = [];
+          flowIndex = 0;
+          playbackState = "idle";
+          sourceText = "";
+          blocks = [];
+          baseUnits = [];
+          currentPosition = { kind: "text", sourceOffset: 0 };
+          segmentationLocale = "ja";
+          currentGraphemeLimit = 12;
+          launchFocus = null;
+          sourceScrollPosition = preserveSourceScroll ? restoreScroll : null;
+          if (restoreFocus && restoreFocus.isConnected !== false && typeof restoreFocus.focus === "function") {
+            focusAfterPaint(restoreFocus, restoreScroll);
+          } else if (restoreScroll) {
+            globalThis.scrollTo?.({ ...restoreScroll, behavior: "auto" });
+          }
         }
       }
+    } finally {
+      closeInProgress = false;
     }
   }
 })();
