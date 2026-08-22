@@ -61,6 +61,7 @@ type ChromeOpenOptions = {
   figureFirst?: boolean;
   alt?: string;
   caption?: string;
+  cacheKey?: string;
   requestId?: string;
   paused?: boolean;
   error?: boolean;
@@ -72,6 +73,7 @@ type MobileOpenOptions = {
   figureFirst?: boolean;
   alt?: string;
   caption?: string;
+  cacheKey?: string;
   error?: boolean;
   reason?: "content_not_found" | "unsupported_page" | "extraction_failed";
 };
@@ -829,7 +831,7 @@ test.describe("mobile viewer touch controls", () => {
 test("Chrome viewer shows delayed figure loading and resumes after a 404", async ({ page }) => {
   await page.goto("/tests/e2e/fixtures/article.html?viewer=chrome&image=delayed&figure=first");
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
-  await openChrome(page, { paused: true, figureFirst: true, image: "delayed" });
+  await openChrome(page, { paused: true, figureFirst: true, image: "delayed", cacheKey: "chrome-delayed-figure" });
 
   const dialog = page.getByRole("dialog", { name: "reader" });
   const figure = dialog.getByRole("figure", { name: "本文画像" });
@@ -866,7 +868,7 @@ for (const image of ["missing", "broken"] as const) {
 test("mobile viewer shows delayed figure loading and resumes after a 404", async ({ page }) => {
   await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&image=delayed&figure=first");
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
-  await openMobile(page);
+  await openMobile(page, { cacheKey: "mobile-delayed-figure" });
 
   const dialog = page.getByRole("dialog", { name: "reader" });
   const figure = dialog.getByRole("figure", { name: "本文画像" });
@@ -898,8 +900,9 @@ async function openFigureViewer(
 ): Promise<void> {
   await page.goto(`/tests/e2e/fixtures/article.html?viewer=${viewer}&image=delayed&figure=first`);
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
-  if (viewer === "chrome") await openChrome(page, { ...options, paused: true, figureFirst: true, image: "delayed" });
-  else await openMobile(page, { ...options, figureFirst: true, image: "delayed" });
+  const cacheKey = options.cacheKey || `${viewer}-${options.alt || "default-alt"}-${options.caption || "default-caption"}`;
+  if (viewer === "chrome") await openChrome(page, { ...options, paused: true, figureFirst: true, image: "delayed", cacheKey });
+  else await openMobile(page, { ...options, figureFirst: true, image: "delayed", cacheKey });
 }
 
 const FIGURE_DESCRIPTION_CASES = [
