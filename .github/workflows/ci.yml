@@ -89,12 +89,12 @@ jobs:
           git fetch --no-tags --depth=1 origin main
           baseline_dir="$RUNNER_TEMP/reader-main-baseline"
           git worktree add --detach "$baseline_dir" FETCH_HEAD
+          echo "READER_PERFORMANCE_BASELINE_ROOT=$baseline_dir" >> "$GITHUB_ENV"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$baseline_dir/node_modules"
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
           (cd "$baseline_dir" && rustup override set 1.97.1)
           mise trust "$baseline_dir/mise.toml"
           (cd "$baseline_dir" && mise run build:ios)
-          echo "READER_PERFORMANCE_BASELINE_ROOT=$baseline_dir" >> "$GITHUB_ENV"
           echo "READER_E2E_BASELINE_ROOT=$baseline_dir" >> "$GITHUB_ENV"
           echo "READER_PERFORMANCE_BASE_COMMIT=$(git -C "$baseline_dir" rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "READER_PERFORMANCE_CANDIDATE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
@@ -113,7 +113,7 @@ jobs:
         run: mise run test:chrome-extension
       - name: Remove main performance baseline worktree
         if: always()
-        run: if [ -n "${READER_PERFORMANCE_BASELINE_ROOT:-}" ]; then git worktree remove --force "$READER_PERFORMANCE_BASELINE_ROOT"; fi
+        run: if [ -d "$RUNNER_TEMP/reader-main-baseline" ]; then git worktree remove --force "$RUNNER_TEMP/reader-main-baseline"; fi
       - name: Upload Chromium reader timing reports
         if: success()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

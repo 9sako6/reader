@@ -34,7 +34,7 @@ test("CI uploads the performance baseline before Chromium E2E can clear test-res
   assert.ok(timingUpload >= 0 && timingUpload < timingPath && timingPath < diagnostics);
   assert.match(chromiumJob.slice(timingUpload, diagnostics), /if: success\(\)/);
   assert.match(chromiumJob.slice(timingUpload, diagnostics), /if-no-files-found: error/);
-  assert.match(chromiumJob, /git worktree remove --force/);
+  assert.match(chromiumJob, /git worktree remove --force.*RUNNER_TEMP\/reader-main-baseline/s);
 });
 
 test("CI uploads WebKit reader timing reports before the iOS build", () => {
