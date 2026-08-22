@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const e2ePort = Number(process.env.READER_E2E_PORT) || 4173;
+const e2eBaseURL = process.env.READER_E2E_BASE_URL || `http://127.0.0.1:${e2ePort}`;
+
 export default defineConfig({
   testDir: "tests/e2e",
   fullyParallel: true,
@@ -16,7 +19,7 @@ export default defineConfig({
     },
   },
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: e2eBaseURL,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
@@ -27,7 +30,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "node tests/e2e/server.mjs",
-    url: "http://127.0.0.1:4173/tests/e2e/fixtures/article.html",
+    url: `${e2eBaseURL}/tests/e2e/fixtures/article.html`,
     reuseExistingServer: !process.env.CI,
   },
 });

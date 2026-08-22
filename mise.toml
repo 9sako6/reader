@@ -19,7 +19,7 @@ run = "pnpm exec quint typecheck packages/session/spec/reader_session.qnt"
 
 [tasks."spec:test"]
 description = "Run ReaderSession named Quint tests"
-run = "pnpm exec quint test packages/session/spec/reader_session.qnt --match '^(closeThenLateTick|closeThenLatePreparationSuccess|newRequestSupersedesOldRequest|newRequestRejectsLatePreparationFailure|playUntilFigureAndResume|consecutiveFiguresAndResume|duplicateFigureTickDoesNotConsume|previousSentenceWhilePlaying|switchModeAtFigure|switchModeAfterFigure|rebuildUnitsWhilePlaying|visibilityHiddenPauses)$' --seed=180018 --max-samples=1"
+run = "pnpm exec quint test packages/session/spec/reader_session.qnt --match '^(closeThenLateTick|closeThenLatePreparationSuccess|newRequestSupersedesOldRequest|newRequestRejectsLatePreparationFailure|playUntilFigureAndResume|consecutiveFiguresAndResume|duplicateFigureTickDoesNotConsume|previousSentenceWhilePlaying|switchModeAtFigure|switchModeAfterFigure|pausedModeRoundTrip|rebuildUnitsWhilePlaying|visibilityHiddenPauses)$' --seed=180018 --max-samples=1"
 
 [tasks."spec:simulate"]
 description = "Run the fixed-seed ReaderSession Quint simulation"

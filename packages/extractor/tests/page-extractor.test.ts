@@ -250,6 +250,10 @@ test("extractPage shares canonical ranges across nested blocks and figures", () 
     createElementNode("img", [], {
       currentSrc: "https://example.com/caption.png",
       src: "https://example.com/caption.png",
+      srcset: "https://example.com/caption-2x.png 2x",
+      sizes: "(max-width: 600px) 100vw, 600px",
+      width: "1200",
+      height: "800",
       alt: "キャプション画像",
     }),
     caption,
@@ -289,6 +293,10 @@ test("extractPage shares canonical ranges across nested blocks and figures", () 
   assert.deepEqual(result.readingContext.figures, [
     {
       src: "https://example.com/caption.png",
+      srcset: "https://example.com/caption-2x.png 2x",
+      sizes: "(max-width: 600px) 100vw, 600px",
+      width: 1200,
+      height: 800,
       alt: "キャプション画像",
       caption: "図1続き",
       sourceOffset: 53,
@@ -667,8 +675,8 @@ test("extractPage keeps every article image at its source offset", () => {
     closest() {
       return null;
     },
-    getAttribute() {
-      return "装飾画像";
+    getAttribute(name) {
+      return name === "alt" ? "装飾画像" : null;
     },
   };
   const article = {
@@ -721,6 +729,70 @@ test("extractPage keeps every article image at its source offset", () => {
       caption: "図1 処理時間",
       sourceOffset: 14,
       sourceEnd: 21,
+    },
+  ]);
+});
+
+test("extractPage keeps only positive image dimensions and optional attributes", () => {
+  const images = [
+    createElementNode("img", [], {
+      currentSrc: "https://example.com/valid.png",
+      src: "https://example.com/fallback.png",
+      srcset: "valid.png 1x",
+      sizes: "100vw",
+      width: "640",
+      height: "360",
+      alt: "有効な画像",
+    }),
+    createElementNode("img", [], {
+      src: "https://example.com/invalid.png",
+      width: "0",
+      height: "-10",
+      alt: "不正な寸法",
+    }),
+  ];
+  const article = {
+    querySelectorAll(selector) {
+      if (selector === "img") return images;
+      return [];
+    },
+  };
+  const document = {
+    createElement() { return article; },
+    createRange() {
+      return {
+        selectNodeContents() {},
+        setEndBefore() {},
+        toString() { return "本文"; },
+      };
+    },
+  };
+  class FakeDefuddle {
+    parse() { return { content: "<p>本文</p>" }; }
+  }
+
+  const result = extractPage(document, FakeDefuddle);
+
+  assert.deepEqual(result.readingContext.figures.map(({ src, srcset, sizes, width, height }) => ({
+    src,
+    srcset,
+    sizes,
+    width,
+    height,
+  })), [
+    {
+      src: "https://example.com/valid.png",
+      srcset: "valid.png 1x",
+      sizes: "100vw",
+      width: 640,
+      height: 360,
+    },
+    {
+      src: "https://example.com/invalid.png",
+      srcset: undefined,
+      sizes: undefined,
+      width: undefined,
+      height: undefined,
     },
   ]);
 });

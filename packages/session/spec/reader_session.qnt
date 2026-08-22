@@ -326,23 +326,23 @@ module reader_session {
     session' = if (session.mode == "text" and session.position == session.modeAnchorPosition and position == session.modeAnchorPosition) {
       rememberWithExistingAnchor(session, { ...updateOf(session),
         mode: "rsvp", flowIndex: targetIndex, position: position,
-        playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
+        playback: if (session.mode == "text" or kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
-        timerPending: kindForFlow(targetIndex) == "unit",
+        timerPending: session.mode != "text" and kindForFlow(targetIndex) == "unit",
       })
     } else if (position < session.flowIndex) {
       rememberWithFigureEpoch(session, { ...updateOf(session),
         mode: "rsvp", flowIndex: targetIndex, position: position,
-        playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
+        playback: if (session.mode == "text" or kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
-        timerPending: kindForFlow(targetIndex) == "unit",
+        timerPending: session.mode != "text" and kindForFlow(targetIndex) == "unit",
       })
     } else {
       remember(session, { ...updateOf(session),
         mode: "rsvp", flowIndex: targetIndex, position: position,
-        playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
+        playback: if (session.mode == "text" or kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
-        timerPending: kindForFlow(targetIndex) == "unit",
+        timerPending: session.mode != "text" and kindForFlow(targetIndex) == "unit",
       })
     },
     actionTaken' = SwitchToRsvp({position: position}),
@@ -507,6 +507,7 @@ module reader_session {
   run previousSentenceWhilePlaying = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(resumeFromFigure).then(previousSentence)
   run switchModeAtFigure = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(switchToText(1)).then(switchToRsvp(1))
   run switchModeAfterFigure = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(resumeFromFigure).then(resumeFromFigure).then(switchToText(3)).then(switchToRsvp(3))
+  run pausedModeRoundTrip = init.then(open("A")).then(prepareSucceeded("A")).then(pause).then(switchToText(0)).then(switchToRsvp(0))
   run rebuildUnitsWhilePlaying = init.then(open("A")).then(prepareSucceeded("A")).then(rebuildUnits(0))
   run visibilityHiddenPauses = init.then(open("A")).then(prepareSucceeded("A")).then(visibilityHidden)
 }

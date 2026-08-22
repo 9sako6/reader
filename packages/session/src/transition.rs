@@ -386,6 +386,8 @@ fn resume_from_figure(state: &ReaderSessionState) -> Transition {
 fn switch_mode(state: &ReaderSessionState, mode: Mode, position: Position) -> Transition {
     let ReaderSessionState::Reading {
         content,
+        mode: current_mode,
+        playback: current_playback,
         generation,
         ..
     } = state
@@ -398,7 +400,15 @@ fn switch_mode(state: &ReaderSessionState, mode: Mode, position: Position) -> Tr
     };
     let (target_position, target_playback) = match mode {
         Mode::Text => (position, Playback::Paused),
-        Mode::Rsvp => position_and_playback(item, &content.units),
+        Mode::Rsvp => {
+            let (target_position, inferred_playback) = position_and_playback(item, &content.units);
+            let target_playback = if matches!(current_mode, Mode::Text) {
+                current_playback.clone()
+            } else {
+                inferred_playback
+            };
+            (target_position, target_playback)
+        }
     };
     let next_generation = generation.saturating_add(1);
     let mut next = state.clone();
@@ -1073,6 +1083,39 @@ mod tests {
             effect,
             ReaderSessionEffect::ScheduleTick { delay_ms: 20, .. }
         )));
+    }
+
+    #[test]
+    fn text_to_rsvp_round_trip_preserves_a_paused_unit() {
+        let paused = reduce(&reading(), ReaderSessionCommand::Pause).state;
+        let text = reduce(
+            &paused,
+            ReaderSessionCommand::SwitchToText {
+                position: Position::Text { source_offset: 0 },
+            },
+        )
+        .state;
+        let rsvp = reduce(
+            &text,
+            ReaderSessionCommand::SwitchToRsvp {
+                position: Position::Text { source_offset: 0 },
+            },
+        );
+
+        assert!(matches!(
+            rsvp.state,
+            ReaderSessionState::Reading {
+                mode: Mode::Rsvp,
+                playback: Playback::Paused,
+                flow_index: 0,
+                ..
+            }
+        ));
+        assert!(
+            rsvp.effects
+                .iter()
+                .all(|effect| matches!(effect, ReaderSessionEffect::CancelTimer))
+        );
     }
 
     #[test]

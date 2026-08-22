@@ -292,6 +292,11 @@ fn switch_mode_after_figure() -> impl Driver {
     SessionDriver::default()
 }
 
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "pausedModeRoundTrip")]
+fn paused_mode_round_trip() -> impl Driver {
+    SessionDriver::default()
+}
+
 #[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "rebuildUnitsWhilePlaying")]
 fn rebuild_units_while_playing() -> impl Driver {
     SessionDriver::default()
