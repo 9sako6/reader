@@ -44,7 +44,6 @@
   let sectionTransitions: ReaderSectionTransition[] = [];
   let initialHeadingIndex = -1;
   let activeRequestId: string | null = null;
-  let progressLabel: HTMLSpanElement | null = null;
   let displayResizeObserver: ResizeObserver | null = null;
   let figures: ReaderFigure[] = [];
   let flowItems: ReaderFlowItem[] = [];
@@ -159,7 +158,6 @@
         textScroller = element;
         textPositionMarkers = [...element.querySelectorAll<HTMLElement>('[data-reader-position-kind="text"], [data-reader-position-kind="figure"]')];
         attachReactTextFigureLoadCorrections(element);
-        progressLabel = root?.querySelector?.<HTMLSpanElement>('[data-reader-progress="true"]') || null;
       },
       textPosition: (element: HTMLElement) => updateTextPosition(element, textPositionMarkers),
     });
@@ -1252,12 +1250,6 @@
         position: currentPosition,
       });
     }
-    if (progressLabel && sourceText) {
-      progressLabel.textContent = `${globalThis.Engine.calculateReadingProgress(
-        currentPosition.sourceOffset,
-        sourceText.length,
-      )}%`;
-    }
   }
 
   function restoreTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[]): void {
@@ -1559,7 +1551,6 @@
       loadingSlowVisible = false;
       loadingCoverVisible = false;
       display = null;
-      progressLabel = null;
       textScroller = null;
       textPositionMarkers = [];
       textPositionDirty = false;

@@ -70,7 +70,6 @@
   let reactViewHost: HTMLDivElement | null = null;
   let reactTextScroller: HTMLElement | null = null;
   let reactTextMarkers: HTMLElement[] = [];
-  let reactTextProgress: HTMLElement | null = null;
   let reactTextRestoreScrollTop: number | null = null;
   const reactTextFigureCorrections = new WeakMap<HTMLElement, { scroller: HTMLElement; positionMarkers: HTMLElement[] }>();
   let performanceRenderMarked = false;
@@ -182,13 +181,12 @@
         if (!content) return;
         reactTextScroller = element;
         reactTextMarkers = Array.from(element.querySelectorAll<HTMLElement>("[data-reader-position-kind=\"text\"], [data-reader-position-kind=\"figure\"]"));
-        reactTextProgress = reactViewHost?.querySelector<HTMLElement>("[data-reader-progress]") || null;
         for (const figure of element.querySelectorAll<HTMLElement>("[data-reader-text-figure=\"true\"]")) {
           attachTextFigureLoadCorrection(element, figure, reactTextMarkers);
         }
       },
       textPosition: (element: HTMLElement) => {
-        if (reactTextProgress) updateTextPosition(element, reactTextMarkers, reactTextProgress);
+        updateTextPosition(element, reactTextMarkers);
       },
     });
     const model = reactViewModel() as { kind: string; unit?: ReaderUnit | null };
@@ -800,7 +798,6 @@
   function updateTextPosition(
     scroller: HTMLElement,
     positionMarkers: HTMLElement[],
-    progress: HTMLElement,
     preferVisualTop = false,
     syncSession = true,
   ): void {
@@ -880,22 +877,17 @@
         });
       }
     }
-    progress.textContent = `${global.Engine.calculateReadingProgress(
-      currentPosition.sourceOffset,
-      content.text.length,
-    )}%`;
   }
 
   function captureTextPosition(
     scroller: HTMLElement,
     positionMarkers: HTMLElement[],
-    progress: HTMLElement,
     force = false,
     syncSession = true,
   ): void {
     const restoredScrollTop = reactTextRestoreScrollTop;
     if (!force && (restoredScrollTop === null || Math.abs(scroller.scrollTop - restoredScrollTop) < 1)) return;
-    updateTextPosition(scroller, positionMarkers, progress, force, syncSession);
+    updateTextPosition(scroller, positionMarkers, force, syncSession);
     reactTextRestoreScrollTop = scroller.scrollTop;
   }
 
@@ -936,8 +928,7 @@
     if (nextMode === "rsvp" && currentMode === "text") {
       const textScroller = reactTextScroller;
       const textMarkers = reactTextMarkers;
-      const progress = reactTextProgress;
-      if (textScroller && progress) captureTextPosition(textScroller, textMarkers, progress, true, false);
+      if (textScroller) captureTextPosition(textScroller, textMarkers, true, false);
     } else if (currentMode === "rsvp") {
       const currentFlow = flowItems[sessionFlowIndex()];
       if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
@@ -1347,7 +1338,6 @@
     slowPreparationVisible = false;
     reactTextScroller = null;
     reactTextMarkers = [];
-    reactTextProgress = null;
     reactTextRestoreScrollTop = null;
   }
 
