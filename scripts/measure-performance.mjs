@@ -122,9 +122,9 @@ function retainedHeapReport(runs) {
   const deltas = runs.map((run) => run.retainedHeapDeltaBytes).filter((value) => value !== null);
   return {
     samples: deltas.length,
-    p50Bytes: percentile(deltas, 0.5),
-    p90Bytes: percentile(deltas, 0.9),
-    maxBytes: Math.max(...deltas, 0),
+    p50Bytes: deltas.length > 0 ? percentile(deltas, 0.5) : null,
+    p90Bytes: deltas.length > 0 ? percentile(deltas, 0.9) : null,
+    maxBytes: deltas.length > 0 ? Math.max(...deltas) : null,
   };
 }
 

@@ -11,7 +11,7 @@ const chromiumJob = workflow.slice(chromiumJobStart, iosJobStart);
 const iosJob = workflow.slice(iosJobStart);
 
 test("CI uploads the performance baseline before Chromium E2E can clear test-results", () => {
-  const measure = chromiumJob.indexOf("run: mise run measure:performance");
+  const measure = chromiumJob.indexOf("run: READER_PERFORMANCE_ENFORCE=1 mise run measure:performance");
   const upload = chromiumJob.indexOf("name: Upload reader performance baseline");
   const uploadPath = chromiumJob.indexOf("path: test-results/performance/reader.json", upload);
   const e2e = chromiumJob.indexOf("run: mise run test:e2e -- --project=chromium");
