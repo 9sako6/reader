@@ -30,11 +30,19 @@
     <script>
       const parameters = new URLSearchParams(location.search);
       const viewer = parameters.get("viewer") || "chrome";
+      const pageHost = parameters.get("pageHost") === "true";
       const imageFixture = parameters.get("image") || "default";
       const figureFirst = parameters.get("figure") === "first";
       const configuredDelay = Number(parameters.get("delay"));
       const defaultDelay = Number.isFinite(configuredDelay) && configuredDelay >= 0 ? configuredDelay : 0;
       const loadedScripts = [];
+
+      if (pageHost) {
+        const pageOwnedHost = document.createElement("div");
+        pageOwnedHost.id = "__reader-host";
+        pageOwnedHost.textContent = "ページ側の要素";
+        document.body.prepend(pageOwnedHost);
+      }
 
       function loadScript(source) {
         return new Promise((resolve, reject) => {
