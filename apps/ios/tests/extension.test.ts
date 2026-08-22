@@ -318,7 +318,7 @@ function createSafariReaderHarness(
   const sessionCommands = [];
   const globalListeners = new Map();
   const animationFrames = [];
-  const session = createSessionStub(sessionCommands, sessionOptions);
+  const session = createSessionStub(sessionCommands, options);
   const context: any = {
     document,
     location: { href: "https://example.com/articles/first" },
