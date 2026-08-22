@@ -319,6 +319,12 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
       readerSession: typeof globalThis.ReaderSession,
       wasm: typeof globalThis.wasm_bindgen,
       bootstrapHost: Boolean(document.getElementById("__reader-bootstrap")),
+      entryStyle: (() => {
+        const entry = document.getElementById("__reader-bootstrap")?.shadowRoot?.querySelector(".handle");
+        if (!entry) return null;
+        const style = getComputedStyle(entry, "::after");
+        return { opacity: style.opacity, transitionDuration: style.transitionDuration, touchAction: getComputedStyle(entry).touchAction };
+      })(),
     }));
     assert.deepEqual(passiveState, {
       defuddle: "undefined",
@@ -328,10 +334,15 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
       readerSession: "undefined",
       wasm: "undefined",
       bootstrapHost: true,
+      entryStyle: { opacity: "0.82", transitionDuration: "0.16s, 0.16s", touchAction: "manipulation" },
     });
     for (const asset of ["defuddle.js", "session-wasm-module.js", "session.js", "engine.js", "extractor.js", "icons.js", "viewer.js", "reader_session_bg.wasm"]) {
       assert.equal(assetRequests.get(asset) || 0, 0, `${asset} must not load before tap`);
     }
+    await page.evaluate(() => window.dispatchEvent(new Event("scroll")));
+    assert.equal(await page.evaluate(() => document.getElementById("__reader-bootstrap")?.shadowRoot?.querySelector(".handle")?.classList.contains("scrolling")), true);
+    await page.waitForTimeout(350);
+    assert.equal(await page.evaluate(() => document.getElementById("__reader-bootstrap")?.shadowRoot?.querySelector(".handle")?.classList.contains("scrolling")), false);
     await page.locator("#__reader-bootstrap").getByRole("button", { name: "readerで読む" }).click();
     const result = await page.evaluate(async () => {
       const deadline = performance.now() + 5000;
@@ -358,6 +369,27 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
   }
 }
 
+async function verifyGeneratedLazyRuntimeCancelInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${lazyPageUrl}?slow=1&runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    const bootstrap = page.locator("#__reader-bootstrap");
+    await bootstrap.getByRole("button", { name: "readerで読む" }).click();
+    await bootstrap.getByRole("button", { name: "キャンセル" }).click();
+    await page.waitForTimeout(2200);
+    const state = await page.evaluate(() => ({
+      bootstrapHost: Boolean(document.getElementById("__reader-bootstrap")),
+      readerHost: Boolean(document.getElementById("__reader-host")),
+      mobileViewer: typeof globalThis.MobileViewer,
+      bootstrapHandleCount: document.getElementById("__reader-bootstrap")?.shadowRoot?.querySelectorAll(".handle").length || 0,
+    }));
+    assert.deepEqual(state, { bootstrapHost: true, readerHost: false, mobileViewer: "object", bootstrapHandleCount: 1 });
+  } finally {
+    await browser.close();
+  }
+}
+
 try {
   if (driverPort === 0) driverPort = await findFreePort();
   fixtureServer = spawn(process.execPath, ["tests/e2e/server.mjs"], {
@@ -369,6 +401,7 @@ try {
   await verifyPackage();
   await verifyGeneratedRuntimeInWebKit();
   await verifyGeneratedLazyRuntimeInWebKit();
+  await verifyGeneratedLazyRuntimeCancelInWebKit();
   process.stdout.write("Generated Safari resources initialized ReaderSession in WebKit\n");
   try {
     await verifySafariRuntime();

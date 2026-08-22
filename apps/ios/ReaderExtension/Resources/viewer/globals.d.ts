@@ -18,7 +18,6 @@ declare global {
       assets: readonly string[],
       getRuntimeURL: (resourceName: string) => string,
       importRuntime: (runtimeURL: string) => Promise<unknown>,
-      installRuntime: () => void,
     ): () => Promise<void>;
   }
 

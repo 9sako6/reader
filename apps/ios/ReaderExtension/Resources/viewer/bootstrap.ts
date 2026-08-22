@@ -28,8 +28,10 @@
   style.textContent = `
     :host { all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; }
     button { font: -apple-system-body; }
-    .handle { position: fixed; right: 0; top: 62%; width: 44px; height: 52px; border: 0; padding: 0; background: transparent; pointer-events: auto; }
-    .handle::after { content: ""; position: absolute; right: 0; top: 8px; width: 6px; height: 36px; border-radius: 6px 0 0 6px; background: #4ba9c7; transition: opacity 120ms ease, width 120ms ease; }
+    .handle { position: fixed; right: 0; top: 62%; width: 44px; height: 52px; border: 0; padding: 0; background: transparent; pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+    .handle::after { content: ""; position: absolute; right: 0; top: 8px; width: 6px; height: 36px; border-radius: 6px 0 0 6px; background: #4ba9c7; opacity: .82; box-shadow: 0 0 0 1px rgba(0,0,0,.18), 0 4px 16px rgba(0,0,0,.28); transition: opacity 160ms ease, width 160ms ease; }
+    .handle:active::after, .handle:focus-visible::after { width: 10px; opacity: 1; }
+    .handle.scrolling::after { opacity: .24; }
     .handle.loading::after { width: 10px; opacity: 1; }
     .feedback { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(5, 5, 5, .84); color: #eeeeef; pointer-events: auto; }
     .feedback[hidden], .handle[hidden] { display: none; }
@@ -74,6 +76,7 @@
   const importRuntime = (runtimeURL: string): Promise<unknown> => import(runtimeURL);
   let revealTimer: number | null = null;
   let feedbackTimer: number | null = null;
+  let scrollFadeTimer: number | null = null;
   let loading = false;
 
   const showFeedback = (message: string): void => {
@@ -95,6 +98,22 @@
     loading = false;
   };
 
+  const clearScrollFade = (): void => {
+    if (scrollFadeTimer !== null) globalThis.clearTimeout(scrollFadeTimer);
+    scrollFadeTimer = null;
+    handle.classList.remove("scrolling");
+  };
+
+  const fadeHandleDuringScroll = (): void => {
+    if (handle.hidden) return;
+    handle.classList.add("scrolling");
+    if (scrollFadeTimer !== null) globalThis.clearTimeout(scrollFadeTimer);
+    scrollFadeTimer = globalThis.setTimeout(() => {
+      scrollFadeTimer = null;
+      handle.classList.remove("scrolling");
+    }, 320);
+  };
+
   const clearLoadingTimers = (): void => {
     if (revealTimer !== null) globalThis.clearTimeout(revealTimer);
     if (feedbackTimer !== null) globalThis.clearTimeout(feedbackTimer);
@@ -106,7 +125,6 @@
     ASSETS,
     getRuntimeURL,
     importRuntime,
-    () => globalThis.MobileViewer.install(),
   );
 
   const controller = globalThis.ReaderLazyRuntime.createLazyRuntimeController(loadRuntime);
@@ -137,8 +155,11 @@
     try {
       const current = await controller.open();
       if (!current) return;
+      globalThis.MobileViewer.install();
       await globalThis.MobileViewer.open();
       clearLoadingTimers();
+      globalThis.removeEventListener("scroll", fadeHandleDuringScroll);
+      clearScrollFade();
       loading = false;
       host.remove();
     } catch (error) {
@@ -163,8 +184,11 @@
   handle.addEventListener("click", open);
   cancel.addEventListener("click", cancelLoad);
   retry.addEventListener("click", open);
+  globalThis.addEventListener("scroll", fadeHandleDuringScroll, { passive: true });
   globalThis.addEventListener("pagehide", () => {
     controller.navigate();
+    globalThis.removeEventListener("scroll", fadeHandleDuringScroll);
+    clearScrollFade();
     if (loading) hideFeedback();
   }, { once: true });
 })();

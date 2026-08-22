@@ -25,6 +25,9 @@ const intrinsicImages = new Map([
 createServer(async (request, response) => {
   const requestUrl = new URL(request.url || "/", "http://localhost");
   const pathname = decodeURIComponent(requestUrl.pathname);
+  if (requestUrl.searchParams.has("delay") && pathname.startsWith("/apps/ios/ReaderExtension/Resources/generated/")) {
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, Number(requestUrl.searchParams.get("delay")) || 250));
+  }
   if (pathname === "/image/missing.png") {
     response.writeHead(404).end();
     return;
