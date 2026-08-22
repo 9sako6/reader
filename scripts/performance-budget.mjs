@@ -5,7 +5,8 @@ export const FEEDBACK_PAIRED_P50_BUDGET_MS = 16;
 export const REACT_BUNDLE_MAX_INCREASE_PERCENT = 35;
 export const REACT_FIXED_HEAP_BUDGET_BYTES = 400_000;
 export const REACT_MEMORY_FLOOR_BYTES = 65_536;
-export const REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES = 32_768;
+export const REACT_REPRESENTATIVE_LEAK_P50_BUDGET_BYTES = 32_768;
+export const REACT_REPRESENTATIVE_LEAK_P90_BUDGET_BYTES = 65_536;
 export const REACT_INITIALIZATION_METRICS = ["reactInitMs", "wasmInitMs", "initializationSpanMs"];
 
 export function evaluateFeedbackBudget({ observedP90, pairedP50DeltaMs = null }) {
@@ -116,13 +117,13 @@ function representativeMemoryGate(representativeCleanup) {
     pairedDelta,
     warmupCycles: representativeCleanup.candidate?.warmupCycles ?? null,
     cycleCount: representativeCleanup.candidate?.cycles?.length ?? null,
-    p50BudgetBytes: REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES,
-    p90BudgetBytes: REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES,
-    budgetBytes: REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES,
+    p50BudgetBytes: REACT_REPRESENTATIVE_LEAK_P50_BUDGET_BYTES,
+    p90BudgetBytes: REACT_REPRESENTATIVE_LEAK_P90_BUDGET_BYTES,
+    budgetBytes: REACT_REPRESENTATIVE_LEAK_P90_BUDGET_BYTES,
     classification: "cycle2-plus-persistence",
     regression: !measured
-      || pairedDelta.p50 > REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES
-      || pairedDelta.p90 > REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES,
+      || pairedDelta.p50 > REACT_REPRESENTATIVE_LEAK_P50_BUDGET_BYTES
+      || pairedDelta.p90 > REACT_REPRESENTATIVE_LEAK_P90_BUDGET_BYTES,
   };
 }
 

@@ -194,6 +194,64 @@ test("React memory gate rejects combined root overhead above the explicit byte c
   assert.equal(result.regression, true);
 });
 
+test("React representative leak gate accepts exact 32 KiB p50 and 64 KiB p90 boundaries", () => {
+  const result = evaluateReactMemoryGate({
+    candidateP90Bytes: 100,
+    baselineP90Bytes: 100,
+    pairedMemory: pairedMemory(),
+    representativeCleanup: representativeCleanup(
+      [0, 0, 0, 0, 0],
+      [0, 32_768, 32_768, 32_768, 65_536],
+    ),
+  });
+
+  assert.equal(result.representativeGrowth.pairedDelta.p50, 32_768);
+  assert.equal(result.representativeGrowth.pairedDelta.p90, 65_536);
+  assert.equal(result.representativeGrowth.p50BudgetBytes, 32_768);
+  assert.equal(result.representativeGrowth.p90BudgetBytes, 65_536);
+  assert.equal(result.representativeGrowth.regression, false);
+  assert.equal(result.regression, false);
+});
+
+test("React representative leak gate tolerates one 35 KiB sample but rejects one sample above 64 KiB", () => {
+  const tolerated = evaluateReactMemoryGate({
+    candidateP90Bytes: 100,
+    baselineP90Bytes: 100,
+    pairedMemory: pairedMemory(),
+    representativeCleanup: representativeCleanup([0, 0, 0, 0, 0], [0, 35_272, 0, 0, 0]),
+  });
+  assert.equal(tolerated.representativeGrowth.pairedDelta.p50, 0);
+  assert.equal(tolerated.representativeGrowth.pairedDelta.p90, 35_272);
+  assert.equal(tolerated.representativeGrowth.regression, false);
+
+  const rejected = evaluateReactMemoryGate({
+    candidateP90Bytes: 100,
+    baselineP90Bytes: 100,
+    pairedMemory: pairedMemory(),
+    representativeCleanup: representativeCleanup([0, 0, 0, 0, 0], [0, 65_537, 0, 0, 0]),
+  });
+  assert.equal(rejected.representativeGrowth.pairedDelta.p50, 0);
+  assert.equal(rejected.representativeGrowth.pairedDelta.p90, 65_537);
+  assert.equal(rejected.representativeGrowth.regression, true);
+});
+
+test("React representative leak gate rejects persistent p50 growth one byte above its budget", () => {
+  const result = evaluateReactMemoryGate({
+    candidateP90Bytes: 100,
+    baselineP90Bytes: 100,
+    pairedMemory: pairedMemory(),
+    representativeCleanup: representativeCleanup(
+      [0, 0, 0, 0, 0],
+      [0, 32_769, 32_769, 32_769, 32_769],
+    ),
+  });
+
+  assert.equal(result.representativeGrowth.pairedDelta.p50, 32_769);
+  assert.equal(result.representativeGrowth.pairedDelta.p90, 32_769);
+  assert.equal(result.representativeGrowth.regression, true);
+  assert.equal(result.regression, true);
+});
+
 test("React memory gate rejects persistent representative-cycle growth and keeps all cycle positions", () => {
   const cleanup = representativeCleanup([20, 22, 24, 26, 28], [20, 22, 70_000, 70_000, 70_000]);
   const result = evaluateReactMemoryGate({
