@@ -240,8 +240,10 @@ function createSafariReaderHarness(
   const createdElements: FakeElement[] = [];
   const documentListeners = new Map();
   const document = {
+    nodeType: 9,
     documentElement,
     body,
+    defaultView: null,
     activeElement: null,
     title: "",
     visibilityState: "visible",
@@ -252,7 +254,25 @@ function createSafariReaderHarness(
       return element;
     },
     createElementNS(_namespace, tagName) {
-      return new FakeElement(tagName);
+      const element = new FakeElement(tagName);
+      element.ownerDocument = document;
+      element.namespaceURI = _namespace;
+      createdElements.push(element);
+      return element;
+    },
+    createTextNode(value) {
+      const node = new FakeElement("#text", value);
+      node.nodeType = 3;
+      node.nodeName = "#text";
+      node.ownerDocument = document;
+      return node;
+    },
+    createComment(value) {
+      const node = new FakeElement("#comment", value);
+      node.nodeType = 8;
+      node.nodeName = "#comment";
+      node.ownerDocument = document;
+      return node;
     },
     getElementById(id) {
       return findElement(documentElement, (element) => element.id === id);
@@ -335,7 +355,6 @@ function createSafariReaderHarness(
       },
     },
     ReaderIcons: { create: () => new FakeElement("svg") },
-    ReaderSession: session,
     Defuddle: class {},
     innerWidth: 390,
     innerHeight: 844,
@@ -344,6 +363,9 @@ function createSafariReaderHarness(
     performance: {
       mark(name) {
         performanceMarks.push(name);
+      },
+      now() {
+        return now;
       },
     },
     __READER_PERFORMANCE_ENABLED: true,
@@ -380,6 +402,34 @@ function createSafariReaderHarness(
     scrollTo() {},
   };
   context.globalThis = context;
+  context.window = context;
+  context.self = context;
+  context.navigator = { userAgent: "reader-test" };
+  context.HTMLIFrameElement = class {};
+  context.Element = FakeElement;
+  context.HTMLElement = FakeElement;
+  context.SVGElement = FakeElement;
+  context.Node = FakeElement;
+  context.Text = FakeElement;
+  context.Comment = FakeElement;
+  context.Document = Object;
+  context.MutationObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+  context.queueMicrotask = (callback) => callback();
+  context.MessageChannel = class {
+    port1 = { onmessage: null };
+    port2 = { postMessage: () => this.port1.onmessage?.({ data: null }) };
+  };
+  document.defaultView = context;
+  const sessionSource = fs.readFileSync(
+    path.join(root, "ReaderExtension", "Resources", "generated", "session.js"),
+    "utf8",
+  );
+  vm.runInNewContext(sessionSource, context);
+  assert.equal(typeof context.ReaderReactViewer?.mount, "function");
+  context.ReaderSession = session;
   const source = fs.readFileSync(
     path.join(root, "ReaderExtension", "Resources", "generated", "viewer.js"),
     "utf8",
