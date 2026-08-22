@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { access, readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
@@ -12,15 +13,6 @@ const baseUrl = `http://127.0.0.1:${webPort}`;
 const pageUrl = `${baseUrl}/tests/e2e/fixtures/safari-package-runtime.html`;
 const generatedRoot = resolve(repositoryRoot, "apps/ios/ReaderExtension/Resources/generated");
 const manifestPath = resolve(repositoryRoot, "apps/ios/ReaderExtension/Resources/manifest.json");
-const requiredAssets = [
-  "session-wasm.js",
-  "session.js",
-  "reader_session_bg.wasm",
-  "engine.js",
-  "extractor.js",
-  "viewer.js",
-  "bootstrap.js",
-];
 let fixtureServer = null;
 let safariDriver = null;
 let sessionId = null;
@@ -68,13 +60,27 @@ async function executeScript(script, args = []) {
   return driverRequest("POST", `/session/${sessionId}/execute/async`, { script, args });
 }
 
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 async function verifyPackage() {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   assert.deepEqual(manifest.web_accessible_resources, [{
     resources: ["reader_session_bg.wasm"],
     matches: ["<all_urls>"],
   }]);
-  for (const asset of requiredAssets) await access(join(generatedRoot, asset));
+  const requiredAssets = [
+    ...new Set([
+      ...manifest.content_scripts.flatMap((contentScript) => contentScript.js),
+      ...manifest.web_accessible_resources.flatMap((resource) => resource.resources),
+    ]),
+  ];
+  const generatedAssets = new Map();
+  for (const asset of requiredAssets) {
+    const bytes = await readFile(join(generatedRoot, asset));
+    generatedAssets.set(asset, bytes);
+  }
   const wasmResponse = await fetch(`${baseUrl}/apps/ios/ReaderExtension/Resources/generated/reader_session_bg.wasm`);
   assert.equal(wasmResponse.status, 200);
   assert.equal(wasmResponse.headers.get("content-type"), "application/wasm");
@@ -84,10 +90,16 @@ async function verifyPackage() {
     : resolve(repositoryRoot, "DerivedData/Build/Products/Debug-iphonesimulator/reader-extension.appex");
   try {
     await stat(bundleRoot);
-    const packagedManifest = JSON.parse(await readFile(join(bundleRoot, "manifest.json"), "utf8"));
+    const sourceManifestBytes = await readFile(manifestPath);
+    const packagedManifestBytes = await readFile(join(bundleRoot, "manifest.json"));
+    assert.equal(sha256(packagedManifestBytes), sha256(sourceManifestBytes));
+    const packagedManifest = JSON.parse(packagedManifestBytes.toString("utf8"));
     assert.deepEqual(packagedManifest.web_accessible_resources, manifest.web_accessible_resources);
     for (const asset of requiredAssets) {
-      await access(join(bundleRoot, asset));
+      const packagedBytes = await readFile(join(bundleRoot, asset));
+      const generatedBytes = generatedAssets.get(asset);
+      assert.equal(sha256(packagedBytes), sha256(generatedBytes), `${asset} package hash differs from generated asset`);
+      assert.equal(Buffer.compare(packagedBytes, generatedBytes), 0, `${asset} package bytes differ from generated asset`);
     }
   } catch (error) {
     if (process.env.READER_REQUIRE_IOS_EXTENSION_BUNDLE === "1") throw error;
