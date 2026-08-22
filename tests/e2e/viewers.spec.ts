@@ -1174,6 +1174,198 @@ test("mobile viewer traps focus and restores the launch button after Escape", as
   await expect(launchButton).toBeFocused();
 });
 
+test("mobile text viewer keeps keyboard focus inside the Reader and restores it after Escape", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await addAccessibilityFixture(page);
+  const launchButton = page.getByRole("button", { name: "readerで読む" });
+  await launchButton.focus();
+  await launchButton.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "一時停止" }).click();
+  await expect(dialog).toMatchAriaSnapshot(`
+    - dialog "reader":
+      - /children: contain
+      - banner:
+        - /children: contain
+        - button "readerを閉じる"
+      - contentinfo:
+        - /children: contain
+        - button "文章で読む"
+        - button "再生" [pressed=false]
+  `);
+
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  await expect(dialog.locator(".text-view")).toBeVisible();
+  await dialog.getByRole("button", { name: "RSVPで読む" }).focus();
+  await expectFocusToStayInReader(page, dialog);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: false, head: true });
+  await expect(launchButton).toBeFocused();
+});
+
+test("mobile RSVP viewer does not capture Space or ArrowLeft from editable controls", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "一時停止" }).click();
+  const initialUnit = await dialog.locator("[data-reader-unit]").getAttribute("data-source-start");
+  expect(initialUnit).not.toBeNull();
+
+  await dialog.evaluate((reader) => {
+    const content = reader.querySelector(".content");
+    if (!content) throw new Error("Reader content is missing");
+    const input = document.createElement("input");
+    input.id = "reader-editable-input";
+    input.setAttribute("aria-label", "Reader内の入力");
+    input.value = "入力";
+    const textarea = document.createElement("textarea");
+    textarea.id = "reader-editable-textarea";
+    textarea.setAttribute("aria-label", "Reader内の複数行入力");
+    textarea.value = "複数行";
+    const select = document.createElement("select");
+    select.id = "reader-editable-select";
+    select.setAttribute("aria-label", "Reader内の選択");
+    select.append(new Option("選択肢", "one"));
+    const editor = document.createElement("div");
+    editor.id = "reader-editable-content";
+    editor.contentEditable = "true";
+    editor.setAttribute("aria-label", "Reader内の編集領域");
+    for (const element of [input, textarea, select, editor]) {
+      Object.assign(element.style, { position: "fixed", left: "8px", top: "8px", zIndex: "10" });
+      content.append(element);
+    }
+  });
+
+  await page.locator("#reader-editable-input").focus();
+  await page.keyboard.press("Space");
+  await page.keyboard.press("ArrowLeft");
+  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("data-source-start", initialUnit!);
+
+  await page.locator("#reader-editable-textarea").focus();
+  await page.keyboard.press("Space");
+  await page.keyboard.press("ArrowLeft");
+  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("data-source-start", initialUnit!);
+
+  await page.locator("#reader-editable-select").focus();
+  await page.keyboard.press("Space");
+  await page.keyboard.press("ArrowLeft");
+  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("data-source-start", initialUnit!);
+
+  await page.locator("#reader-editable-content").focus();
+  await page.keyboard.press("Space");
+  await page.keyboard.press("ArrowLeft");
+  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("data-source-start", initialUnit!);
+});
+
+test("mobile viewer suppresses control transforms and animations with reduced motion", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await loadViewer(page, "mobile");
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+
+  const motion = await dialog.evaluate((reader) => {
+    const controls = [
+      reader.querySelector<HTMLElement>(".mode-button"),
+      reader.querySelector<HTMLElement>('[aria-label="readerを閉じる"]'),
+      reader.querySelector<HTMLElement>('[aria-label="1文戻る"]'),
+      reader.querySelector<HTMLElement>('[aria-label="一時停止"]'),
+    ];
+    for (const control of controls) control?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    return {
+      inlineScales: controls.map((control) => control?.style.scale || ""),
+      inlineTransforms: controls.map((control) => control?.style.transform || ""),
+      animationCount: reader.getAnimations({ subtree: true }).length,
+    };
+  });
+
+  expect(motion.inlineScales).toEqual(["", "", "", ""]);
+  expect(motion.inlineTransforms).toEqual(["", "", "", ""]);
+  expect(motion.animationCount).toBe(0);
+});
+
+test("mobile viewer keeps a 200 percent text layout within the viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  await expect(dialog.locator(".text-view")).toBeVisible();
+
+  const layout = await dialog.evaluate((reader) => {
+    const textView = reader.querySelector<HTMLElement>(".text-view");
+    const article = reader.querySelector<HTMLElement>(".article");
+    const modeButton = reader.querySelector<HTMLElement>(".mode-button");
+    if (!textView || !article || !modeButton) throw new Error("Reader text layout is missing");
+    textView.style.fontSize = "200%";
+    article.style.fontSize = "200%";
+    const dialogRect = reader.getBoundingClientRect();
+    const modeRect = modeButton.getBoundingClientRect();
+    return {
+      textOverflow: textView.scrollWidth - textView.clientWidth,
+      articleOverflow: article.scrollWidth - article.clientWidth,
+      modeRight: modeRect.right,
+      dialogRight: dialogRect.right,
+      closeBox: reader.querySelector<HTMLElement>('[aria-label="readerを閉じる"]')?.getBoundingClientRect(),
+    };
+  });
+
+  expect(layout.textOverflow).toBeLessThanOrEqual(0);
+  expect(layout.articleOverflow).toBeLessThanOrEqual(0);
+  expect(layout.modeRight).toBeLessThanOrEqual(layout.dialogRight);
+  expect(layout.closeBox?.width).toBeGreaterThanOrEqual(44);
+  expect(layout.closeBox?.height).toBeGreaterThanOrEqual(44);
+});
+
+test("mobile viewer keeps controls and figures usable in landscape and restores the page after close", async ({ page }) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&figure=first&image=horizontal");
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  await page.evaluate(() => window.scrollTo({ top: 200, left: 0, behavior: "auto" }));
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  const figure = dialog.getByRole("figure", { name: "本文画像" });
+  await expect(figure).toBeVisible();
+  const figureSurface = figure.locator("[data-reader-image-surface]");
+  await expect(figureSurface).toBeVisible();
+
+  const readerRect = await dialog.boundingBox();
+  const figureRect = await figureSurface.boundingBox();
+  const closeRect = await dialog.getByRole("button", { name: "readerを閉じる" }).boundingBox();
+  const modeRect = await dialog.getByRole("button", { name: "文章で読む" }).boundingBox();
+  expect(readerRect).not.toBeNull();
+  expect(figureRect).not.toBeNull();
+  expect(closeRect).not.toBeNull();
+  expect(modeRect).not.toBeNull();
+
+  expect(figureRect!.x).toBeGreaterThanOrEqual(readerRect!.x);
+  expect(figureRect!.x + figureRect!.width).toBeLessThanOrEqual(readerRect!.x + readerRect!.width);
+  expect(figureRect!.y).toBeGreaterThanOrEqual(readerRect!.y);
+  expect(figureRect!.y + figureRect!.height).toBeLessThanOrEqual(readerRect!.y + readerRect!.height);
+  expect(closeRect!.width).toBeGreaterThanOrEqual(44);
+  expect(closeRect!.height).toBeGreaterThanOrEqual(44);
+  expect(modeRect!.width).toBeGreaterThanOrEqual(120);
+  expect(modeRect!.height).toBeGreaterThanOrEqual(44);
+
+  await dialog.getByRole("button", { name: "readerを閉じる" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("button", { name: "readerで読む" })).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(200);
+});
+
 test("Chrome viewer keeps background inert and keyboard focus inside the modal", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await loadViewer(page, "chrome");
