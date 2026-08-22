@@ -1177,6 +1177,31 @@ test("Safari figure surface is keyboard accessible and keeps a failed image reco
   assert.match(findElement(documentElement, (element) => element.className.startsWith("rsvp-unit")).textContent, /画像の後/u);
 });
 
+test("Safari ignores a stale figure completion after switching modes", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  try {
+    await context.MobileViewer.open();
+    let oldPanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
+    while (!oldPanel) {
+      fireNextTimer(timers);
+      oldPanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
+    }
+    const oldImage = findElement(oldPanel, (element) => element.tagName === "IMG");
+    const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+    modeButton.dispatchEvent({ type: "click" });
+    findElement(documentElement, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+    const currentPanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
+    const currentStatus = findElement(currentPanel, (element) => element.attributes["data-reader-figure-status"] === "true");
+    oldImage.dispatchEvent({ type: "load" });
+    await Promise.resolve();
+    assert.equal(currentStatus.hidden, true);
+    assert.equal(currentPanel.dataset.figureIndex, "0");
+  } finally {
+    context.MobileViewer.close();
+  }
+});
+
 test("Safari reader maps text viewport positions back to RSVP content", async () => {
   const { context, documentElement, timers, createdElements } = createSafariReaderHarness();
   await context.MobileViewer.open();
