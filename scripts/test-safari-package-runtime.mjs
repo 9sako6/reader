@@ -134,6 +134,7 @@ async function verifySafariRuntime() {
   await driverRequest("POST", `/session/${sessionId}/url`, { url: pageUrl });
   const result = await executeScript(`
     const done = arguments[arguments.length - 1];
+    globalThis.MobileViewer.close();
     const originalInit = globalThis.ReaderSession.init;
     const originalCreate = globalThis.ReaderSession.create;
     let initCount = 0;
@@ -155,28 +156,40 @@ async function verifySafariRuntime() {
       return response;
     });
     const unitDeadline = Date.now() + 5000;
-    function finishWhenUnitIsReady() {
+    function finishWhenRuntimeIsReady() {
       const host = document.getElementById("__reader-host");
       const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
-      if (unit) {
+      const initialized = globalThis.ReaderSession.ready() === true;
+      const unitText = unit?.textContent?.trim() || "";
+      const wasmReady = wasmResponses.some(({ status, contentType }) => status === 200 && contentType === "application/wasm");
+      if (initialized && initCount === 1 && createCount === 1 && wasmReady && unitText) {
         done({
-          initialized: globalThis.ReaderSession.ready(),
+          initialized,
           initCount,
           createCount,
           wasmResponses,
           host: Boolean(host),
           unit: true,
-          unitText: unit.textContent?.trim() || "",
+          unitText,
         });
         return;
       }
       if (Date.now() >= unitDeadline) {
-        done({ error: "first reader unit did not become ready" });
+        done({
+          error: "ReaderSession and first reader unit did not become ready together",
+          initialized,
+          initCount,
+          createCount,
+          wasmResponses,
+          host: Boolean(host),
+          unit: Boolean(unit),
+          unitText,
+        });
         return;
       }
-      setTimeout(finishWhenUnitIsReady, 16);
+      setTimeout(finishWhenRuntimeIsReady, 16);
     }
-    globalThis.MobileViewer.open().then(finishWhenUnitIsReady).catch((error) => done({ error: String(error) }));
+    globalThis.MobileViewer.open().then(finishWhenRuntimeIsReady).catch((error) => done({ error: String(error) }));
   `);
   assert.equal(result.error, undefined, JSON.stringify(result));
   assert.equal(result.initialized, true);
@@ -194,6 +207,7 @@ async function verifyGeneratedRuntimeInWebKit() {
     const page = await browser.newPage();
     await page.goto(pageUrl, { waitUntil: "load" });
     const result = await page.evaluate(async () => {
+      globalThis.MobileViewer.close();
       const originalInit = globalThis.ReaderSession.init;
       const originalCreate = globalThis.ReaderSession.create;
       let initCount = 0;
@@ -218,13 +232,26 @@ async function verifyGeneratedRuntimeInWebKit() {
       await new Promise((resolve, reject) => {
         const deadline = performance.now() + 3000;
         const poll = () => {
-          const unit = document.getElementById("__reader-host")?.shadowRoot?.querySelector('[data-reader-unit="true"]');
-          if (unit) {
+          const host = document.getElementById("__reader-host");
+          const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+          const initialized = globalThis.ReaderSession.ready() === true;
+          const unitText = unit?.textContent?.trim() || "";
+          const wasmReady = wasmResponses.some(({ status, contentType }) => status === 200 && contentType === "application/wasm");
+          if (initialized && initCount === 1 && createCount === 1 && wasmReady && unitText) {
             resolve();
             return;
           }
           if (performance.now() >= deadline) {
-            reject(new Error("first reader unit did not become ready"));
+            reject(new Error(JSON.stringify({
+              error: "ReaderSession and first reader unit did not become ready together",
+              initialized,
+              initCount,
+              createCount,
+              wasmResponses,
+              host: Boolean(host),
+              unit: Boolean(unit),
+              unitText,
+            })));
             return;
           }
           requestAnimationFrame(poll);
