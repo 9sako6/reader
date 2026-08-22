@@ -12,6 +12,7 @@ function createServiceWorkerHarness() {
     createdMenu: null,
     scriptCalls: [],
     messages: [],
+    runtimeMessages: [],
     finishExtraction: null,
     extractionResult: {
       text: "記事本文",
@@ -31,6 +32,15 @@ function createServiceWorkerHarness() {
         addListener(listener) {
           harness.listeners.installed = listener;
         },
+      },
+      onMessage: {
+        addListener(listener) {
+          harness.listeners.runtimeMessage = listener;
+        },
+      },
+      sendMessage(message) {
+        harness.runtimeMessages.push(message);
+        return Promise.resolve();
       },
     },
     action: {
@@ -162,4 +172,21 @@ test("toolbar action reports an extraction error for an empty page", async () =>
 
   assert.equal(harness.messages[1].message.type, "RSVP_ERROR");
   assert.equal(harness.messages[1].message.requestId, harness.messages[0].message.requestId);
+  assert.equal(harness.messages[1].message.reason, "content_not_found");
+});
+
+test("service worker drops extraction results after a matching cancel", async () => {
+  const harness = createServiceWorkerHarness();
+
+  const actionPromise = harness.listeners.actionClicked({ id: 10 });
+  await harness.extractionStarted;
+  const loadingMessage = harness.messages[0].message;
+  harness.listeners.runtimeMessage(
+    { type: "CANCEL_RSVP", requestId: loadingMessage.requestId },
+    { tab: { id: 10 } },
+  );
+  harness.finishExtraction();
+  await actionPromise;
+
+  assert.deepEqual(harness.messages.map(({ message }) => message.type), ["SHOW_RSVP_LOADING"]);
 });
