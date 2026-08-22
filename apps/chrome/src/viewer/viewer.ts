@@ -10,6 +10,8 @@
 
   const ROOT_ID = "__rsvp-reader-root";
   const DISPLAY_FONT_SIZE = "clamp(36px, 4.5vw, 64px)";
+  const LOADER_REVEAL_DELAY_MS = 100;
+  const LOADING_COVER_TRANSITION_MS = 220;
 
   let baseUnits: ReaderUnit[] = [];
   let units: ReaderUnit[] = [];
@@ -22,6 +24,10 @@
   let rootHost: HTMLDivElement | null = null;
   let rootStyle: HTMLStyleElement | null = null;
   let loadingLayer: HTMLDivElement | null = null;
+  let loadingRevealTimerId: number | null = null;
+  let loadingStartedAt: number | null = null;
+  let loadingIndicator: HTMLDivElement | null = null;
+  let loadingIndicatorAnimation: Animation | null = null;
   let previousContext: HTMLDivElement | null = null;
   let display: HTMLDivElement | null = null;
   let nextContext: HTMLDivElement | null = null;
@@ -76,7 +82,12 @@
       ? activeElement as HTMLElement
       : null;
     activeRequestId = requestId;
-    createLoadingOverlay();
+    loadingStartedAt = Date.now();
+    loadingRevealTimerId = globalThis.setTimeout(() => {
+      loadingRevealTimerId = null;
+      if (requestId !== activeRequestId || loadingLayer) return;
+      createLoadingOverlay();
+    }, LOADER_REVEAL_DELAY_MS);
   }
 
   function start(
@@ -85,6 +96,12 @@
     suppliedReadingContext: Partial<ReadingContext> | null | undefined,
   ): void {
     if (requestId !== activeRequestId) return;
+
+    const loadingWasVisible = loadingLayer !== null;
+    if (!loadingWasVisible && loadingStartedAt !== null && Date.now() - loadingStartedAt >= LOADER_REVEAL_DELAY_MS) {
+      cancelLoadingReveal();
+      createLoadingOverlay();
+    } else cancelLoadingReveal();
 
     stopTimer();
 
@@ -135,42 +152,51 @@
   }
 
   function createLoadingOverlay() {
+    if (loadingLayer) return;
     root = createRoot();
     loadingLayer = document.createElement("div");
+    loadingLayer.setAttribute("data-reader-loading", "true");
     Object.assign(loadingLayer.style, {
       position: "absolute",
       inset: "0",
     });
 
-    const status = document.createElement("div");
-    Object.assign(status.style, {
+    const track = document.createElement("div");
+    track.setAttribute("data-reader-loading-bar", "true");
+    track.setAttribute("aria-hidden", "true");
+    Object.assign(track.style, {
       position: "absolute",
       left: "50%",
       top: "50%",
       transform: "translate(-50%, -50%)",
-      textAlign: "center",
+      width: "min(180px, calc(100% - 48px))",
+      height: "2px",
+      borderRadius: "999px",
+      overflow: "hidden",
+      background: "rgba(255,255,255,0.18)",
     });
 
     const indicator = document.createElement("div");
-    indicator.textContent = "文章を準備しています…";
+    indicator.setAttribute("data-reader-loading-indicator", "true");
     Object.assign(indicator.style, {
-      fontSize: "clamp(24px, 3vw, 36px)",
-      fontWeight: "600",
+      width: "100%",
+      height: "100%",
+      borderRadius: "inherit",
+      background: "rgba(255,255,255,0.82)",
+      transform: "translateX(-100%) scaleX(.35)",
+      transformOrigin: "left center",
     });
     if (!prefersReducedMotion()) {
-      indicator.animate(
-        [{ opacity: 0.45 }, { opacity: 1 }, { opacity: 0.45 }],
-        { duration: 1400, iterations: Infinity },
+      loadingIndicatorAnimation = indicator.animate(
+        [
+          { transform: "translateX(-100%) scaleX(.35)" },
+          { transform: "translateX(220%) scaleX(.35)" },
+        ],
+        { duration: 1100, iterations: Infinity, easing: "linear" },
       );
-    }
-
-    const note = document.createElement("div");
-    note.textContent = "このページ内だけで処理しています";
-    Object.assign(note.style, {
-      marginTop: "14px",
-      color: "rgba(255,255,255,0.58)",
-      fontSize: "14px",
-    });
+    } else indicator.style.transform = "translateX(0) scaleX(.35)";
+    loadingIndicator = indicator;
+    track.append(indicator);
 
     const closeButton = createButton("閉じる", close);
     Object.assign(closeButton.style, {
@@ -180,15 +206,30 @@
       transform: "translateX(-50%)",
     });
 
-    status.append(indicator, note);
-    loadingLayer.append(status, closeButton);
+    loadingLayer.append(track, closeButton);
     root.append(loadingLayer);
     if (rootHost) document.documentElement.append(rootHost);
     globalThis.requestAnimationFrame?.(() => closeButton.focus());
   }
 
+  function cancelLoadingReveal(): void {
+    if (loadingRevealTimerId !== null) {
+      globalThis.clearTimeout(loadingRevealTimerId);
+      loadingRevealTimerId = null;
+    }
+  }
+
   function showError(requestId: string): void {
-    if (requestId !== activeRequestId || !root) return;
+    if (requestId !== activeRequestId) return;
+    cancelLoadingReveal();
+    loadingIndicatorAnimation?.cancel?.();
+    loadingIndicatorAnimation = null;
+    loadingIndicator = null;
+    loadingLayer = null;
+    if (!root) {
+      root = createRoot();
+      if (rootHost) document.documentElement.append(rootHost);
+    }
     root.replaceChildren(...(rootStyle ? [rootStyle] : []));
 
     const status = document.createElement("div");
@@ -594,10 +635,26 @@
 
     const outgoing = loadingLayer;
     loadingLayer = null;
+    loadingIndicatorAnimation?.cancel?.();
+    loadingIndicatorAnimation = null;
+    if (loadingIndicator) {
+      if (prefersReducedMotion()) {
+        loadingIndicator.style.transform = "translateX(0) scaleX(1)";
+      } else {
+        loadingIndicator.animate(
+          [
+            { transform: "translateX(-35%) scaleX(.35)" },
+            { transform: "translateX(0) scaleX(1)" },
+          ],
+          { duration: 90, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+        );
+      }
+    }
+    loadingIndicator = null;
     outgoing.style.pointerEvents = "none";
     root.replaceChildren(rootStyle, stage, outgoing);
-    const outgoingAnimation = animateOpacity(outgoing, 1, 0, 220);
-    animateOpacity(stage, 0, 1, 220);
+    const outgoingAnimation = animateOpacity(outgoing, 1, 0, LOADING_COVER_TRANSITION_MS);
+    animateOpacity(stage, 0, 1, LOADING_COVER_TRANSITION_MS);
     afterAnimation(outgoingAnimation, () => outgoing.remove());
   }
 
@@ -1422,6 +1479,10 @@
   }
 
   function removeOverlay() {
+    cancelLoadingReveal();
+    loadingIndicatorAnimation?.cancel?.();
+    loadingIndicatorAnimation = null;
+    loadingIndicator = null;
     document.removeEventListener("keydown", handleKeyDown);
     displayResizeObserver?.disconnect();
     displayResizeObserver = null;
@@ -1447,6 +1508,7 @@
     pause();
     removeOverlay();
     activeRequestId = null;
+    loadingStartedAt = null;
     units = [];
     currentUnitIndex = 0;
     headings = [];

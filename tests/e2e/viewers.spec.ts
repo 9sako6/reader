@@ -5,6 +5,22 @@ async function loadViewer(page: Page, viewer: "chrome" | "mobile"): Promise<void
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
 }
 
+type ChromeOpenOptions = { delay?: number; text?: string; requestId?: string };
+
+async function openChrome(page: Page, options: ChromeOpenOptions): Promise<void> {
+  await page.evaluate((openOptions) => {
+    (globalThis as typeof globalThis & {
+      ReaderE2E: { open(options: ChromeOpenOptions): string };
+    }).ReaderE2E.open(openOptions);
+  }, options);
+}
+
+async function loadingBarWasRevealed(page: Page): Promise<number> {
+  return page.evaluate(() => (globalThis as typeof globalThis & {
+    ReaderE2E: { loadingBarRevealEvents: number[] };
+  }).ReaderE2E.loadingBarRevealEvents.length);
+}
+
 const RSVP_WIDTHS = [320, 375, 390, 430, 768];
 const RSVP_SHORT_TEXT = "短い。";
 const RSVP_NEAR_LIMIT_TEXT = "上限付近。";
@@ -74,6 +90,82 @@ for (const viewportWidth of RSVP_WIDTHS) {
     expect(resizedDisplay.fontSize).toBe(snapshots[0]?.fontSize);
   });
 }
+
+test("Chrome reader keeps the loading bar hidden when preparation completes in 0ms", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 0 });
+
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(0);
+  expect(await loadingBarWasRevealed(page)).toBe(0);
+});
+
+test("Chrome reader keeps the loading bar hidden when preparation completes in 99ms", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 99 });
+
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(0);
+});
+
+test("Chrome reader reveals a centered thin bar at the 100ms threshold", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 100 });
+
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+  const bar = page.locator("[data-reader-loading-bar]");
+  await expect(bar).toHaveCount(1);
+  await expect(bar).toHaveCSS("height", "2px");
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+});
+
+test("Chrome reader shows the bar for 1200ms preparation and removes it after the reader opens", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 1200 });
+
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(1);
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(0);
+});
+
+test("Chrome reader disables loading and cover animations for reduced motion", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 1200 });
+
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+  const loadingIndicator = page.locator("[data-reader-loading-indicator]");
+  await expect(loadingIndicator).toHaveCount(1);
+  expect(await loadingIndicator.evaluate((element) => element.getAnimations().length)).toBe(0);
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+  expect(await page.getByRole("dialog", { name: "reader" }).evaluate((element) => element.getAnimations().length)).toBe(0);
+});
+
+test("Chrome reader ignores a stale A result after request B starts", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 1200, text: "Aの本文です。" });
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+
+  await openChrome(page, { delay: 0, text: "Bの本文です。" });
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("[data-reader-unit]")).toHaveText("Bの本文です。");
+
+  await page.waitForTimeout(1300);
+  await expect(dialog.locator("[data-reader-unit]")).toHaveText("Bの本文です。");
+});
+
+test("Chrome reader stays closed when a loading request is closed before its result arrives", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 1200, text: "閉じられる本文です。" });
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+
+  await page.getByRole("button", { name: "閉じる" }).click();
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+  await page.waitForTimeout(1300);
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+});
 
 test("Chrome viewer keeps RSVP text readable without overflow", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });

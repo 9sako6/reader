@@ -30,6 +30,8 @@
     <script>
       const parameters = new URLSearchParams(location.search);
       const viewer = parameters.get("viewer") || "chrome";
+      const configuredDelay = Number(parameters.get("delay"));
+      const defaultDelay = Number.isFinite(configuredDelay) && configuredDelay >= 0 ? configuredDelay : 0;
       const loadedScripts = [];
 
       function loadScript(source) {
@@ -89,6 +91,8 @@
 
       async function installChromeViewer() {
         const messageListeners = [];
+        const loadingBarRevealEvents = [];
+        let requestSequence = 0;
         const chromeGlobal = globalThis.chrome || {};
         chromeGlobal.runtime = {
           onMessage: {
@@ -108,15 +112,39 @@
           await loadScript(source);
           loadedScripts.push(source);
         }
-        const open = (customText) => {
+        const open = (customTextOrOptions) => {
+          const options = typeof customTextOrOptions === "object" && customTextOrOptions !== null
+            ? customTextOrOptions
+            : {};
+          const customText = typeof customTextOrOptions === "string"
+            ? customTextOrOptions
+            : options.text;
           const { text, readingContext } = typeof customText === "string"
             ? customFixtureContent(customText)
             : fixtureContent();
-          for (const listener of messageListeners) listener({ type: "SHOW_RSVP_LOADING", requestId: "e2e" });
-          for (const listener of messageListeners) listener({ type: "START_RSVP", requestId: "e2e", text, readingContext });
+          const requestId = typeof options.requestId === "string"
+            ? options.requestId
+            : `e2e-${requestSequence += 1}`;
+          const requestedDelay = Number(options.delay);
+          const delay = Number.isFinite(requestedDelay) && requestedDelay >= 0 ? requestedDelay : defaultDelay;
+          for (const listener of messageListeners) listener({ type: "SHOW_RSVP_LOADING", requestId });
+          setTimeout(() => {
+            for (const listener of messageListeners) listener({ type: "START_RSVP", requestId, text, readingContext });
+          }, delay);
+          return requestId;
         };
+        const loadingObserver = new MutationObserver(() => {
+          const host = document.querySelector("#__rsvp-reader-root");
+          const bar = host?.shadowRoot?.querySelector("[data-reader-loading-bar]");
+          if (bar && loadingBarRevealEvents.length === 0) loadingBarRevealEvents.push(performance.now());
+        });
+        loadingObserver.observe(document.documentElement, { childList: true, subtree: true });
         document.querySelector("#launch-chrome").addEventListener("click", open);
-        return { open, extract: () => globalThis.Extractor.fromPage(document, globalThis.Defuddle) };
+        return {
+          open,
+          extract: () => globalThis.Extractor.fromPage(document, globalThis.Defuddle),
+          loadingBarRevealEvents,
+        };
       }
 
       async function installMobileViewer() {
