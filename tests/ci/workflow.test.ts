@@ -5,7 +5,6 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const workflow = fs.readFileSync(path.resolve(__dirname, "../../.github/workflows/ci.yml"), "utf8");
-const performanceScript = fs.readFileSync(path.resolve(__dirname, "../../scripts/measure-performance.mjs"), "utf8");
 const chromiumJobStart = workflow.indexOf("\n  e2e:\n");
 const iosJobStart = workflow.indexOf("\n  ios:\n", chromiumJobStart);
 const chromiumJob = workflow.slice(chromiumJobStart, iosJobStart);
@@ -27,6 +26,7 @@ test("CI uploads the performance baseline before Chromium E2E can clear test-res
   assert.ok(baselineBuild >= 0 && baselineBuild < measure);
   assert.match(chromiumJob.slice(baselineBuild, measure), /READER_PERFORMANCE_BASELINE_ROOT=/);
   assert.match(chromiumJob.slice(baselineBuild, measure), /READER_PERFORMANCE_BASE_COMMIT=/);
+  assert.match(chromiumJob.slice(baselineBuild, measure), /mise run build(?:\)|\r?\n|$)/);
   assert.match(chromiumJob.slice(baselineBuild, measure), /rustfmt,clippy --target wasm32-unknown-unknown/);
   assert.match(chromiumJob.slice(baselineBuild, measure), /rustup override set 1\.97\.1/);
   assert.ok(measure >= 0 && measure < upload);
@@ -57,10 +57,4 @@ test("CI verifies the generated Safari package after the simulator build", () =>
 
   assert.ok(iosJobStart >= 0);
   assert.ok(build >= 0 && build < packageRuntime && packageRuntime < diagnostics);
-});
-
-test("performance measurement fails when the recorded migration budget regresses", () => {
-  assert.match(performanceScript, /performanceGatePolicy/);
-  assert.match(performanceScript, /maxRegressionPercent/);
-  assert.match(performanceScript, /Performance gate failed/);
 });

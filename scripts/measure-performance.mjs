@@ -1,9 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { gzipSync } from "node:zlib";
 import { chromium } from "@playwright/test";
-import { evaluateFeedbackBudget } from "./performance-budget.mjs";
-import { buildPerformanceSample } from "./performance-sample.mjs";
+import { evaluateFeedbackBudget, evaluateReactMigrationGate } from "./performance-budget.mjs";
+import { buildPerformanceSample, median, percentile } from "./performance-sample.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const outputPath = resolve(repositoryRoot, "test-results/performance/reader.json");
@@ -19,6 +20,29 @@ const runtimeScripts = (root) => ["session-wasm-module.js", "session.js", "defud
   .map((name) => resolve(root, name));
 const scripts = runtimeScripts(generatedRoot);
 const baselineScripts = baselineGeneratedRoot ? runtimeScripts(baselineGeneratedRoot) : null;
+const bundleAssets = {
+  chrome: [
+    "apps/chrome/dist/session.js",
+    "apps/chrome/dist/session-wasm.js",
+    "apps/chrome/dist/reader_session_bg.wasm",
+    "apps/chrome/dist/vendor/defuddle/defuddle.js",
+    "apps/chrome/dist/engine.js",
+    "apps/chrome/dist/extractor.js",
+    "apps/chrome/dist/icons.js",
+    "apps/chrome/dist/viewer.js",
+  ],
+  safari: [
+    "apps/ios/ReaderExtension/Resources/generated/bootstrap.js",
+    "apps/ios/ReaderExtension/Resources/generated/session-wasm-module.js",
+    "apps/ios/ReaderExtension/Resources/generated/session.js",
+    "apps/ios/ReaderExtension/Resources/generated/reader_session_bg.wasm",
+    "apps/ios/ReaderExtension/Resources/generated/defuddle.js",
+    "apps/ios/ReaderExtension/Resources/generated/engine.js",
+    "apps/ios/ReaderExtension/Resources/generated/extractor.js",
+    "apps/ios/ReaderExtension/Resources/generated/icons.js",
+    "apps/ios/ReaderExtension/Resources/generated/viewer.js",
+  ],
+};
 const nodeCounts = [1000, 10_000, 50_000, 100_000];
 const runsPerCase = Number(process.env.READER_PERFORMANCE_RUNS) || 10;
 const warmupRunsPerCase = process.env.READER_PERFORMANCE_WARMUP_RUNS === undefined
@@ -66,6 +90,19 @@ const fixtures = [
   { name: "defuddle-fallback", nodeCount: 10_000, extraction: "fallback" },
 ];
 
+async function measureBundleBytes(root) {
+  const result = { raw: {}, gzip9: {} };
+  for (const [platform, assets] of Object.entries(bundleAssets)) {
+    const buffers = await Promise.all(assets.map((asset) => readFile(resolve(root, asset))));
+    result.raw[platform] = buffers.reduce((total, buffer) => total + buffer.byteLength, 0);
+    result.gzip9[platform] = buffers.reduce((total, buffer) => total + gzipSync(buffer, { level: 9 }).byteLength, 0);
+  }
+  for (const encoding of ["raw", "gzip9"]) {
+    result[encoding].total = result[encoding].chrome + result[encoding].safari;
+  }
+  return result;
+}
+
 let fixtureServer = null;
 try {
   await fetch(`${baseUrl}/tests/e2e/fixtures/performance.html`);
@@ -93,22 +130,15 @@ if (baselineRoot) {
   if (!baselineBootstrap.ok) throw new Error(`paired baseline assets are not served: ${baselineBootstrap.status}`);
 }
 
-function median(values) {
-  const ordered = [...values].sort((left, right) => left - right);
-  return ordered[Math.floor(ordered.length / 2)] || 0;
-}
-
-function percentile(values, percentileRank) {
-  const ordered = [...values].sort((left, right) => left - right);
-  return ordered[Math.max(0, Math.ceil(ordered.length * percentileRank) - 1)] || 0;
-}
-
 function medianReport(runs) {
   const numericKeys = [
     "bootstrapMs",
     "tapToFirstFeedbackMs",
     "tapToFirstUnitMs",
     "sessionInitMs",
+    "reactInitMs",
+    "wasmInitMs",
+    "initializationSpanMs",
     "extractionMs",
     "tapToFirstRenderMs",
     "nodeCount",
@@ -129,6 +159,9 @@ function percentileReport(runs, percentileRank) {
     "tapToFirstFeedbackMs",
     "tapToFirstUnitMs",
     "sessionInitMs",
+    "reactInitMs",
+    "wasmInitMs",
+    "initializationSpanMs",
     "extractionMs",
     "tapToFirstRenderMs",
     "nodeCount",
@@ -158,12 +191,19 @@ function pairedDeltaReport(baselineRuns, candidateRuns) {
     "tapToFirstFeedbackMs",
     "tapToFirstUnitMs",
     "sessionInitMs",
+    "reactInitMs",
+    "wasmInitMs",
+    "initializationSpanMs",
     "extractionMs",
     "tapToFirstRenderMs",
     "retainedHeapDeltaBytes",
   ];
   const deltas = Object.fromEntries(numericKeys.map((key) => {
-    const samples = candidateRuns.map((run, index) => run[key] - baselineRuns[index][key]);
+    const samples = candidateRuns.map((run, index) => {
+      const candidate = run[key];
+      const baseline = baselineRuns[index]?.[key];
+      return Number.isFinite(candidate) && Number.isFinite(baseline) ? candidate - baseline : null;
+    });
     return [key, { samples, p50: percentile(samples, 0.5), p90: percentile(samples, 0.9) }];
   }));
   return { baselineRuns, candidateRuns, deltas };
@@ -333,6 +373,10 @@ async function measurePage(browser, fixture, variant = "candidate") {
           firstUnit: mark("reader:first-unit"),
           sessionInitStart: mark("reader:session-init-start"),
           sessionInitEnd: mark("reader:session-init-end"),
+          reactInitStart: mark("reader:react-init-start"),
+          reactInitEnd: mark("reader:react-init-end"),
+          wasmInitStart: mark("reader:wasm-init-start"),
+          wasmInitEnd: mark("reader:wasm-init-end"),
         };
         const metrics = globalThis.__READER_PERFORMANCE_LAST_METRICS;
         const wasmRequestsBeforeTap = performance.getEntriesByType("resource")
@@ -464,6 +508,26 @@ try {
     if (baselineRoot) pairedComparison.nodeBenchmarks[String(nodeCount)] = pairedDelta;
   }
 
+  const initializationReports = [
+    ...Object.entries(fixtureReports).map(([name, report]) => ({
+      name: `fixture:${name}`,
+      candidate: report.p90,
+      baseline: baselineRoot ? percentileReport(pairedComparison.fixtures[name].baselineRuns, 0.9) : null,
+    })),
+    ...Object.entries(nodeReports).map(([name, report]) => ({
+      name: `nodes:${name}`,
+      candidate: report.p90,
+      baseline: baselineRoot ? percentileReport(pairedComparison.nodeBenchmarks[name].baselineRuns, 0.9) : null,
+    })),
+  ];
+  const bundleBytes = await measureBundleBytes(repositoryRoot);
+  const baselineBundleBytes = baselineRoot ? await measureBundleBytes(baselineRoot) : null;
+  const reactMigration = evaluateReactMigrationGate({
+    candidateBundle: bundleBytes,
+    baselineBundle: baselineBundleBytes,
+    initializationReports,
+  });
+
   const passiveBaseline = baselineRoot ? await measurePassivePage(browser, false, "baseline") : null;
   const passiveWithBootstrap = await measurePassivePage(browser);
   const passiveControl = await measurePassivePage(browser, true);
@@ -495,6 +559,13 @@ try {
     passiveWithBootstrap.bootstrapDecodedBytes > (passiveBaseline?.bootstrapDecodedBytes ?? baseline.passive.bootstrapDecodedBytes) * (1 + budgetMargin) ? "bootstrap-decoded-bytes" : null,
     passiveWithBootstrap.longTaskCount > (passiveBaseline?.longTaskCount ?? baseline.passive.longTaskCount) ? "passive-long-task" : null,
   ].filter(Boolean);
+  const reactRegressions = reactMigration.failures.map((reason) => ({ metric: `react:${reason}` }));
+  const allRegressions = [
+    ...regressions,
+    ...nodeRegressions,
+    ...passiveRegressions.map((metric) => ({ metric })),
+    ...reactRegressions,
+  ];
   const report = {
     schemaVersion: 2,
     generatedAt: new Date().toISOString(),
@@ -511,16 +582,18 @@ try {
     } : baseline,
     fixtures: fixtureReports,
     nodeBenchmarks: nodeReports,
+    bundleBytes,
+    reactMigration,
     passive,
     pairedComparison: baselineRoot ? pairedComparison : null,
-    regressions: [...regressions, ...nodeRegressions, ...passiveRegressions.map((metric) => ({ metric }))],
-    ci: { status: regressions.length === 0 && nodeRegressions.length === 0 && passiveRegressions.length === 0 ? "pass" : "regression" },
+    regressions: allRegressions,
+    ci: { status: allRegressions.length === 0 ? "pass" : "regression" },
   };
   await mkdir(resolve(repositoryRoot, "test-results/performance"), { recursive: true });
   await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  if (process.env.READER_PERFORMANCE_ENFORCE === "1" && (regressions.length > 0 || nodeRegressions.length > 0 || passiveRegressions.length > 0)) {
-    throw new Error(`Reader performance budget regression: ${JSON.stringify({ regressions, nodeRegressions, passiveRegressions })}`);
+  if (process.env.READER_PERFORMANCE_ENFORCE === "1" && allRegressions.length > 0) {
+    throw new Error(`Reader performance budget regression: ${JSON.stringify(allRegressions)}`);
   }
   if (process.env.READER_PERFORMANCE_ENFORCE === "1" && runsPerCase < 10) {
     throw new Error(`Reader performance requires at least 10 runs; received ${runsPerCase}`);
