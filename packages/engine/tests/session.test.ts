@@ -28,7 +28,10 @@ test("surrounding sentence context stays stable within a sentence", () => {
     previous: "最初です。",
     next: "最後です。",
   });
-  assert.deepEqual(surroundingSentences(units, 2), surroundingSentences(units, 1));
+  assert.deepEqual(surroundingSentences(units, 2), {
+    previous: "最初です。",
+    next: "最後です。",
+  });
   assert.deepEqual(surroundingSentences(units, 0), { previous: "", next: "次の文章です。" });
 });
 

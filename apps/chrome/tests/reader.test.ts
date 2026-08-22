@@ -74,7 +74,7 @@ function findElement(root, predicate) {
   return null;
 }
 
-test("reader shows the article outline beside the focal point", () => {
+function createOutlineReaderHarness() {
   const headingBeforeSelection = new FakeElement("h1", "記事タイトル");
   const headingInSelection = new FakeElement("h2", "次の節");
   const documentElement = new FakeElement("html");
@@ -212,12 +212,42 @@ test("reader shows the article outline beside the focal point", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   vm.runInNewContext(source, context);
 
-  const text = selection.toString();
+  return {
+    document,
+    documentElement,
+    selection,
+    timers,
+    messageListener,
+    resizeDisplay() {
+      resizeCallback();
+    },
+    rangeMeasurementCount() {
+      return rangeMeasurementCount;
+    },
+    enableReducedMotion() {
+      reduceMotion = true;
+    },
+  };
+}
+
+test("reader replaces loading only for the matching request", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "request-1" });
   const loadingOverlay = document.getElementById("__rsvp-reader-root");
   assert.ok(findElement(loadingOverlay, (element) => element.textContent === "文章を準備しています…"));
-  messageListener({ type: "START_RSVP", text, requestId: "stale-request" });
+  messageListener({ type: "START_RSVP", text: "最初の節です。次の節です。", requestId: "stale-request" });
   assert.equal(document.getElementById("__rsvp-reader-root"), loadingOverlay);
+  messageListener({ type: "START_RSVP", text: "最初の節です。次の節です。", requestId: "request-1" });
+  assert.ok(findElement(loadingOverlay, (element) => element.attributes["data-reader-stage"] === "true"));
+});
+
+test("reader shows the article outline beside the focal point", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  const text = "最初の節です。次の節です。";
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "request-1" });
   messageListener({ type: "START_RSVP", text, requestId: "request-1" });
 
   const overlay = document.getElementById("__rsvp-reader-root");
@@ -255,7 +285,7 @@ test("reader shows the article outline beside the focal point", () => {
   assert.ok(activeMarker);
   assert.equal(activeMarker.style.boxShadow, "none");
   assert.ok(Number.parseFloat(display.style.fontSize) <= 26);
-  assert.equal(rangeMeasurementCount, 3);
+  assert.equal(harness.rangeMeasurementCount(), 3);
   assert.equal(display.style.justifyContent, "center");
   assert.equal(previousContext.textContent, "");
   assert.equal(nextContext.textContent, "次の節です。");
@@ -263,12 +293,39 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(nextContext.style.WebkitLineClamp, "2");
   assert.deepEqual(Array.from(nextContext.animations[0].keyframes, ({ opacity }) => opacity), [0.12, 0.26]);
   assert.equal(nextContext.animations[0].options.duration, 120);
+});
+
+test("reader reduces the RSVP font size when the available width shrinks", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resize-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "resize-request",
+  });
+  const display = findElement(
+    document.getElementById("__rsvp-reader-root"),
+    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+  );
 
   display.clientWidth = 300;
-  resizeCallback();
+  harness.resizeDisplay();
   assert.ok(Number.parseFloat(display.style.fontSize) <= 15);
-  assert.ok(rangeMeasurementCount >= 5);
+  assert.ok(harness.rangeMeasurementCount() >= 5);
   assert.equal(display.style.justifyContent, "center");
+});
+
+test("reader renders controls with their literal dimensions", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "controls-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "controls-request",
+  });
+  const overlay = document.getElementById("__rsvp-reader-root");
 
   const playPauseButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
   const backButton = findElement(overlay, (element) => element.attributes["aria-label"] === "1文戻る");
@@ -284,6 +341,32 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(closeButton.children[0].tagName, "SVG");
   assert.equal(modeButton.style.minWidth, "112px");
   assert.equal(modeButton.parent.attributes["data-reader-topbar"], "true");
+});
+
+test("reader keyboard controls pause and move between sentence contexts", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, timers, messageListener } = harness;
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "keyboard-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "keyboard-request",
+  });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const display = findElement(
+    overlay,
+    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+  );
+  const previousContext = findElement(
+    overlay,
+    (element) => element.attributes["aria-hidden"] === "true" && element.style.bottom === "calc(50% + 82px)",
+  );
+  const nextContext = findElement(
+    overlay,
+    (element) => element.attributes["aria-hidden"] === "true" && element.style.top === "calc(50% + 82px)",
+  );
+  const playPauseButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
+  const backButton = findElement(overlay, (element) => element.attributes["aria-label"] === "1文戻る");
 
   let prevented = false;
   document.dispatchEvent({
@@ -322,6 +405,12 @@ test("reader shows the article outline beside the focal point", () => {
   assert.match(display.textContent, /最初の節/);
   assert.equal(previousContext.textContent, "");
   assert.equal(nextContext.textContent, "次の節です。");
+});
+
+test("reader follows page headings and switches to text mode", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, selection, messageListener } = harness;
+  const text = "最初の節です。次の節です。";
 
   selection.isCollapsed = true;
   const pageReadingContext = {
@@ -383,8 +472,24 @@ test("reader shows the article outline beside the focal point", () => {
   assert.ok(textScroller);
   assert.equal(rsvpModeButton.parent.attributes["data-reader-topbar"], "true");
   assert.ok(findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる"));
+});
 
-  reduceMotion = true;
+test("reader disables loading and stage animations for reduced motion", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  const pageReadingContext = {
+    headings: [
+      { text: "ページタイトル", level: 1 },
+      { text: "概要", level: 2 },
+    ],
+    sectionTransitions: [
+      { offset: 0, headingIndex: 0 },
+      { offset: 7, headingIndex: 1 },
+    ],
+    initialHeadingIndex: -1,
+  };
+
+  harness.enableReducedMotion();
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "reduced-motion-request" });
   const reducedLoadingOverlay = document.getElementById("__rsvp-reader-root");
   const reducedIndicator = findElement(
@@ -394,7 +499,7 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(reducedIndicator.animations.length, 0);
   messageListener({
     type: "START_RSVP",
-    text,
+    text: "最初の節です。次の節です。",
     requestId: "reduced-motion-request",
     readingContext: pageReadingContext,
   });
@@ -405,7 +510,7 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(reducedStage.animations.length, 0);
 });
 
-test("reader varies linguistic timing while preserving baseline effective WPM", () => {
+function createTimingReaderHarness() {
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
 
   const documentElement = new FakeElement("html");
@@ -467,6 +572,12 @@ test("reader varies linguistic timing while preserving baseline effective WPM", 
   context.globalThis = context;
   vm.runInNewContext(source, context);
 
+  return { document, messageListener, timers };
+}
+
+test("reader varies timing for punctuation and phrase length", () => {
+  const { document, messageListener, timers } = createTimingReaderHarness();
+
   const text = "短い、長い文章のまとまりです。次です。";
   const readingContext = {
     headings: [
@@ -497,6 +608,10 @@ test("reader varies linguistic timing while preserving baseline effective WPM", 
   assert.equal(display.textContent, "長い文章のまとまりです。");
   const secondTimer = [...timers.values()][0];
   assert.equal(secondTimer.delay, 828);
+});
+
+test("reader preserves the literal baseline effective reading rate", () => {
+  const { messageListener, timers } = createTimingReaderHarness();
 
   const baselineText = [
     "ソフトウェア設計では、変更理由を一つの場所に集めます。",
@@ -512,7 +627,7 @@ test("reader varies linguistic timing while preserving baseline effective WPM", 
     ],
     sectionTransitions: [
       { offset: 0, headingIndex: 0 },
-      { offset: baselineText.indexOf("テスト"), headingIndex: 1 },
+      { offset: 56, headingIndex: 1 },
     ],
     initialHeadingIndex: -1,
     figures: [],
@@ -545,7 +660,7 @@ test("reader varies linguistic timing while preserving baseline effective WPM", 
   assert.ok(equivalentWordsPerMinute >= 380 && equivalentWordsPerMinute <= 395);
 });
 
-test("reader pauses on an article image and keeps it in the text view", async () => {
+function createFigureReaderHarness() {
   const documentElement = new FakeElement("html");
   const documentListeners = new Map();
   const document = {
@@ -619,16 +734,22 @@ test("reader pauses on an article image and keeps it in the text view", async ()
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   vm.runInNewContext(source, context);
 
+  return { document, documentElement, messageListener, timers };
+}
+
+test("reader pauses on an article image and exposes its context", () => {
+  const { document, messageListener, timers } = createFigureReaderHarness();
+
   const leadingSentence = "結果を図1に示します。";
   const captionText = "図1 処理時間";
   const nextSentence = "次の説明です。";
-  const figureOffset = `${leadingSentence}\n`.length;
-  const figureEnd = figureOffset + captionText.length;
+  const figureOffset = 12;
+  const figureEnd = 19;
   const text = `${leadingSentence}\n${captionText}\n${nextSentence}`;
   const readingContext = {
     blocks: [
-      { text: leadingSentence, kind: "paragraph", level: null, start: 0, end: leadingSentence.length },
-      { text: nextSentence, kind: "paragraph", level: null, start: figureEnd + 1, end: text.length },
+      { text: leadingSentence, kind: "paragraph", level: null, start: 0, end: 11 },
+      { text: nextSentence, kind: "paragraph", level: null, start: 20, end: 27 },
     ],
     headings: [],
     sectionTransitions: [],
@@ -647,16 +768,16 @@ test("reader pauses on an article image and keeps it in the text view", async ()
   messageListener({ type: "START_RSVP", text, requestId: "figure-request", readingContext });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  let figurePanel = null;
-  for (let step = 0; step < 10 && !figurePanel; step += 1) {
-    const [timerId, timer] = [...timers.entries()][0];
-    timers.delete(timerId);
-    timer.callback();
-    figurePanel = findElement(
-      overlay,
-      (element) => element.attributes["aria-label"] === "本文画像",
-    );
-  }
+  const [firstTimerId, firstTimer] = [...timers.entries()][0];
+  timers.delete(firstTimerId);
+  firstTimer.callback();
+  const [secondTimerId, secondTimer] = [...timers.entries()][0];
+  timers.delete(secondTimerId);
+  secondTimer.callback();
+  let figurePanel = findElement(
+    overlay,
+    (element) => element.attributes["aria-label"] === "本文画像",
+  );
   assert.ok(figurePanel);
   const image = findElement(figurePanel, (element) => element.tagName === "IMG");
   const display = findElement(
@@ -686,6 +807,51 @@ test("reader pauses on an article image and keeps it in the text view", async ()
   assert.deepEqual(Array.from(figurePanel.animations[0].keyframes, ({ opacity }) => opacity), [0, 1]);
   assert.equal(figurePanel.animations[0].options.duration, 180);
   assert.deepEqual(Array.from(display.animations.at(-1).keyframes, ({ opacity }) => opacity), [1, 0]);
+});
+
+test("reader returns from an image to the previous sentence and resumes after the image", async () => {
+  const { document, documentElement, messageListener, timers } = createFigureReaderHarness();
+  const readingContext = {
+    blocks: [
+      { text: "結果を図1に示します。", kind: "paragraph", level: null, start: 0, end: 11 },
+      { text: "次の説明です。", kind: "paragraph", level: null, start: 20, end: 27 },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [
+      {
+        src: "https://example.com/chart.png",
+        alt: "処理時間の比較グラフ",
+        caption: "図1 処理時間",
+        sourceOffset: 12,
+        sourceEnd: 19,
+      },
+    ],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-navigation-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "結果を図1に示します。\n図1 処理時間\n次の説明です。",
+    requestId: "figure-navigation-request",
+    readingContext,
+  });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const display = findElement(
+    overlay,
+    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+  );
+  const [firstTimerId, firstTimer] = [...timers.entries()][0];
+  timers.delete(firstTimerId);
+  firstTimer.callback();
+  const [secondTimerId, secondTimer] = [...timers.entries()][0];
+  timers.delete(secondTimerId);
+  secondTimer.callback();
+  let figurePanel = findElement(
+    overlay,
+    (element) => element.attributes["aria-label"] === "本文画像",
+  );
+  assert.ok(figurePanel);
 
   const backButton = findElement(overlay, (element) => element.attributes["aria-label"] === "1文戻る");
   backButton.dispatchEvent({ type: "click" });
@@ -694,16 +860,16 @@ test("reader pauses on an article image and keeps it in the text view", async ()
   assert.match(display.textContent, /結果を/);
   assert.ok(findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.ok(timers.size > 0);
-  figurePanel = null;
-  for (let step = 0; step < 10 && !figurePanel; step += 1) {
-    const [timerId, timer] = [...timers.entries()][0];
-    timers.delete(timerId);
-    timer.callback();
-    figurePanel = findElement(
-      overlay,
-      (element) => element.attributes["aria-label"] === "本文画像",
-    );
-  }
+  const [returnFirstTimerId, returnFirstTimer] = [...timers.entries()][0];
+  timers.delete(returnFirstTimerId);
+  returnFirstTimer.callback();
+  const [returnSecondTimerId, returnSecondTimer] = [...timers.entries()][0];
+  timers.delete(returnSecondTimerId);
+  returnSecondTimer.callback();
+  figurePanel = findElement(
+    overlay,
+    (element) => element.attributes["aria-label"] === "本文画像",
+  );
   assert.ok(figurePanel);
 
   document.dispatchEvent({
@@ -717,6 +883,36 @@ test("reader pauses on an article image and keeps it in the text view", async ()
   assert.match(display.textContent, /^次の/u);
   assert.deepEqual(Array.from(display.animations.at(-1).keyframes, ({ opacity }) => opacity), [0, 1]);
   assert.ok(timers.size > 0);
+});
+
+test("reader keeps the article image and veil in text mode", () => {
+  const { document, messageListener } = createFigureReaderHarness();
+  const readingContext = {
+    blocks: [
+      { text: "結果を図1に示します。", kind: "paragraph", level: null, start: 0, end: 11 },
+      { text: "次の説明です。", kind: "paragraph", level: null, start: 20, end: 27 },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [
+      {
+        src: "https://example.com/chart.png",
+        alt: "処理時間の比較グラフ",
+        caption: "図1 処理時間",
+        sourceOffset: 12,
+        sourceEnd: 19,
+      },
+    ],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-text-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "結果を図1に示します。\n図1 処理時間\n次の説明です。",
+    requestId: "figure-text-request",
+    readingContext,
+  });
+  const overlay = document.getElementById("__rsvp-reader-root");
 
   const textModeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
   textModeButton.dispatchEvent({ type: "click" });

@@ -27,17 +27,50 @@ const document = {
   },
 };
 
-test("playback controls use consistently sized vector icons", () => {
-  for (const name of ["previous", "play", "pause", "close"]) {
-    const icon = create(document, name, 28);
-    assert.equal(icon.tagName, "svg");
-    assert.equal(icon.attributes.width, "28");
-    assert.equal(icon.attributes.height, "28");
-    assert.equal(icon.attributes.viewBox, "0 0 24 24");
-    assert.equal(icon.attributes.fill, "currentColor");
-    assert.equal(icon.attributes["aria-hidden"], "true");
-    assert.ok(icon.children.length > 0);
-  }
-  assert.equal(create(document, "previous", 28).children.length, 2);
+test("previous control uses a two-path 28px vector icon", () => {
+  const icon = create(document, "previous", 28);
+  assert.equal(icon.tagName, "svg");
+  assert.equal(icon.attributes.width, "28");
+  assert.equal(icon.attributes.height, "28");
+  assert.equal(icon.attributes.viewBox, "0 0 24 24");
+  assert.equal(icon.attributes.fill, "currentColor");
+  assert.equal(icon.attributes["aria-hidden"], "true");
+  assert.equal(icon.children.length, 2);
+});
+
+test("play control uses a 28px vector icon", () => {
+  const icon = create(document, "play", 28);
+  assert.equal(icon.tagName, "svg");
+  assert.equal(icon.attributes.width, "28");
+  assert.equal(icon.attributes.height, "28");
+  assert.equal(icon.attributes.viewBox, "0 0 24 24");
+  assert.equal(icon.attributes.fill, "currentColor");
+  assert.equal(icon.attributes["aria-hidden"], "true");
+  assert.ok(icon.children.length > 0);
+});
+
+test("pause control uses a 28px vector icon", () => {
+  const icon = create(document, "pause", 28);
+  assert.equal(icon.tagName, "svg");
+  assert.equal(icon.attributes.width, "28");
+  assert.equal(icon.attributes.height, "28");
+  assert.equal(icon.attributes.viewBox, "0 0 24 24");
+  assert.equal(icon.attributes.fill, "currentColor");
+  assert.equal(icon.attributes["aria-hidden"], "true");
+  assert.ok(icon.children.length > 0);
+});
+
+test("close control uses a 28px vector icon", () => {
+  const icon = create(document, "close", 28);
+  assert.equal(icon.tagName, "svg");
+  assert.equal(icon.attributes.width, "28");
+  assert.equal(icon.attributes.height, "28");
+  assert.equal(icon.attributes.viewBox, "0 0 24 24");
+  assert.equal(icon.attributes.fill, "currentColor");
+  assert.equal(icon.attributes["aria-hidden"], "true");
+  assert.ok(icon.children.length > 0);
+});
+
+test("unknown control names are rejected", () => {
   assert.throws(() => create(document, "missing", 28), /Unknown reader icon/);
 });

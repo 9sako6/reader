@@ -19,6 +19,9 @@ test("fromText produces the same Content contract as page extraction", () => {
       figures: [],
     },
   });
+});
+
+test("fromText returns no content for whitespace", () => {
   assert.equal(fromText("  "), null);
 });
 
@@ -35,6 +38,7 @@ test("installed Defuddle bundle exposes its browser constructor", () => {
 
 test("extractPage returns article text and heading offsets", () => {
   let defuddleOptions = null;
+  let defuddleDocument = null;
   let readerOverlayRemoved = false;
   const title = { tagName: "H1", textContent: "記事タイトル" };
   const section = { tagName: "H2", textContent: "次の節" };
@@ -79,7 +83,7 @@ test("extractPage returns article text and heading offsets", () => {
   };
   class FakeDefuddle {
     constructor(sourceDocument, options) {
-      assert.equal(sourceDocument, document);
+      defuddleDocument = sourceDocument;
       defuddleOptions = options;
     }
 
@@ -109,6 +113,7 @@ test("extractPage returns article text and heading offsets", () => {
       figures: [],
     },
   });
+  assert.equal(defuddleDocument, document);
   assert.equal(defuddleOptions.useAsync, false);
   assert.equal(defuddleOptions.removeExactSelectors, true);
   assert.equal(defuddleOptions.removeLowScoring, true);
@@ -195,8 +200,8 @@ test("extractPage keeps every article image at its source offset", () => {
       src: "https://example.com/chart.png",
       alt: "処理時間の比較グラフ",
       caption: "図1 処理時間",
-      sourceOffset: "この結果を図1に示します。\n".length,
-      sourceEnd: "この結果を図1に示します。\n図1 処理時間".length,
+      sourceOffset: 14,
+      sourceEnd: 21,
     },
   ]);
 });
@@ -245,8 +250,8 @@ test("extractPage preserves a sentence boundary between adjacent blocks", () => 
 
   const result = extractPage(document, FakeDefuddle);
 
-  assert.equal(result.text, `${firstText}\n${secondText}`);
-  assert.equal(result.readingContext.blocks[1].start, firstText.length + 1);
+  assert.equal(result.text, "First sentence.\nSecond sentence.");
+  assert.equal(result.readingContext.blocks[1].start, 16);
 });
 
 test("extractPage indexes many blocks and figures without rescanning the full prefix", () => {
@@ -326,8 +331,8 @@ test("extractPage indexes many blocks and figures without rescanning the full pr
   const result = extractPage(document, FakeDefuddle);
 
   assert.ok(result);
-  assert.equal(result.readingContext.blocks.length, paragraphs.length);
-  assert.equal(result.readingContext.figures.length, images.length);
+  assert.equal(result.readingContext.blocks.length, 12);
+  assert.equal(result.readingContext.figures.length, 12);
   assert.equal(rangeCalls, 0);
 });
 
@@ -465,14 +470,19 @@ test("extractPage excludes responsive article branches hidden by active CSS", ()
       };
     },
   };
+  let defuddleCalls = 0;
   class FakeDefuddle {
-    constructor() { throw new Error("dominant article should bypass Defuddle"); }
+    constructor() { defuddleCalls += 1; }
+    parse() { return { content: "<p>表示中の本文です。</p>" }; }
   }
 
   const result = extractPage(document, FakeDefuddle);
 
+  assert.equal(defuddleCalls, 0);
   assert.equal(hiddenCloneRemoved, true);
-  assert.deepEqual(result.readingContext.figures.map((figure) => figure.src), [visibleImage.src]);
+  assert.deepEqual(result.readingContext.figures.map((figure) => figure.src), [
+    "https://example.com/visible.png",
+  ]);
 });
 
 test("extractPage returns no content when the page body is unavailable", () => {

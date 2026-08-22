@@ -11,6 +11,12 @@ const Engine = require("../../../.build/packages/engine/src/engine.js");
 const root = path.join(__dirname, "..");
 const manifestPath = path.join(root, "ReaderExtension", "Resources", "manifest.json");
 
+function fireNextTimer(timers) {
+  const [timerId, timer] = [...timers.entries()][0];
+  timers.delete(timerId);
+  timer.callback();
+}
+
 test("Safari extension loads reader resources in dependency order", () => {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   assert.equal(manifest.manifest_version, 3);
@@ -28,14 +34,16 @@ test("Safari extension loads reader resources in dependency order", () => {
 
 test("Xcode project embeds every manifest script in the extension", () => {
   const project = fs.readFileSync(path.join(root, "reader.xcodeproj", "project.pbxproj"), "utf8");
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  for (const script of manifest.content_scripts[0].js) {
-    assert.match(project, new RegExp(`${script.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} in Resources`));
-  }
+  assert.match(project, /defuddle\.js in Resources/);
+  assert.match(project, /engine\.js in Resources/);
+  assert.match(project, /extractor\.js in Resources/);
+  assert.match(project, /icons\.js in Resources/);
+  assert.match(project, /viewer\.js in Resources/);
+  assert.match(project, /bootstrap\.js in Resources/);
   assert.match(project, /reader-extension\.appex in Embed Foundation Extensions/);
 });
 
-test("Safari reader preserves reading flow across gestures, images, and text mode", async () => {
+function createSafariReaderHarness() {
   const documentElement = new FakeElement("html");
   documentElement.lang = "ja";
   const body = new FakeElement("body");
@@ -61,19 +69,19 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   const caption = "図1";
   const followingSentence = "画像の後です。";
   const laterSentence = "さらに後の文章です。";
-  const figureOffset = `${leadingSentence}\n`.length;
-  const figureEnd = figureOffset + caption.length;
-  const followingOffset = figureEnd + 1;
-  const laterOffset = followingOffset + followingSentence.length + 1;
+  const figureOffset = 27;
+  const figureEnd = 29;
+  const followingOffset = 30;
+  const laterOffset = 38;
   const text = `${leadingSentence}\n${caption}\n${followingSentence}\n${laterSentence}`;
   const content = {
     text,
     readingContext: {
       title: "",
       blocks: [
-        { text: leadingSentence, kind: "paragraph", level: null, start: 0, end: leadingSentence.length },
-        { text: followingSentence, kind: "paragraph", level: null, start: followingOffset, end: followingOffset + followingSentence.length },
-        { text: laterSentence, kind: "paragraph", level: null, start: laterOffset, end: text.length },
+        { text: leadingSentence, kind: "paragraph", level: null, start: 0, end: 26 },
+        { text: followingSentence, kind: "paragraph", level: null, start: 30, end: 37 },
+        { text: laterSentence, kind: "paragraph", level: null, start: 38, end: 48 },
       ],
       headings: [],
       sectionOffsets: [],
@@ -140,10 +148,32 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   );
   vm.runInNewContext(source, context);
   context.MobileViewer.install();
+
+  return {
+    context,
+    documentElement,
+    createdElements,
+    timers,
+    launchFeedbackDuringExtraction() {
+      return launchFeedbackDuringExtraction;
+    },
+    extractionCount() {
+      return extractionCount;
+    },
+    setActiveContent(content) {
+      activeContent = content;
+    },
+  };
+}
+
+test("Safari reader shows extraction progress before opening", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, createdElements } = harness;
   const readerStyle = createdElements.find((element) => element.tagName === "STYLE");
   assert.match(readerStyle.textContent, /\.rsvp-unit \{[^}]*display: grid;[^}]*place-items: center;/u);
   await context.MobileViewer.open();
 
+  const launchFeedbackDuringExtraction = harness.launchFeedbackDuringExtraction();
   assert.ok(launchFeedbackDuringExtraction);
   assert.equal(launchFeedbackDuringExtraction.textContent, "");
   assert.equal(findElement(
@@ -176,6 +206,11 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   assert.ok(completionStart > 0.09 && completionStart < 0.1);
   assert.equal(completionFrames[completionFrames.length - 1].transform, "scaleX(1)");
   assert.ok(launchFeedbackDuringExtraction.animations.length > 0);
+});
+
+test("Safari reader reveals controls and preserves the paused state", async () => {
+  const { context, documentElement } = createSafariReaderHarness();
+  await context.MobileViewer.open();
 
   const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
   const backButton = findElement(
@@ -202,6 +237,22 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   assert.equal(playButton.attributes["aria-label"], "再生");
   rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1700 });
   assert.equal(backButton.parent.hidden, false);
+});
+
+test("Safari reader shows rewind feedback without changing pause state", async () => {
+  const { context, documentElement, timers } = createSafariReaderHarness();
+  await context.MobileViewer.open();
+  const rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
+  const backButton = findElement(
+    documentElement,
+    (element) => element.attributes["aria-label"] === "1文戻る",
+  );
+  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1000 });
+  const playButton = findElement(
+    documentElement,
+    (element) => element.attributes["aria-label"] === "一時停止",
+  );
+  playButton.dispatchEvent({ type: "click" });
 
   rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
   rsvpView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
@@ -226,24 +277,25 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   assert.equal(backButton.parent.hidden, true);
   assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.equal(timers.size, 1);
+});
 
-  const runUntilFigure = () => {
-    for (let step = 0; step < 10; step += 1) {
-      const figure = findElement(
-        documentElement,
-        (element) => element.attributes["aria-label"] === "本文画像",
-      );
-      if (figure) return figure;
-      const nextTimer = [...timers.entries()][0];
-      assert.ok(nextTimer);
-      const [timerId, timer] = nextTimer;
-      timers.delete(timerId);
-      timer.callback();
-    }
-    return null;
-  };
+test("Safari reader pauses on an image and can return to the previous sentence", async () => {
+  const { context, documentElement, timers } = createSafariReaderHarness();
+  await context.MobileViewer.open();
+  const backButton = findElement(
+    documentElement,
+    (element) => element.attributes["aria-label"] === "1文戻る",
+  );
 
-  const firstFigure = runUntilFigure();
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  const firstFigure = findElement(
+    documentElement,
+    (element) => element.attributes["aria-label"] === "本文画像",
+  );
   assert.ok(firstFigure);
   assert.equal(backButton.parent.hidden, false);
   firstFigure.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 3600 });
@@ -255,7 +307,30 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   assert.equal(backButton.parent.hidden, false);
   assert.ok(timers.size > 0);
 
-  assert.ok(runUntilFigure());
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  assert.ok(findElement(
+    documentElement,
+    (element) => element.attributes["aria-label"] === "本文画像",
+  ));
+});
+
+test("Safari reader maps text viewport positions back to RSVP content", async () => {
+  const { context, documentElement, timers } = createSafariReaderHarness();
+  await context.MobileViewer.open();
+  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  fireNextTimer(timers);
+  assert.ok(findElement(
+    documentElement,
+    (element) => element.attributes["aria-label"] === "本文画像",
+  ));
 
   modeButton.dispatchEvent({ type: "click" });
   const scroller = findElement(documentElement, (element) => element.className === "text-view");
@@ -353,10 +428,16 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   modeButton.dispatchEvent({ type: "click" });
   const firstCompleteUnit = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
   assert.match(firstCompleteUnit.textContent, /さらに後/u);
+});
+
+test("Safari reader caches one article and extracts again after navigation", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, createdElements } = harness;
+  await context.MobileViewer.open();
 
   context.MobileViewer.close();
   await context.MobileViewer.open();
-  assert.equal(extractionCount, 1);
+  assert.equal(harness.extractionCount(), 1);
   const launchFeedbacks = createdElements.filter((element) => element.className === "launch-feedback");
   const cachedLaunchFeedback = launchFeedbacks[launchFeedbacks.length - 1];
   const cachedProgressIndicator = findElement(
@@ -373,7 +454,7 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
 
   context.MobileViewer.close();
   context.location.href = "https://example.com/articles/second";
-  activeContent = {
+  harness.setActiveContent({
     text: "別の記事の本文です。",
     readingContext: {
       title: "別の記事",
@@ -382,7 +463,7 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
         kind: "paragraph",
         level: null,
         start: 0,
-        end: "別の記事の本文です。".length,
+        end: 10,
       }],
       headings: [],
       sectionOffsets: [],
@@ -390,9 +471,9 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
       initialHeadingIndex: -1,
       figures: [],
     },
-  };
+  });
   await context.MobileViewer.open();
-  assert.equal(extractionCount, 2);
+  assert.equal(harness.extractionCount(), 2);
   const secondArticleUnit = findElement(
     documentElement,
     (element) => element.className.startsWith("rsvp-unit"),

@@ -9,9 +9,11 @@ test("Chrome build contains the shared pipeline and only the desktop viewer", ()
   const manifest = JSON.parse(fs.readFileSync(path.join(output, "manifest.json"), "utf8"));
   assert.equal(manifest.name, "reader");
   assert.equal(manifest.background.service_worker, "service-worker.js");
-  for (const file of ["engine.js", "extractor.js", "icons.js", "viewer.js", "service-worker.js"]) {
-    assert.equal(fs.existsSync(path.join(output, file)), true);
-  }
+  assert.equal(fs.existsSync(path.join(output, "engine.js")), true);
+  assert.equal(fs.existsSync(path.join(output, "extractor.js")), true);
+  assert.equal(fs.existsSync(path.join(output, "icons.js")), true);
+  assert.equal(fs.existsSync(path.join(output, "viewer.js")), true);
+  assert.equal(fs.existsSync(path.join(output, "service-worker.js")), true);
   assert.equal(fs.existsSync(path.join(output, "vendor", "defuddle", "defuddle.js")), true);
   assert.equal(fs.existsSync(path.join(output, "mobile-viewer.js")), false);
 });

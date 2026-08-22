@@ -13,10 +13,6 @@ const {
   calculateReadingProgress,
 } = require("../../../.build/packages/engine/src/engine.js");
 
-function graphemeCount(text, locale = "ja") {
-  return [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(text)].length;
-}
-
 test("segmentText preserves the selected source text and offsets", () => {
   const source = "Redisを利用して排他制御を実現する場合（ただし、一部は別処理です）。";
   const units = segmentText(source);
@@ -53,16 +49,34 @@ test("segmentText is deterministic regardless of legacy morphology input", () =>
     { surface: "ます", pos: "助動詞" },
   ];
 
-  assert.deepEqual(segmentText(source, "ja", tokens), segmentText(source));
+  assert.deepEqual(segmentText(source, "ja", tokens).map((unit) => unit.text), [
+    "これは非常に",
+    "重要であり慎重に",
+    "扱う必要が",
+    "あります",
+  ]);
+  assert.deepEqual(segmentText(source).map((unit) => unit.text), [
+    "これは非常に",
+    "重要であり慎重に",
+    "扱う必要が",
+    "あります",
+  ]);
 });
 
 test("every RSVP unit is capped to avoid line wrapping", () => {
   assert.equal(MAX_GRAPHEMES_PER_UNIT, 12);
-  const source = "非常に長い技術文章のまとまりをそのまま表示して改行が起きないようにする。";
-  const units = segmentText(source);
-
-  assert.ok(units.every((unit) => graphemeCount(unit.text) <= MAX_GRAPHEMES_PER_UNIT));
-  assert.equal(units.map((unit) => unit.text).join(""), source);
+  assert.deepEqual(
+    segmentText("非常に長い技術文章のまとまりをそのまま表示して改行が起きないようにする。").map(
+      (unit) => unit.text,
+    ),
+    [
+      "非常に長い技術文章の",
+      "まとまり",
+      "をそのまま表示して",
+      "改行が起きないように",
+      "する。",
+    ],
+  );
 });
 
 test("long units split at word boundaries without breaking katakana words", () => {
@@ -77,12 +91,14 @@ test("long units split at word boundaries without breaking katakana words", () =
 });
 
 test("long Japanese corner-bracket quotes are split without losing quote styling", () => {
-  const source = "「これはとても長い引用なので一度では表示せず注視点を固定したまま分割する」";
-  const units = segmentText(source);
-
-  assert.ok(units.length > 1);
-  assert.ok(units.every((unit) => unit.kind === "quote"));
-  assert.equal(units.map((unit) => unit.text).join(""), source);
+  const units = segmentText("「これはとても長い引用なので一度では表示せず注視点を固定したまま分割する」");
+  assert.deepEqual(units.map((unit) => unit.text), [
+    "「これはとても長い引用",
+    "なので一度では表示せず注",
+    "視点を固定したまま分割",
+    "する」",
+  ]);
+  assert.deepEqual(units.map((unit) => unit.kind), ["quote", "quote", "quote", "quote"]);
 });
 
 test("short Japanese corner brackets stay together as a quote unit", () => {
@@ -93,7 +109,8 @@ test("short Japanese corner brackets stay together as a quote unit", () => {
 
 test("parenthetical text is marked as aside", () => {
   const units = segmentText("本文です（ただし、一部は例外です）。");
-  assert.ok(units.filter((unit) => unit.kind === "aside").some((unit) => unit.text.includes("ただし")));
+  assert.deepEqual(units.map((unit) => unit.kind), ["body", "aside", "aside"]);
+  assert.deepEqual(units.map((unit) => unit.text), ["本文です", "（ただし、", "一部は例外です）。"]);
 });
 
 test("splitStructuralSpans identifies body, quote, and aside", () => {
@@ -105,24 +122,21 @@ test("splitStructuralSpans identifies body, quote, and aside", () => {
 
 test("segmentText assigns sentence indices in order", () => {
   const units = segmentText("一文目です。二文目です。三文目です。");
-  assert.deepEqual([...new Set(units.map((unit) => unit.sentenceIndex))], [0, 1, 2]);
+  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1, 2]);
 });
 
 test("segmentText treats English periods as sentence boundaries", () => {
   const units = segmentText("First sentence. Second sentence. Third sentence.", "en");
-  const secondSentence = units.findIndex((unit) => unit.text.includes("Second"));
-  const secondSentenceStart = findSentenceStart(units, secondSentence);
-
-  assert.deepEqual([...new Set(units.map((unit) => unit.sentenceIndex))], [0, 1, 2]);
-  assert.match(units[secondSentenceStart].text.trimStart(), /^Second/u);
+  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 0, 1, 1, 2, 2]);
+  assert.equal(findSentenceStart(units, 3), 2);
+  assert.equal(units[2].text, " Second ");
 });
 
 test("segmentText starts a new sentence after a block boundary", () => {
   const units = segmentText("Transcript\nFirst, a quick intro.", "en");
-  const firstIntroUnit = units.findIndex((unit) => unit.text.includes("First"));
-  const firstIntroStart = findSentenceStart(units, firstIntroUnit);
-
-  assert.match(units[firstIntroStart].text.trimStart(), /^First/u);
+  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1, 1]);
+  assert.equal(findSentenceStart(units, 2), 1);
+  assert.equal(units[1].text, "First, a ");
 });
 
 test("segmentText never crosses a supplied content boundary", () => {
@@ -135,18 +149,15 @@ test("segmentText never crosses a supplied content boundary", () => {
 });
 
 test("findSentenceStart keeps the sentence immediately before an image", () => {
-  const units = segmentText("最初の文です。画像直前の長い文です。画像後です。");
-  const beforeImage = units.findIndex((unit) => unit.sentenceIndex === 1);
-  const laterPartOfSentence = units.findLastIndex((unit) => unit.sentenceIndex === 1);
-
-  assert.equal(findSentenceStart(units, laterPartOfSentence), beforeImage);
+  const units = segmentText(
+    "最初の文です。画像直前にある非常に長い文で複数の表示単位に分かれます。画像後です。",
+  );
+  assert.equal(findSentenceStart(units, 5), 1);
 });
 
 test("findPreviousSentenceStart moves to previous sentence", () => {
   const units = segmentText("最初の文です。次の文です。最後の文です。");
-  const third = units.findIndex((unit) => unit.sentenceIndex === 2);
-  const expected = units.findIndex((unit) => unit.sentenceIndex === 1);
-  assert.equal(findPreviousSentenceStart(units, third), expected);
+  assert.equal(findPreviousSentenceStart(units, 2), 1);
 });
 
 test("findActiveHeadingIndex follows section transitions", () => {
@@ -169,5 +180,8 @@ test("calculateReadingProgress clamps selection offsets to a percentage", () => 
 
 test("empty text produces no units", () => {
   assert.deepEqual(segmentText(""), []);
+});
+
+test("previous sentence lookup returns the first position for no units", () => {
   assert.equal(findPreviousSentenceStart([], 0), 0);
 });
