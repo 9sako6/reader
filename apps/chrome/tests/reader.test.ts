@@ -641,6 +641,25 @@ test("reader attaches visibility lifecycle only while a session is active", () =
   assert.equal(sessionCommands.length, commandCountAfterClose);
 });
 
+test("reader stays paused at the same position after visibility returns", () => {
+  const harness = createOutlineReaderHarness();
+  harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "visibility-round-trip" });
+  harness.messageListener({
+    type: "START_RSVP",
+    text: "可視性が変わっても現在位置を維持します。次の文です。",
+    requestId: "visibility-round-trip",
+  });
+
+  harness.setVisibilityState("hidden");
+  const hiddenState = harness.sessionState();
+  assert.equal(hiddenState.playback, "paused");
+  assert.equal(harness.timers.size, 0);
+
+  harness.setVisibilityState("visible");
+  assert.deepEqual(harness.sessionState(), hiddenState);
+  assert.equal(harness.timers.size, 0);
+});
+
 function readerCursor(state) {
   return {
     phase: state?.phase,
@@ -1800,6 +1819,32 @@ test("reader varies timing for punctuation and phrase length", () => {
   assert.equal(secondTimer.delay, 828);
 });
 
+test("Chrome schedules the shared heading-transition durations", () => {
+  const { messageListener, timers } = createTimingReaderHarness();
+  const text = "短い、次です。";
+  const readingContext = {
+    headings: [
+      { text: "導入", level: 1 },
+      { text: "本論", level: 2 },
+    ],
+    sectionTransitions: [
+      { offset: 0, headingIndex: 0 },
+      { offset: 3, headingIndex: 1 },
+    ],
+    initialHeadingIndex: -1,
+    figures: [],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "parity-request" });
+  messageListener({ type: "START_RSVP", text, requestId: "parity-request", readingContext });
+
+  const [firstTimerId, firstTimer] = [...timers.entries()][0];
+  assert.equal(firstTimer.delay, 612);
+  timers.delete(firstTimerId);
+  firstTimer.callback();
+  const [secondTimer] = [...timers.values()];
+  assert.equal(secondTimer.delay, 276);
+});
+
 test("Chrome viewer segments with the ReaderContent language", () => {
   const locales: string[] = [];
   const engine = {
@@ -1877,6 +1922,43 @@ test("reader preserves the literal baseline effective reading rate", () => {
   const equivalentWordsPerMinute = charactersPerMinute / 2.43;
   assert.ok(charactersPerMinute >= 925 && charactersPerMinute <= 950);
   assert.ok(equivalentWordsPerMinute >= 380 && equivalentWordsPerMinute <= 395);
+});
+
+test("reader keeps one timer and ends paused after a 30-minute-equivalent RSVP flow", () => {
+  const longText = Array.from(
+    { length: 1_550 },
+    () => "これは三十分相当の長文を検証する文です。",
+  ).join("");
+  const { messageListener, timers, sessionState } = createOutlineReaderHarness();
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "long-flow-request" });
+  messageListener({ type: "START_RSVP", text: longText, requestId: "long-flow-request" });
+
+  let elapsedMs = 0;
+  let firedTimerCount = 0;
+  let maxPendingTimerCount = 0;
+  while (timers.size > 0) {
+    assert.equal(timers.size, 1);
+    const [timerId, timer] = [...timers.entries()][0];
+    timers.delete(timerId);
+    elapsedMs += timer.delay;
+    firedTimerCount += 1;
+    timer.callback();
+    maxPendingTimerCount = Math.max(maxPendingTimerCount, timers.size);
+    assert.ok(firedTimerCount < 10_000);
+  }
+
+  const finalState = sessionState();
+  assert.ok(elapsedMs >= 30 * 60 * 1_000);
+  assert.ok(firedTimerCount > 3_000);
+  assert.equal(maxPendingTimerCount, 1);
+  assert.equal(finalState.phase, "reading");
+  assert.equal(finalState.playback, "paused");
+  assert.equal(finalState.timerPending, false);
+  assert.equal(finalState.flowIndex, finalState.flowLength - 1);
+  assert.equal(finalState.currentKind, "unit");
+  assert.equal(finalState.position.kind, "text");
+  assert.equal(finalState.sourceOffset, finalState.position.sourceOffset);
+  assert.ok(finalState.sourceOffset > 0 && finalState.sourceOffset < longText.length);
 });
 
 function createFigureReaderHarness() {

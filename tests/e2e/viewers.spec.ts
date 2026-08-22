@@ -1561,6 +1561,39 @@ test("WASM is lazy until the viewer is opened", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => performance.getEntriesByType("resource").filter((entry) => entry.name.endsWith("reader_session_bg.wasm")).length)).toBeGreaterThan(0);
 });
 
+for (const viewer of ["chrome", "mobile"] as const) {
+  test(`${viewer} pauses on hidden and does not auto-resume on visible`, async ({ page }) => {
+    await loadViewer(page, viewer);
+    if (viewer === "chrome") await openChrome(page, { text: "可視性の変化を実ブラウザで確認します。", paused: true });
+    else await openMobile(page, { text: "可視性の変化を実ブラウザで確認します。" });
+
+    const dialog = page.getByRole("dialog", { name: "reader" });
+    await expect(dialog).toBeVisible();
+    await pauseReaderIfPlaying(dialog);
+    await dialog.getByRole("button", { name: "再生" }).click();
+    await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+
+    const setVisibility = async (state: "hidden" | "visible") => {
+      await page.evaluate((nextState) => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          value: nextState,
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      }, state);
+    };
+
+    await setVisibility("hidden");
+    await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+    const hiddenPosition = await readReaderPosition(dialog);
+
+    await setVisibility("visible");
+    await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+    await page.waitForTimeout(350);
+    await expect.poll(() => readReaderPosition(dialog)).toEqual(hiddenPosition);
+  });
+}
+
 const TIMING_E2E_TEXT = Array.from({ length: 10 }, (_, index) => `計測用の文${index + 1}です。`).join("");
 
 for (const viewer of ["chrome", "mobile"] as const) {

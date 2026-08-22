@@ -513,6 +513,9 @@ test("Safari uses heading transitions when scheduling the first unit", async () 
 
   const [firstTimer] = [...harness.timers.values()];
   assert.equal(firstTimer?.delay, 612);
+  fireNextTimer(harness.timers);
+  const [secondTimer] = [...harness.timers.values()];
+  assert.equal(secondTimer?.delay, 276);
 });
 
 function safariReaderCursor(state) {
@@ -1285,6 +1288,55 @@ test("Safari reader destroys paused text mode state when closed", async () => {
 
   assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
   assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
+});
+
+test("Safari keeps one timer and ends paused after a 30-minute-equivalent RSVP flow", async () => {
+  const longText = Array.from(
+    { length: 1_550 },
+    () => "これは三十分相当の長文を検証する文です。",
+  ).join("");
+  const harness = createSafariReaderHarness();
+  harness.setActiveContent({
+    text: longText,
+    readingContext: {
+      language: "ja",
+      title: "",
+      blocks: [{ text: longText, kind: "paragraph", level: null, start: 0, end: longText.length }],
+      headings: [],
+      sectionOffsets: [],
+      sectionTransitions: [],
+      initialHeadingIndex: -1,
+      figures: [],
+    },
+  });
+  await harness.context.MobileViewer.open();
+
+  let elapsedMs = 0;
+  let firedTimerCount = 0;
+  let maxPendingTimerCount = 0;
+  while (harness.timers.size > 0) {
+    assert.equal(harness.timers.size, 1);
+    const [timerId, timer] = [...harness.timers.entries()][0];
+    harness.timers.delete(timerId);
+    elapsedMs += timer.delay;
+    firedTimerCount += 1;
+    timer.callback();
+    maxPendingTimerCount = Math.max(maxPendingTimerCount, harness.timers.size);
+    assert.ok(firedTimerCount < 10_000);
+  }
+
+  const finalState = harness.sessionState();
+  assert.ok(elapsedMs >= 30 * 60 * 1_000);
+  assert.ok(firedTimerCount > 3_000);
+  assert.equal(maxPendingTimerCount, 1);
+  assert.equal(finalState.phase, "reading");
+  assert.equal(finalState.playback, "paused");
+  assert.equal(finalState.timerPending, false);
+  assert.equal(finalState.flowIndex, finalState.flowLength - 1);
+  assert.equal(finalState.currentKind, "unit");
+  assert.equal(finalState.position.kind, "text");
+  assert.equal(finalState.sourceOffset, finalState.position.sourceOffset);
+  assert.ok(finalState.sourceOffset > 0 && finalState.sourceOffset < longText.length);
 });
 
 test("Safari reader destroys figure state when closed", async () => {
