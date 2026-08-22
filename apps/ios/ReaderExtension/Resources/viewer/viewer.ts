@@ -9,15 +9,9 @@
     | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "failed"; token: number; figureIndex: number };
   interface LaunchProgress {
-    element: HTMLElement;
-    loader: HTMLElement;
-    indicator: HTMLElement;
-    animation: Animation | null;
     startedAt: number;
     revealTimer: number | null;
     slowTimer: number | null;
-    status: HTMLElement | null;
-    cancelButton: HTMLButtonElement | null;
     revealed: boolean;
   }
   const HOST_ID = "__reader-host";
@@ -122,7 +116,9 @@
   }
 
   function unmountReactViewer(): void {
+    const root = reactViewHost;
     reactViewMount?.unmount();
+    root?.remove();
     reactViewMount = null;
     reactViewHost = null;
   }
@@ -237,7 +233,6 @@
     root.append(createStyles());
     handle = createHandle();
     root.append(handle);
-    mountReactViewer(root);
     global.document.documentElement.append(host);
     global.addEventListener("scroll", fadeHandleDuringScroll, { passive: true });
     global.addEventListener("resize", handleViewportChange, { passive: true });
@@ -334,8 +329,6 @@
   function destroyLaunchProgress(progress: LaunchProgress): void {
     if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
     if (progress.slowTimer !== null) global.clearTimeout(progress.slowTimer);
-    progress.animation?.cancel?.();
-    progress.element.remove();
     if (launchProgress === progress) launchProgress = null;
   }
 
@@ -362,15 +355,34 @@
     sourceOverflow = global.document.documentElement.style.overflow;
     sourceBodyOverflow = global.document.body?.style.overflow ?? null;
     handle.hidden = true;
-    const progress = createLaunchFeedback();
+    const progress: LaunchProgress = {
+      startedAt: Date.now(),
+      revealTimer: null,
+      slowTimer: null,
+      revealed: false,
+    };
     launchProgress = progress;
-    progress.revealTimer = global.setTimeout(() => revealLaunchProgress(progress, generation), LOADER_REVEAL_DELAY_MS);
-    progress.slowTimer = global.setTimeout(() => showSlowLaunchProgress(progress, generation), SLOW_PREPARATION_DELAY_MS);
+    progress.revealTimer = global.setTimeout(() => {
+      if (!isCurrentSession(generation) || progress.revealed) return;
+      progress.revealed = true;
+      progress.revealTimer = null;
+      renderReactView();
+    }, LOADER_REVEAL_DELAY_MS);
+    progress.slowTimer = global.setTimeout(() => {
+      if (!isCurrentSession(generation)) return;
+      if (!progress.revealed) {
+        progress.revealed = true;
+        if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
+        progress.revealTimer = null;
+      }
+      progress.slowTimer = null;
+      slowPreparationVisible = true;
+      renderReactView();
+    }, SLOW_PREPARATION_DELAY_MS);
     if (!isCurrentSession(generation)) {
       destroyLaunchProgress(progress);
       return;
     }
-    if (!reactViewMount) shadow.append(progress.element);
     markPerformance("reader:first-feedback");
     await nextPaint();
     if (!isCurrentSession(generation)) {
@@ -431,9 +443,21 @@
       return;
     }
     const elapsed = Date.now() - progress.startedAt;
-    if (elapsed >= LOADER_REVEAL_DELAY_MS) revealLaunchProgress(progress, generation);
-    if (elapsed >= SLOW_PREPARATION_DELAY_MS) showSlowLaunchProgress(progress, generation);
-    if (progress.revealed) await finishLaunchProgress(progress, generation);
+    let launchProgressChanged = false;
+    if (elapsed >= LOADER_REVEAL_DELAY_MS) {
+      progress.revealed = true;
+      if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
+      progress.revealTimer = null;
+      launchProgressChanged = true;
+    }
+    if (elapsed >= SLOW_PREPARATION_DELAY_MS) {
+      progress.revealed = true;
+      if (progress.slowTimer !== null) global.clearTimeout(progress.slowTimer);
+      progress.slowTimer = null;
+      slowPreparationVisible = true;
+      launchProgressChanged = true;
+    }
+    if (launchProgressChanged) renderReactView();
     if (!isCurrentSession(generation)) {
       destroyLaunchProgress(progress);
       return;
@@ -471,84 +495,6 @@
       findCloseButton()?.focus();
     });
     if (isCurrentSession(generation)) opening = false;
-  }
-
-  function createLaunchFeedback(): LaunchProgress {
-    const feedback = global.document.createElement("div");
-    feedback.className = "launch-feedback";
-    feedback.setAttribute("aria-hidden", "true");
-    const loader = global.document.createElement("div");
-    loader.className = "launch-loader";
-    loader.style.display = "none";
-    const track = global.document.createElement("div");
-    track.className = "launch-progress-track";
-    const indicator = global.document.createElement("div");
-    indicator.className = "launch-progress-indicator";
-    track.append(indicator);
-    loader.append(track);
-    feedback.append(loader);
-    return {
-      element: feedback,
-      loader,
-      indicator,
-      animation: null,
-      startedAt: Date.now(),
-      revealTimer: null,
-      slowTimer: null,
-      status: null,
-      cancelButton: null,
-      revealed: false,
-    };
-  }
-
-  function revealLaunchProgress(progress: LaunchProgress, generation: number): void {
-    if (!isCurrentSession(generation) || progress.revealed) return;
-    progress.revealed = true;
-    if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
-    progress.revealTimer = null;
-    progress.loader.style.display = "block";
-    progress.loader.style.opacity = "1";
-    const reducedMotion = global.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    progress.indicator.style.transform = "translateX(0) scaleX(.35)";
-    progress.animation = reducedMotion ? null : progress.indicator.animate(
-      [
-        { transform: "translateX(-100%) scaleX(.35)" },
-        { transform: "translateX(220%) scaleX(.35)" },
-      ],
-      { duration: 1100, iterations: Infinity, easing: "linear" },
-    );
-    if (reactViewMount) renderReactView();
-  }
-
-  function showSlowLaunchProgress(progress: LaunchProgress, generation: number): void {
-    if (!isCurrentSession(generation)) return;
-    if (!progress.revealed) revealLaunchProgress(progress, generation);
-    if (progress.slowTimer !== null) global.clearTimeout(progress.slowTimer);
-    progress.slowTimer = null;
-    slowPreparationVisible = true;
-    if (reactViewMount) {
-      renderReactView();
-      return;
-    }
-  }
-
-  async function finishLaunchProgress(progress: LaunchProgress, generation: number): Promise<void> {
-    progress.animation?.cancel?.();
-    progress.animation = null;
-    if (!progress.revealed || !isCurrentSession(generation)) return;
-    if (global.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      progress.element.style.opacity = "0";
-      return;
-    }
-    const fade = progress.element.animate(
-      [{ opacity: 1 }, { opacity: 0 }],
-      { duration: 90, easing: "ease-out", fill: "forwards" },
-    );
-    try {
-      await fade.finished;
-    } catch {
-      return;
-    }
   }
 
   function createAbortController(): AbortController {

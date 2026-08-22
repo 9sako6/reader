@@ -233,7 +233,7 @@ function renderFigure(
 }
 
 function renderLoading(model: Extract<ReaderViewModel, { kind: "loading" }>, handlers: ReaderViewHandlers): ReactElement {
-  const children: ReactNode[] = model.revealed === false ? [] : [createElement(LoadingIndicator, { key: "bar", mobile: model.mobile === true, reducedMotion: model.reducedMotion })];
+  const children: ReactNode[] = [createElement(LoadingIndicator, { key: "bar", mobile: model.mobile === true, reducedMotion: model.reducedMotion, revealed: model.revealed !== false })];
   if (model.slow) {
     children.push(createElement("div", { key: "status", className: model.mobile ? "launch-status" : undefined, "data-reader-loading-label": "true", role: "status", style: { position: "absolute", left: "50%", top: "calc(50% + 24px)", transform: "translateX(-50%)", color: "rgba(255,255,255,0.82)", fontSize: "14px", whiteSpace: "nowrap" }, children: "文章を準備しています" }));
     children.push(createElement("button", { key: "cancel", type: "button", "data-reader-loading-cancel": "true", className: model.mobile ? "launch-cancel" : undefined, style: { ...buttonStyle, position: "absolute", left: "50%", bottom: "32px", transform: "translateX(-50%)" }, onClick: handlers.cancel, children: "中止" }));
@@ -242,11 +242,13 @@ function renderLoading(model: Extract<ReaderViewModel, { kind: "loading" }>, han
   return createElement("div", { className: model.mobile ? "launch-feedback" : undefined, "data-reader-loading": "true", style: { position: "absolute", inset: "0", pointerEvents: model.slow ? "auto" : "none" }, children });
 }
 
-function LoadingIndicator({ mobile, reducedMotion }: { mobile: boolean; reducedMotion: boolean }): ReactElement {
+function LoadingIndicator({ mobile, reducedMotion, revealed }: { mobile: boolean; reducedMotion: boolean; revealed: boolean }): ReactElement {
   const indicatorRef = useRef<HTMLElement | null>(null);
+  const animationStartedRef = useRef(false);
   useLayoutEffect(() => {
     const indicator = indicatorRef.current;
-    if (!indicator || reducedMotion || typeof indicator.animate !== "function") return undefined;
+    if (!indicator || !revealed || reducedMotion || animationStartedRef.current || typeof indicator.animate !== "function") return undefined;
+    animationStartedRef.current = true;
     const animation = indicator.animate(
       [
         { transform: "translateX(-100%) scaleX(.35)" },
@@ -255,12 +257,12 @@ function LoadingIndicator({ mobile, reducedMotion }: { mobile: boolean; reducedM
       { duration: 1100, iterations: Infinity, easing: "linear" },
     );
     return () => animation.cancel?.();
-  }, [reducedMotion]);
+  }, [reducedMotion, revealed]);
   return createElement("div", {
     className: mobile ? "launch-loader" : undefined,
     "data-reader-loading-bar": "true",
     "aria-hidden": "true",
-    style: { position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(180px, calc(100% - 48px))", height: "2px", borderRadius: "999px", overflow: "hidden", background: "rgba(255,255,255,0.18)", pointerEvents: "none", display: "block", opacity: "1" },
+    style: { position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(180px, calc(100% - 48px))", height: "2px", borderRadius: "999px", overflow: "hidden", background: "rgba(255,255,255,0.18)", pointerEvents: "none", display: revealed ? "block" : "none", opacity: revealed ? "1" : "0" },
     children: createElement("div", {
       className: mobile ? "launch-progress-track" : undefined,
       "data-reader-loading-indicator": "true",
@@ -324,7 +326,7 @@ function renderDesktopRsvp(model: Extract<ReaderViewModel, { kind: "rsvp" }>, ha
     createElement("div", { key: "next", "data-reader-context-next": "true", "aria-hidden": "true", style: { position: "absolute", left: "50%", top: "calc(50% + 82px)", transform: "translateX(-50%)", width: "min(100%, 640px)", maxWidth: "calc(100% - 32px)", color: "rgba(255,255,255,0.26)", fontSize: "clamp(16px, 1.5vw, 20px)", lineHeight: "1.4", textAlign: "center", opacity: "0.26", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: "2", whiteSpace: "nowrap", textOverflow: "ellipsis" }, children: model.next }),
     createElement("div", { key: "controls", style: { position: "absolute", left: "50%", bottom: "8px", transform: "translateX(-50%)", width: "min(100%, 264px)", minHeight: "56px", display: "grid", gridTemplateColumns: "1fr 56px 1fr", alignItems: "center" }, children: [iconButton("1文戻る", handlers.previousSentence, { width: "52px", height: "52px", color: "rgba(245,245,247,0.66)" }), transport, createElement("span", { key: "spacer" })] }),
     createElement("span", { key: "progress", "data-reader-progress": "true", style: { position: "absolute", right: "16px", bottom: "16px", zIndex: "3", color: "rgba(235,235,235,0.58)", fontSize: "13px", fontVariantNumeric: "tabular-nums", pointerEvents: "none" }, children: `${model.progress}%` }),
-  ] }), model.loadingCover ? createElement(LoadingIndicator, { key: "loading-cover", mobile: false, reducedMotion: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true }) : null] });
+  ] }), model.loadingCover ? createElement(LoadingIndicator, { key: "loading-cover", mobile: false, reducedMotion: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true, revealed: true }) : null] });
 }
 
 function renderDesktopText(model: Extract<ReaderViewModel, { kind: "text" }>, handlers: ReaderViewHandlers): ReactElement {

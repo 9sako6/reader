@@ -642,6 +642,32 @@ test("Chrome React harness preserves attribute presence and DOM move semantics",
   assert.equal(child.parentNode, second);
 });
 
+test("Chrome viewer leaves rendering to ReaderView", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.ts"), "utf8");
+  for (const symbol of [
+    "createTopbar",
+    "createMinimap",
+    "createButton",
+    "createTextBlock",
+    "createTextFigure",
+    "createVeiledImageSurface",
+    "createFigureStatus",
+    "scheduleFigureLoadingIndicator",
+    "renderCurrentUnit",
+    "applyUnitStyle",
+    "updateMinimap",
+    "fadeContext",
+    "renderCurrentFlowItem",
+    "showFigure",
+    "loadingLayer",
+    "playbackState",
+    "currentUnitIndex",
+    "nextFigureIndex",
+  ]) {
+    assert.equal(source.includes(symbol), false, `obsolete Chrome renderer symbol: ${symbol}`);
+  }
+});
+
 test("reader replaces loading only for the matching request", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers } = harness;

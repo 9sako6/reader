@@ -222,6 +222,13 @@ test("Xcode project embeds every manifest script in the extension", () => {
   assert.equal(project.includes("RELEASE_CHECKLIST.md"), false);
 });
 
+test("Safari viewer leaves loading and rendering to ReaderView", () => {
+  const source = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "viewer", "viewer.ts"), "utf8");
+  for (const symbol of ["createLaunchFeedback", "revealLaunchProgress", "finishLaunchProgress", "launchProgress.element", "launchProgress.animation"]) {
+    assert.equal(source.includes(symbol), false, `obsolete Safari renderer symbol: ${symbol}`);
+  }
+});
+
 function createSafariReaderHarness(
   engine = Engine,
   language = "ja",
@@ -504,6 +511,25 @@ test("Safari reader starts beside a page-owned host and reuses only its owned ro
   ).length, 1);
   assert.ok(findElement(documentElement, (element) => element.className === "reader"));
   assert.equal(pageOwnedHost.parent?.tagName, "BODY");
+});
+
+test("Safari mounts one React root per open session and removes it on close", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement } = harness;
+  const reactRoots = () => findElements(
+    documentElement,
+    (element) => element.attributes["data-reader-react-root"] === "true",
+  );
+
+  assert.equal(reactRoots().length, 0);
+  await context.MobileViewer.open();
+  assert.equal(reactRoots().length, 1);
+  context.MobileViewer.close();
+  assert.equal(reactRoots().length, 0);
+  await context.MobileViewer.open();
+  assert.equal(reactRoots().length, 1);
+  context.MobileViewer.close();
+  assert.equal(reactRoots().length, 0);
 });
 
 test("Safari reader marks startup phases without including page content", async () => {
