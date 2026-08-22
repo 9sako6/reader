@@ -118,7 +118,7 @@ function createSessionStub(commands, options: { init?: () => Promise<void>; read
         }
       } else if (command.type === "previousSentence" && previous.phase === "reading") {
         const target = handle.flow.flow.findIndex((item) => item.kind === "unit");
-        const playback = previous.currentKind === "figure" || previous.playback === "playing" ? "playing" : "paused";
+        const playback = previous.playback === "playing" ? "playing" : "paused";
         state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, Math.max(0, target), playback);
         effects = [{ type: "cancelTimer" }];
         if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
@@ -178,6 +178,10 @@ test("Safari extension loads reader resources in dependency order", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.permissions, undefined);
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);
+  assert.deepEqual(manifest.web_accessible_resources, [{
+    resources: ["reader_session_bg.wasm"],
+    matches: ["<all_urls>"],
+  }]);
   assert.deepEqual(manifest.content_scripts[0].js, [
     "defuddle.js",
     "session-wasm.js",
@@ -648,7 +652,7 @@ test("Safari reader shows rewind feedback without changing pause state", async (
   assert.equal(timers.size, 1);
 });
 
-test("Safari reader pauses on an image and can return to the previous sentence", async () => {
+test("Safari reader pauses after returning from an image to the previous sentence", async () => {
   const { context, documentElement, timers } = createSafariReaderHarness();
   await context.MobileViewer.open();
   const backButton = findElement(
@@ -672,8 +676,11 @@ test("Safari reader pauses on an image and can return to the previous sentence",
   firstFigure.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 3900 });
   assert.equal(backButton.parent.hidden, false);
   backButton.dispatchEvent({ type: "click" });
-  assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
+  assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "再生"));
   assert.equal(backButton.parent.hidden, false);
+  assert.equal(timers.size, 0);
+  findElement(documentElement, (element) => element.attributes["aria-label"] === "再生").dispatchEvent({ type: "click" });
+  assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.ok(timers.size > 0);
 
   fireNextTimer(timers);

@@ -1356,7 +1356,6 @@
     if (!applyingSession) {
       dispatchSession({ type: "switchToText", position: currentPosition });
     }
-    pause();
     clearRenderedView();
 
     const shell = document.createElement("div");

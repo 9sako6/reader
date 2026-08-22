@@ -110,7 +110,7 @@ fn preparation() -> PreparationInput {
             duration_ms: 10,
         },
         ReaderUnit {
-            sentence_index: 2,
+            sentence_index: 1,
             kind: ReaderUnitKind::Body,
             start: 5,
             end: 8,
@@ -279,6 +279,37 @@ fn duplicate_figure_tick_does_not_consume() -> impl Driver {
     test = "previousSentenceWhilePlaying"
 )]
 fn previous_sentence_while_playing() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "previousSentenceFromPaused")]
+fn previous_sentence_from_paused() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "previousSentenceFromFigure")]
+fn previous_sentence_from_figure() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "pausedTickDoesNotAdvance")]
+fn paused_tick_does_not_advance() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(
+    spec = "spec/reader_session.qnt",
+    test = "staleGenerationTickDoesNotAdvance"
+)]
+fn stale_generation_tick_does_not_advance() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(
+    spec = "spec/reader_session.qnt",
+    test = "cancelThenLatePreparationSuccess"
+)]
+fn cancel_then_late_preparation_success() -> impl Driver {
     SessionDriver::default()
 }
 

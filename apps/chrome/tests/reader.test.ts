@@ -256,7 +256,7 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
         }
       } else if (command.type === "previousSentence" && previous.phase === "reading") {
         const target = handle.flow.flow.findIndex((item) => item.kind === "unit");
-        const playback = previous.currentKind === "figure" || previous.playback === "playing" ? "playing" : "paused";
+        const playback = previous.playback === "playing" ? "playing" : "paused";
         state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, Math.max(0, target), playback);
         effects = [{ type: "cancelTimer" }];
         if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
@@ -1139,6 +1139,12 @@ test("reader restores the RSVP mode control and follows session autoplay", () =>
     (element) => element.textContent === "文章で読む",
   );
   assert.equal(document.activeElement, rsvpModeButton);
+  assert.deepEqual(
+    sessionCommands
+      .filter(({ type }) => type === "switchToText" || type === "switchToRsvp" || type === "pause")
+      .map(({ type }) => type),
+    ["switchToText", "switchToRsvp"],
+  );
   assert.equal(sessionCommands.filter(({ type }) => type === "play").length, 0);
   assert.equal(findElement(
     document.getElementById("__rsvp-reader-root"),
@@ -1929,7 +1935,7 @@ test("reader preserves the order of figures that share one source offset", () =>
   assert.ok(findElement(secondPanel, (element) => element.textContent === "図B"));
 });
 
-test("reader returns from an image to the previous sentence and resumes after the image", async () => {
+test("reader returns from an image to the previous sentence and stays paused", async () => {
   const { document, documentElement, messageListener, timers } = createFigureReaderHarness();
   const readingContext = {
     blocks: [
@@ -1978,6 +1984,9 @@ test("reader returns from an image to the previous sentence and resumes after th
   await Promise.resolve();
   assert.equal(findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像"), null);
   assert.match(display.textContent, /結果を/);
+  assert.ok(findElement(overlay, (element) => element.attributes["aria-label"] === "再生"));
+  assert.equal(timers.size, 0);
+  findElement(overlay, (element) => element.attributes["aria-label"] === "再生").dispatchEvent({ type: "click" });
   assert.ok(findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.ok(timers.size > 0);
   const [returnFirstTimerId, returnFirstTimer] = [...timers.entries()][0];

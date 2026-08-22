@@ -72,6 +72,7 @@ module reader_session {
 
   pure def figureIndexForFlow(index: int): int = if (index == 1) 0 else if (index == 2) 1 else -1
   pure def kindForFlow(index: int): str = if (figureIndexForFlow(index) >= 0) "figure" else "unit"
+  pure def sentenceHeadForFlow(index: int): int = if (index == 4) 3 else index
   pure def nextGeneration(generation: int): int = generation + 1
   pure def figureVisitIncrement(before: SessionState, after: SessionUpdate, figureIndex: int): int =
     if (after.phase != "reading" or before.phase != "reading" or before.flowIndex == after.flowIndex) 0
@@ -306,12 +307,12 @@ module reader_session {
   action previousSentence = all {
     session.phase == "reading",
     session.timerGeneration < 8,
-    val targetIndex = if (session.flowIndex <= 2) 0 else if (session.flowIndex == 3) 0 else 3
+    val targetIndex = 0
     session' = rememberWithFigureEpoch(session, { ...updateOf(session),
       flowIndex: targetIndex, position: targetIndex,
-      playback: if (session.mode == "rsvp" and (kindForFlow(session.flowIndex) == "figure" or session.playback == "playing")) "playing" else "paused",
+      playback: if (session.mode == "rsvp" and session.playback == "playing") "playing" else "paused",
       timerGeneration: nextGeneration(session.timerGeneration),
-      timerPending: session.mode == "rsvp" and (kindForFlow(session.flowIndex) == "figure" or session.playback == "playing"),
+      timerPending: session.mode == "rsvp" and session.playback == "playing",
     }),
     actionTaken' = PreviousSentence,
     lastAction' = "previousSentence",
@@ -335,24 +336,24 @@ module reader_session {
     session.phase == "reading", position >= 0 and position < session.flowLength,
     session.mode != "text" or position == session.modeAnchorPosition,
     session.timerGeneration < 8,
-    val targetIndex = position
+    val targetIndex = if (kindForFlow(position) == "figure") position else sentenceHeadForFlow(position)
     session' = if (session.mode == "text" and session.position == session.modeAnchorPosition and position == session.modeAnchorPosition) {
       rememberWithExistingAnchor(session, { ...updateOf(session),
-        mode: "rsvp", flowIndex: targetIndex, position: position,
+        mode: "rsvp", flowIndex: targetIndex, position: targetIndex,
         playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
         timerPending: kindForFlow(targetIndex) == "unit",
       })
     } else if (position < session.flowIndex) {
       rememberWithFigureEpoch(session, { ...updateOf(session),
-        mode: "rsvp", flowIndex: targetIndex, position: position,
+        mode: "rsvp", flowIndex: targetIndex, position: targetIndex,
         playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
         timerPending: kindForFlow(targetIndex) == "unit",
       })
     } else {
       remember(session, { ...updateOf(session),
-        mode: "rsvp", flowIndex: targetIndex, position: position,
+        mode: "rsvp", flowIndex: targetIndex, position: targetIndex,
         playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
         timerPending: kindForFlow(targetIndex) == "unit",
@@ -514,8 +515,8 @@ module reader_session {
     lastAction != "resumeFromFigure" or session.flowIndex == session.previousFlowIndex + 1,
   }
   val modeRoundTripKeepsLocation = lastAction != "switchToRsvp" or session.previousMode != "text" or not(session.modeAnchorPending) or and {
-    session.mode == "rsvp", session.phase == "reading", session.position == session.previousPosition,
-    session.position == session.modeAnchorPosition,
+    session.mode == "rsvp", session.phase == "reading", session.position == sentenceHeadForFlow(session.previousPosition),
+    session.position == sentenceHeadForFlow(session.modeAnchorPosition),
   }
 
   val invariant = and {
@@ -533,7 +534,12 @@ module reader_session {
   run playUntilFigureAndResume = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(resumeFromFigure)
   run consecutiveFiguresAndResume = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(resumeFromFigure).then(resumeFromFigure)
   run duplicateFigureTickDoesNotConsume = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(tick(2)).then(resumeFromFigure)
-  run previousSentenceWhilePlaying = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(resumeFromFigure).then(previousSentence)
+  run previousSentenceWhilePlaying = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(resumeFromFigure).then(resumeFromFigure).then(previousSentence)
+  run previousSentenceFromPaused = init.then(open("A")).then(prepareSucceeded("A")).then(pause).then(previousSentence)
+  run previousSentenceFromFigure = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(previousSentence)
+  run pausedTickDoesNotAdvance = init.then(open("A")).then(prepareSucceeded("A")).then(pause).then(tick(2))
+  run staleGenerationTickDoesNotAdvance = init.then(open("A")).then(prepareSucceeded("A")).then(tick(1))
+  run cancelThenLatePreparationSuccess = init.then(open("A")).then(cancel("A")).then(prepareSucceeded("A"))
   run switchModeAtFigure = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(switchToText(1)).then(switchToRsvp(1))
   run switchModeAfterFigure = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(resumeFromFigure).then(resumeFromFigure).then(switchToText(3)).then(switchToRsvp(3))
   run pausedModeRoundTrip = init.then(open("A")).then(prepareSucceeded("A")).then(pause).then(switchToText(0)).then(switchToRsvp(0))

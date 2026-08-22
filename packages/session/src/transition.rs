@@ -341,9 +341,7 @@ fn previous_sentence(state: &ReaderSessionState) -> Transition {
         return unchanged(state);
     }
     let next_generation = generation.saturating_add(1);
-    let target_playback = if matches!(mode, Mode::Text) {
-        Playback::Paused
-    } else if was_figure || was_playing {
+    let target_playback = if matches!(mode, Mode::Rsvp) && was_playing {
         Playback::Playing
     } else {
         Playback::Paused
@@ -429,13 +427,30 @@ fn switch_mode(state: &ReaderSessionState, mode: Mode, position: Position) -> Tr
     else {
         return unchanged(state);
     };
-    let target_flow_index = find_flow_index(&content.flow, &content.units, &position);
-    let Some(item) = content.flow.get(target_flow_index) else {
+    let initial_flow_index = find_flow_index(&content.flow, &content.units, &position);
+    let Some(initial_item) = content.flow.get(initial_flow_index) else {
         return unchanged(state);
     };
-    let (target_position, target_playback) = match mode {
-        Mode::Text => (position, Playback::Paused),
-        Mode::Rsvp => position_and_playback(item, &content.units),
+    let (target_flow_index, target_position, target_playback) = match mode {
+        Mode::Text => (initial_flow_index, position, Playback::Paused),
+        Mode::Rsvp => {
+            let target_flow_index = match initial_item {
+                FlowItem::Unit { unit_index, .. } => {
+                    let sentence_head = sentence_start(&content.units, *unit_index);
+                    let sentence_position = Position::Text {
+                        source_offset: content.units[sentence_head].start,
+                    };
+                    find_flow_index(&content.flow, &content.units, &sentence_position)
+                }
+                FlowItem::Figure { .. } => initial_flow_index,
+            };
+            let Some(target_item) = content.flow.get(target_flow_index) else {
+                return unchanged(state);
+            };
+            let (target_position, target_playback) =
+                position_and_playback(target_item, &content.units);
+            (target_flow_index, target_position, target_playback)
+        }
     };
     let next_generation = generation.saturating_add(1);
     let mut next = state.clone();
@@ -667,10 +682,13 @@ fn normalize_input(input: &mut PreparationInput) -> Result<(), PreparationFailur
         if figure.source_offset > figure.source_end || figure.source_end > input.text_length {
             return Err(PreparationFailure::InvalidFlow);
         }
+        let first_overlapping_unit = input
+            .units
+            .partition_point(|unit| unit.end <= figure.source_offset);
         if input
             .units
-            .iter()
-            .any(|unit| figure.source_offset < unit.end && unit.start < figure.source_end)
+            .get(first_overlapping_unit)
+            .is_some_and(|unit| unit.start < figure.source_end)
         {
             return Err(PreparationFailure::InvalidFlow);
         }
@@ -699,7 +717,8 @@ fn normalize_input(input: &mut PreparationInput) -> Result<(), PreparationFailur
                 }),
         );
     }
-    let mut seen = Vec::new();
+    let mut seen_units = vec![false; input.units.len()];
+    let mut seen_figures = vec![false; input.figures.len()];
     for item in &input.flow {
         match item {
             FlowItem::Unit {
@@ -711,13 +730,11 @@ fn normalize_input(input: &mut PreparationInput) -> Result<(), PreparationFailur
                 };
                 if *source_offset > input.text_length
                     || unit.start != *source_offset
-                    || seen
-                        .iter()
-                        .any(|candidate: &(bool, usize)| !candidate.0 && candidate.1 == *unit_index)
+                    || seen_units[*unit_index]
                 {
                     return Err(PreparationFailure::InvalidFlow);
                 }
-                seen.push((false, *unit_index));
+                seen_units[*unit_index] = true;
             }
             FlowItem::Figure {
                 figure_index,
@@ -728,25 +745,15 @@ fn normalize_input(input: &mut PreparationInput) -> Result<(), PreparationFailur
                 };
                 if *source_offset > input.text_length
                     || figure.source_offset != *source_offset
-                    || seen.iter().any(|candidate: &(bool, usize)| {
-                        candidate.0 && candidate.1 == *figure_index
-                    })
+                    || seen_figures[*figure_index]
                 {
                     return Err(PreparationFailure::InvalidFlow);
                 }
-                seen.push((true, *figure_index));
+                seen_figures[*figure_index] = true;
             }
         }
     }
-    if input.units.iter().enumerate().any(|(unit_index, _)| {
-        !seen
-            .iter()
-            .any(|candidate: &(bool, usize)| !candidate.0 && candidate.1 == unit_index)
-    }) || input.figures.iter().enumerate().any(|(figure_index, _)| {
-        !seen
-            .iter()
-            .any(|candidate: &(bool, usize)| candidate.0 && candidate.1 == figure_index)
-    }) {
+    if seen_units.iter().any(|seen| !seen) || seen_figures.iter().any(|seen| !seen) {
         return Err(PreparationFailure::InvalidFlow);
     }
     input.flow.sort_by(|left, right| {
@@ -1026,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    fn figure_previous_sentence_starts_playback() {
+    fn figure_previous_sentence_preserves_pause() {
         let started = reading();
         let figure = reduce(
             &started,
@@ -1040,14 +1047,11 @@ mod tests {
             previous.state,
             ReaderSessionState::Reading {
                 flow_index: 0,
-                playback: Playback::Playing,
+                playback: Playback::Paused,
                 ..
             }
         ));
-        assert!(previous.effects.iter().any(|effect| matches!(
-            effect,
-            ReaderSessionEffect::ScheduleTick { delay_ms: 10, .. }
-        )));
+        assert_eq!(previous.effects, vec![ReaderSessionEffect::CancelTimer]);
     }
 
     #[test]
@@ -1101,15 +1105,54 @@ mod tests {
             previous.state,
             ReaderSessionState::Reading {
                 flow_index: 2,
-                playback: Playback::Playing,
+                playback: Playback::Paused,
                 position: Position::Text { source_offset: 5 },
+                ..
+            }
+        ));
+        assert_eq!(previous.effects, vec![ReaderSessionEffect::CancelTimer]);
+    }
+
+    #[test]
+    fn previous_sentence_from_playing_unit_resumes_playback() {
+        let started = reading();
+        let figure = reduce(
+            &started,
+            ReaderSessionCommand::Tick {
+                generation: started.generation(),
+            },
+        );
+        let playing_unit = reduce(&figure.state, ReaderSessionCommand::ResumeFromFigure);
+        let previous = reduce(&playing_unit.state, ReaderSessionCommand::PreviousSentence);
+
+        assert!(matches!(
+            previous.state,
+            ReaderSessionState::Reading {
+                flow_index: 0,
+                playback: Playback::Playing,
                 ..
             }
         ));
         assert!(previous.effects.iter().any(|effect| matches!(
             effect,
-            ReaderSessionEffect::ScheduleTick { delay_ms: 30, .. }
+            ReaderSessionEffect::ScheduleTick { delay_ms: 10, .. }
         )));
+    }
+
+    #[test]
+    fn previous_sentence_from_paused_unit_stays_paused() {
+        let paused = reduce(&reading(), ReaderSessionCommand::Pause);
+        let previous = reduce(&paused.state, ReaderSessionCommand::PreviousSentence);
+
+        assert!(matches!(
+            previous.state,
+            ReaderSessionState::Reading {
+                flow_index: 0,
+                playback: Playback::Paused,
+                ..
+            }
+        ));
+        assert_eq!(previous.effects, vec![ReaderSessionEffect::CancelTimer]);
     }
 
     #[test]
@@ -1168,6 +1211,54 @@ mod tests {
         assert!(matches!(
             rsvp.effects.first(),
             Some(ReaderSessionEffect::CancelTimer)
+        ));
+        assert!(rsvp.effects.iter().any(|effect| matches!(
+            effect,
+            ReaderSessionEffect::ScheduleTick { delay_ms: 10, .. }
+        )));
+    }
+
+    #[test]
+    fn text_to_rsvp_uses_the_sentence_head_unit() {
+        let opened = reduce(
+            &initial_state(),
+            ReaderSessionCommand::Open {
+                request_id: "A".into(),
+            },
+        )
+        .state;
+        let mut input = input();
+        input.units[1].sentence_index = 0;
+        let started = reduce(
+            &opened,
+            ReaderSessionCommand::PrepareSucceeded {
+                request_id: "A".into(),
+                flow: input,
+            },
+        )
+        .state;
+        let text = reduce(
+            &started,
+            ReaderSessionCommand::SwitchToText {
+                position: Position::Text { source_offset: 4 },
+            },
+        )
+        .state;
+        let rsvp = reduce(
+            &text,
+            ReaderSessionCommand::SwitchToRsvp {
+                position: Position::Text { source_offset: 4 },
+            },
+        );
+
+        assert!(matches!(
+            rsvp.state,
+            ReaderSessionState::Reading {
+                flow_index: 0,
+                position: Position::Text { source_offset: 0 },
+                playback: Playback::Playing,
+                ..
+            }
         ));
         assert!(rsvp.effects.iter().any(|effect| matches!(
             effect,
