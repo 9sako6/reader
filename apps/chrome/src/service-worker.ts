@@ -102,7 +102,7 @@ async function startPreparation(tabId: number, operation: PreparationOperation):
 
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["vendor/defuddle/defuddle.js", "extractor.js"],
+      files: ["vendor/defuddle/defuddle.js"],
     });
     const extraction = await chrome.scripting.executeScript({
       target: { tabId },

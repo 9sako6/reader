@@ -149,10 +149,9 @@ test("toolbar action loads the reader and starts extracted page content", async 
   harness.finishExtraction();
   await actionPromise;
 
-  assert.deepEqual(Array.from(harness.scriptCalls[1].files), [
-    "vendor/defuddle/defuddle.js",
-    "extractor.js",
-  ]);
+  assert.deepEqual(Array.from(harness.scriptCalls[1].files), ["vendor/defuddle/defuddle.js"]);
+  const injectedFiles = harness.scriptCalls.flatMap((call) => call.files || []);
+  assert.equal(injectedFiles.filter((file) => file === "extractor.js").length, 1);
   assert.equal(harness.messages[1].tabId, 7);
   assert.equal(harness.messages[1].message.type, "START_RSVP");
   assert.equal(harness.messages[1].message.text, "記事本文");

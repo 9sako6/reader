@@ -122,6 +122,16 @@ cp LICENSES/lucide.txt apps/ios/ReaderExtension/Resources/generated/lucide-LICEN
 description = "Build the Chrome and Safari extensions"
 run = [{ tasks = ["build:chrome", "build:ios"] }]
 
+[tasks."measure:bundle"]
+description = "Record extension bundle sizes as JSON"
+depends = ["build"]
+run = "node scripts/measure-bundle.mjs"
+
+[tasks."measure:performance"]
+description = "Record browser extraction and startup baselines"
+depends = ["build"]
+run = "node scripts/measure-performance.mjs"
+
 [tasks.check]
 description = "Run static checks"
 run = [
