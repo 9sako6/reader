@@ -339,22 +339,21 @@ fn previous_sentence(state: &ReaderSessionState) -> Transition {
         *generation = next_generation;
     }
     let mut effects = vec![ReaderSessionEffect::CancelTimer];
-    if was_playing {
-        if let ReaderSessionState::Reading {
+    if was_playing
+        && let ReaderSessionState::Reading {
             flow,
             units,
             timing_profile,
             ..
         } = &next
-        {
-            effects.push(schedule_effect_for_current(
-                units,
-                flow,
-                target_flow_index,
-                timing_profile,
-                next_generation,
-            ));
-        }
+    {
+        effects.push(schedule_effect_for_current(
+            units,
+            flow,
+            target_flow_index,
+            timing_profile,
+            next_generation,
+        ));
     }
     Transition {
         state: next,
@@ -536,22 +535,21 @@ fn rebuild_units(
         request_id: request_id.clone(),
     };
     let mut effects = vec![ReaderSessionEffect::CancelTimer];
-    if matches!(next_playback, Playback::Playing) {
-        if let ReaderSessionState::Reading {
+    if matches!(next_playback, Playback::Playing)
+        && let ReaderSessionState::Reading {
             flow,
             units,
             timing_profile,
             ..
         } = &next
-        {
-            effects.push(schedule_effect_for_current(
-                units,
-                flow,
-                target_flow_index,
-                timing_profile,
-                next_generation,
-            ));
-        }
+    {
+        effects.push(schedule_effect_for_current(
+            units,
+            flow,
+            target_flow_index,
+            timing_profile,
+            next_generation,
+        ));
     }
     Transition {
         state: next,
@@ -665,10 +663,12 @@ fn find_flow_index(flow: &[FlowItem], units: &[ReaderUnit], position: &Position)
     if flow.is_empty() {
         return 0;
     }
-    if let Position::Figure { figure_index, .. } = position {
-        if let Some(index) = flow.iter().position(|item| matches!(item, FlowItem::Figure { figure_index: candidate, .. } if candidate == figure_index)) {
-            return index;
-        }
+    if let Position::Figure { figure_index, .. } = position
+        && let Some(index) = flow.iter().position(|item| {
+            matches!(item, FlowItem::Figure { figure_index: candidate, .. } if candidate == figure_index)
+        })
+    {
+        return index;
     }
     if let Position::Text { source_offset } = position {
         let unit_index = units

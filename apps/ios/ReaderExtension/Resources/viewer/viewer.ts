@@ -530,7 +530,16 @@
       });
       sessionEnabled = true;
       syncReaderSessionState();
-      dispatchSession({ type: "PAUSE" });
+      applyingSession = true;
+      try {
+        renderSessionState();
+      } finally {
+        applyingSession = false;
+      }
+      if (sessionState.phase === "reading" && sessionState.position?.kind === "text") {
+        dispatchSession({ type: "pause" });
+        dispatchSession({ type: "play" });
+      }
     } catch {
       sessionState = null;
       sessionEnabled = false;
@@ -570,33 +579,28 @@
     applyingSession = true;
     try {
       for (const effect of transition.effects) {
-        if (effect.type === "CANCEL_TICK") {
+        if (effect.type === "cancelTimer") {
           if (playbackTimer !== null) global.clearTimeout(playbackTimer);
           playbackTimer = null;
-        } else if (effect.type === "SCHEDULE_TICK") {
+        } else if (effect.type === "scheduleTick") {
           if (playbackTimer !== null) global.clearTimeout(playbackTimer);
           playbackTimer = global.setTimeout(() => {
             playbackTimer = null;
-            dispatchSession({ type: "TICK", generation: effect.generation });
+            dispatchSession({ type: "tick", generation: effect.generation });
           }, effect.delayMs);
-        } else if (effect.type === "RENDER_UNIT") {
-          flowIndex = sessionState.flowIndex ?? flowIndex;
-          unitIndex = effect.unitIndex;
-          if (mode === "rsvp") renderUnit();
-        } else if (effect.type === "RENDER_FIGURE") {
-          flowIndex = sessionState.flowIndex ?? flowIndex;
-          const figure = content?.readingContext?.figures?.[effect.figureIndex];
-          if (figure && mode === "rsvp") showFigure(figure, effect.figureIndex);
-        } else if (effect.type === "DESTROY_CONTENT") {
-          if (playbackTimer !== null) global.clearTimeout(playbackTimer);
-          playbackTimer = null;
-          figurePanel?.remove();
-          figurePanel = null;
         }
       }
+      renderSessionState();
     } finally {
       applyingSession = false;
     }
+  }
+
+  function renderSessionState(): void {
+    const state = sessionState;
+    if (!state || state.phase !== "reading" || state.mode !== "rsvp") return;
+    flowIndex = state.flowIndex ?? flowIndex;
+    renderFlowItem();
   }
 
   function renderTextView() {
@@ -821,7 +825,12 @@
         }
         : { kind: "text", sourceOffset };
       unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
-      if (sessionEnabled && !applyingSession) dispatchSession({ type: "SEEK", position: currentPosition });
+      if (sessionEnabled && !applyingSession) {
+        dispatchSession({
+          type: sessionState?.mode === "text" ? "switchToText" : "switchToRsvp",
+          position: currentPosition,
+        });
+      }
     }
     progress.textContent = `${global.Engine.calculateReadingProgress(
       currentPosition.sourceOffset,
@@ -1000,7 +1009,10 @@
     const currentFlow = flowItems[flowIndex];
     if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "SWITCH_MODE", mode: nextMode, position: currentPosition });
+      dispatchSession({
+        type: nextMode === "text" ? "switchToText" : "switchToRsvp",
+        position: currentPosition,
+      });
     }
     figurePanel?.remove();
     figurePanel = null;
@@ -1059,7 +1071,7 @@
       : { kind: "text", sourceOffset: previousPosition.sourceOffset };
     unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "REBUILD_UNITS", units, position: currentPosition });
+      dispatchSession({ type: "rebuildUnits", units, position: currentPosition });
     }
   }
 
@@ -1192,7 +1204,7 @@
 
   function play() {
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "PLAY" });
+      dispatchSession({ type: "play" });
       return;
     }
     pause();
@@ -1203,7 +1215,7 @@
 
   function pause() {
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "PAUSE" });
+      dispatchSession({ type: "pause" });
       return;
     }
     playing = false;
@@ -1214,7 +1226,7 @@
 
   function handleVisibilityChange(): void {
     if (global.document.visibilityState === "hidden") {
-      if (sessionEnabled && !applyingSession) dispatchSession({ type: "VISIBILITY_HIDDEN" });
+      if (sessionEnabled && !applyingSession) dispatchSession({ type: "visibilityHidden" });
       else pause();
     }
   }
@@ -1295,7 +1307,7 @@
 
   function advanceFromFigure(): void {
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "RESUME_FROM_FIGURE" });
+      dispatchSession({ type: "resumeFromFigure" });
       return;
     }
     figurePanel?.remove();
@@ -1326,7 +1338,7 @@
 
   function previousSentence() {
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "PREVIOUS_SENTENCE" });
+      dispatchSession({ type: "previousSentence" });
       return;
     }
     clearPendingLeftTap();
@@ -1548,7 +1560,7 @@
     try {
       clearPendingLeftTap();
       lastLeftTapAt = 0;
-      if (sessionEnabled && !applyingSession) dispatchSession({ type: "CLOSE" });
+      if (sessionEnabled && !applyingSession) dispatchSession({ type: "close" });
       sessionEnabled = false;
       sessionState = null;
       pause();

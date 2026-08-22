@@ -32,12 +32,25 @@ jobs:
         with:
           install_args: node pnpm
           cache: false
+      - name: Install Rust session toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
+          rustup override set 1.97.1
+          cargo install wasm-bindgen-cli --version 0.2.127 --locked
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y openjdk-21-jre-headless
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Type-check
         run: mise run check
       - name: Test
         run: mise run test
+      - name: Verify session model and measure WASM
+        run: |
+          cargo clippy --locked --all-targets --all-features -- -D warnings
+          mise run spec:verify
+          mise run measure:session
 
   e2e:
     name: Chromium viewer E2E
@@ -53,6 +66,12 @@ jobs:
         with:
           install_args: node pnpm
           cache: false
+      - name: Install Rust session toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target wasm32-unknown-unknown
+          rustup override set 1.97.1
+          cargo install wasm-bindgen-cli --version 0.2.127 --locked
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install Chromium
@@ -83,6 +102,12 @@ jobs:
         with:
           install_args: node pnpm xcodegen
           cache: false
+      - name: Install Rust session toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target wasm32-unknown-unknown
+          rustup override set 1.97.1
+          cargo install wasm-bindgen-cli --version 0.2.127 --locked
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install WebKit

@@ -97,7 +97,7 @@
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") dispatchSession({ type: "VISIBILITY_HIDDEN" });
+    if (document.visibilityState === "hidden") dispatchSession({ type: "visibilityHidden" });
   });
 
   function showLoading(requestId: string): void {
@@ -238,8 +238,8 @@
         applyingSession = false;
       }
       if (sessionState.phase === "reading" && sessionState.position?.kind === "text") {
-        dispatchSession({ type: "PAUSE" });
-        dispatchSession({ type: "PLAY" });
+        dispatchSession({ type: "pause" });
+        dispatchSession({ type: "play" });
       }
     } catch {
       sessionState = null;
@@ -277,31 +277,27 @@
     applyingSession = true;
     try {
       for (const effect of transition.effects) {
-        if (effect.type === "CANCEL_TICK") {
+        if (effect.type === "cancelTimer") {
           stopTimer();
-        } else if (effect.type === "SCHEDULE_TICK") {
+        } else if (effect.type === "scheduleTick") {
           stopTimer();
           timerId = globalThis.setTimeout(() => {
             timerId = null;
-            dispatchSession({ type: "TICK", generation: effect.generation });
+            dispatchSession({ type: "tick", generation: effect.generation });
           }, effect.delayMs);
-        } else if (effect.type === "RENDER_UNIT") {
-          flowIndex = sessionState.flowIndex ?? flowIndex;
-          currentUnitIndex = effect.unitIndex;
-          dismissFigurePanel();
-          renderCurrentUnit();
-        } else if (effect.type === "RENDER_FIGURE") {
-          flowIndex = sessionState.flowIndex ?? flowIndex;
-          const figure = figures[effect.figureIndex];
-          if (figure) showFigure(figure, effect.figureIndex);
-        } else if (effect.type === "DESTROY_CONTENT") {
-          stopTimer();
-          dismissFigurePanel();
         }
       }
+      renderSessionState();
     } finally {
       applyingSession = false;
     }
+  }
+
+  function renderSessionState(): void {
+    const state = sessionState;
+    if (!state || state.phase !== "reading" || state.mode !== "rsvp") return;
+    flowIndex = state.flowIndex ?? flowIndex;
+    renderCurrentFlowItem();
   }
 
   function createLoadingOverlay() {
@@ -1236,7 +1232,7 @@
     if (!root || !sourceText) return;
     const activeElement = readerActiveElement();
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "SWITCH_MODE", mode: "text", position: currentPosition });
+      dispatchSession({ type: "switchToText", position: currentPosition });
     }
     pause();
     clearRenderedView();
@@ -1337,7 +1333,7 @@
   function showRsvpView() {
     if (!root || units.length === 0) return;
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "SWITCH_MODE", mode: "rsvp", position: currentPosition });
+      dispatchSession({ type: "switchToRsvp", position: currentPosition });
     }
     if (currentPosition.kind === "figure") {
       flowIndex = globalThis.Engine.findFlowIndexForPosition(flowItems, units, currentPosition);
@@ -1588,7 +1584,12 @@
         figureIndex: Number(selected.dataset.figureIndex),
       }
       : { kind: "text", sourceOffset };
-    if (sessionEnabled && !applyingSession) dispatchSession({ type: "SEEK", position: currentPosition });
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({
+        type: sessionState?.mode === "text" ? "switchToText" : "switchToRsvp",
+        position: currentPosition,
+      });
+    }
     currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
     if (progressLabel && sourceText) {
       progressLabel.textContent = `${globalThis.Engine.calculateReadingProgress(
@@ -1718,7 +1719,7 @@
       : { kind: "text", sourceOffset: position.sourceOffset };
     currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "REBUILD_UNITS", units, position: currentPosition });
+      dispatchSession({ type: "rebuildUnits", units, position: currentPosition });
     }
     return true;
   }
@@ -1873,7 +1874,7 @@
 
   function advanceFromFigure() {
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "RESUME_FROM_FIGURE" });
+      dispatchSession({ type: "resumeFromFigure" });
       return;
     }
     if (!figurePanel) return;
@@ -1901,7 +1902,7 @@
 
   function play() {
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "PLAY" });
+      dispatchSession({ type: "play" });
       return;
     }
     const currentItem = flowItems[flowIndex];
@@ -1913,7 +1914,7 @@
 
   function pause() {
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "PAUSE" });
+      dispatchSession({ type: "pause" });
       return;
     }
     if (playbackState !== "idle") playbackState = "paused";
@@ -1935,7 +1936,7 @@
 
   function goBackOneSentence() {
     if (sessionEnabled && !applyingSession) {
-      dispatchSession({ type: "PREVIOUS_SENTENCE" });
+      dispatchSession({ type: "previousSentence" });
       return;
     }
     if (units.length === 0) return;
@@ -1972,7 +1973,7 @@
     const targetIndex = units.findIndex((unit) => unit.end > targetOffset);
     if (sessionEnabled && !applyingSession) {
       dispatchSession({
-        type: "SEEK",
+        type: "switchToRsvp",
         position: { kind: "text", sourceOffset: units[targetIndex < 0 ? units.length - 1 : targetIndex]?.start ?? targetOffset },
       });
       return;
@@ -2185,7 +2186,7 @@
     closeInProgress = true;
     const requestId = activeRequestId;
     try {
-      if (sessionEnabled && !applyingSession) dispatchSession({ type: "CLOSE" });
+      if (sessionEnabled && !applyingSession) dispatchSession({ type: "close" });
       sessionEnabled = false;
       sessionState = null;
       if (notifyServiceWorker && requestId) {

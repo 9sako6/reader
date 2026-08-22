@@ -16,6 +16,14 @@ declare global {
     | { type: "cancelTimer" }
     | { type: "scheduleTick"; generation: number; delayMs: number };
 
+  type ReaderSessionPreparation = {
+    textLength: number;
+    units: ReaderUnit[];
+    figures: ReaderFigure[];
+    flow: ReaderSessionFlowItem[];
+    timingProfile?: ReaderTimingProfile;
+  };
+
   type ReaderSessionState = {
     phase: "idle" | "preparing" | "reading" | "error" | "ended";
     generation: number;
@@ -43,7 +51,7 @@ declare global {
 
   type ReaderSessionCommand =
     | { type: "open"; requestId: string }
-    | { type: "prepareSucceeded"; requestId: string; flow: ReaderSessionInput }
+    | { type: "prepareSucceeded"; requestId: string; flow: ReaderSessionPreparation }
     | { type: "prepareFailed"; requestId: string; reason: PreparationFailure | "invalid_flow" }
     | { type: "cancel"; requestId: string }
     | { type: "play" }

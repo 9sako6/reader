@@ -33,6 +33,7 @@ run = [
   "cargo fmt --check",
   "cargo test --locked --package reader-session",
   "pnpm exec quint --version | grep -F '0.32.0'",
+  "mise run spec:test",
   "mise run spec:simulate",
 ]
 
