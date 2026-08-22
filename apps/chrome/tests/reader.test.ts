@@ -7,12 +7,16 @@ const vm = require("node:vm");
 const Engine = require("../../../.build/packages/engine/src/engine.js");
 const Extractor = require("../../../.build/packages/extractor/src/extractor.js");
 const ReaderIcons = require("../../../.build/packages/icons/src/icons.js");
+const ReaderViewBundle = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "reader-view", "reader-view.js"), "utf8");
 
 class FakeElement {
   [key: string]: any;
 
   constructor(tagName, textContent = "") {
     this.tagName = tagName.toUpperCase();
+    this.nodeType = tagName === "#shadow-root" ? 11 : tagName === "#text" ? 3 : 1;
+    this.nodeName = this.tagName;
+    this.namespaceURI = "http://www.w3.org/1999/xhtml";
     this.textContent = textContent;
     this.style = {};
     this.attributes = {};
@@ -37,16 +41,64 @@ class FakeElement {
     this.closeCalls = 0;
   }
 
+  get parentNode() {
+    return this.parent;
+  }
+
+  get childNodes() {
+    return this.children;
+  }
+
+  get isConnected() {
+    return Boolean(this.parent) || this.nodeType === 9;
+  }
+
   append(...children) {
     for (const child of children) {
+      if (child === this || child.contains?.(this)) throw new Error("invalid DOM hierarchy");
+      if (child.parent) child.remove();
       child.parent = this;
       child.ownerDocument ||= this.ownerDocument;
       this.children.push(child);
     }
   }
 
+  appendChild(child) {
+    this.append(child);
+    return child;
+  }
+
+  insertBefore(child, before) {
+    if (child === this || child.contains?.(this)) throw new Error("invalid DOM hierarchy");
+    if (child === before) return child;
+    if (child.parent) child.remove();
+    child.parent = this;
+    child.ownerDocument ||= this.ownerDocument;
+    const index = this.children.indexOf(before);
+    if (index < 0) this.children.push(child);
+    else this.children.splice(index, 0, child);
+    return child;
+  }
+
+  removeChild(child) {
+    if (!this.children.includes(child)) throw new Error("child is not attached");
+    child.remove();
+    return child;
+  }
+
   setAttribute(name, value) {
     this.attributes[name] = value;
+    if (name.startsWith("data-")) {
+      this.dataset[name.slice(5).replace(/-([a-z])/gu, (_, letter) => letter.toUpperCase())] = String(value);
+    }
+    const propertyName = name.toLowerCase() === "srcset" ? "srcset" : name.toLowerCase();
+    if (["src", "srcset", "sizes", "alt", "title", "width", "height"].includes(propertyName)) this[propertyName] = value;
+    if (name === "hidden") this.hidden = true;
+    if (name === "disabled") this.disabled = true;
+  }
+
+  setAttributeNS(_namespace, name, value) {
+    this.setAttribute(name, value);
   }
 
   getAttribute(name) {
@@ -55,6 +107,39 @@ class FakeElement {
 
   hasAttribute(name) {
     return Object.prototype.hasOwnProperty.call(this.attributes, name);
+  }
+
+  removeAttribute(name) {
+    delete this.attributes[name];
+    if (name.startsWith("data-")) delete this.dataset[name.slice(5).replace(/-([a-z])/gu, (_, letter) => letter.toUpperCase())];
+    if (name === "hidden") this.hidden = false;
+    if (name === "disabled") this.disabled = false;
+  }
+
+  get firstChild() {
+    return this.children[0] || null;
+  }
+
+  get nextSibling() {
+    if (!this.parent) return null;
+    const index = this.parent.children.indexOf(this);
+    return index >= 0 ? this.parent.children[index + 1] || null : null;
+  }
+
+  querySelectorAll(selector) {
+    const selectors = selector.split(",").map((value) => value.trim());
+    return findElements(this, (element) => selectors.some((candidate) => {
+      const attribute = candidate.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/u);
+      if (attribute) return attribute[2] === undefined
+        ? element.hasAttribute(attribute[1])
+        : element.getAttribute(attribute[1]) === attribute[2];
+      if (/^[a-z]+$/iu.test(candidate)) return element.tagName.toLowerCase() === candidate.toLowerCase();
+      return false;
+    }));
+  }
+
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] || null;
   }
 
   addEventListener(type, listener) {
@@ -72,7 +157,10 @@ class FakeElement {
 
   dispatchEvent(event) {
     event.target ||= this;
+    event.bubbles ??= true;
+    event.currentTarget = this;
     for (const listener of this.listeners.get(event.type) || []) listener(event);
+    if (event.bubbles && !event.cancelBubble && this.parent) this.parent.dispatchEvent(event);
   }
 
   animate(keyframes, options) {
@@ -88,6 +176,7 @@ class FakeElement {
   }
 
   replaceChildren(...children) {
+    for (const child of this.children) child.parent = null;
     this.children = [];
     this.append(...children);
   }
@@ -154,6 +243,55 @@ function findElements(root, predicate) {
   return matches;
 }
 
+function loadReaderView(context, document) {
+  document.nodeType = 9;
+  document.defaultView = context;
+  document.body ||= document.documentElement;
+  document.documentElement.ownerDocument ||= document;
+  const createElement = document.createElement;
+  document.createElement = (tagName) => {
+    const element = createElement.call(document, tagName);
+    element.ownerDocument ||= document;
+    return element;
+  };
+  document.createTextNode ||= (text) => {
+    const node = new FakeElement("#text", text);
+    node.ownerDocument = document;
+    node.nodeValue = text;
+    return node;
+  };
+  const createElementNS = document.createElementNS;
+  document.createElementNS = (namespace, tagName) => {
+    const element = createElementNS.call(document, namespace, tagName);
+    element.ownerDocument = document;
+    return element;
+  };
+  context.window = context;
+  context.self = context;
+  context.Node = FakeElement;
+  context.HTMLIFrameElement = class {};
+  context.navigator ||= { userAgent: "reader-test" };
+  context.innerWidth ||= 1000;
+  context.performance ||= { now: () => 0 };
+  context.queueMicrotask ||= (callback) => Promise.resolve().then(callback);
+  class FakeMessageChannel {
+    port1: { onmessage: ((event: unknown) => void) | null };
+    port2: { postMessage: () => void };
+
+    constructor() {
+      this.port1 = { onmessage: null };
+      this.port2 = {
+        postMessage: () => Promise.resolve().then(() => this.port1.onmessage?.({ data: null })),
+      };
+    }
+  }
+  context.MessageChannel ||= FakeMessageChannel;
+  context.addEventListener ||= (...args) => document.addEventListener(...args);
+  context.removeEventListener ||= (...args) => document.removeEventListener(...args);
+  context.dispatchEvent ||= (...args) => document.dispatchEvent(...args);
+  vm.runInNewContext(ReaderViewBundle, context);
+}
+
 function revealLoading(timers) {
   const entry = [...timers.entries()].find(([, timer]) => timer.delay === 100);
   assert.ok(entry, "the loading bar reveal is scheduled after 100ms");
@@ -164,6 +302,7 @@ function revealLoading(timers) {
 function createSessionStub(commands, options: { initFails?: boolean } = {}) {
   let nextId = 1;
   let lastHandle = null;
+  const handles = new Set();
   const initialState = () => ({
     phase: "idle",
     mode: "rsvp",
@@ -211,6 +350,7 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
     ready: () => !options.initFails,
     create() {
       lastHandle = { id: nextId++, state: initialState(), destroyed: false, flow: null };
+      handles.add(lastHandle);
       return lastHandle;
     },
     dispatch(handle, command) {
@@ -298,6 +438,10 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
     },
     destroy(handle) {
       handle.destroyed = true;
+      handles.delete(handle);
+    },
+    liveHandleCount() {
+      return handles.size;
     },
     snapshot() {
       return lastHandle?.state;
@@ -305,12 +449,13 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
   };
 }
 
-function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
+function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOnce?: boolean } = {}) {
   const headingBeforeSelection = new FakeElement("h1", "記事タイトル");
   const headingInSelection = new FakeElement("h2", "次の節");
   const documentElement = new FakeElement("html");
   const documentListeners = new Map();
   let resizeCallback = null;
+  let resizeObserverLiveCount = 0;
   const document = {
     documentElement,
     activeElement: null,
@@ -425,13 +570,22 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
       currentScrollY = position.top;
     },
     ResizeObserver: class {
+      active: boolean;
+
       constructor(callback) {
         resizeCallback = callback;
+        resizeObserverLiveCount += 1;
+        this.active = true;
       }
 
       observe() {}
 
-      disconnect() {}
+      disconnect() {
+        if (this.active) {
+          this.active = false;
+          resizeObserverLiveCount -= 1;
+        }
+      }
     },
     setTimeout(callback, delay) {
       const id = nextTimerId;
@@ -449,6 +603,32 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
   });
   context.globalThis = context;
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
+  loadReaderView(context, document);
+  let reactMountCount = 0;
+  let reactUnmountCount = 0;
+  const originalReactMount = context.ReaderReactViewer.mount;
+  context.ReaderReactViewer.mount = (host) => {
+    const mount = originalReactMount(host);
+    reactMountCount += 1;
+    return {
+      ...mount,
+      unmount() {
+        reactUnmountCount += 1;
+        return mount.unmount();
+      },
+    };
+  };
+  if (options.mountFailsOnce) {
+    const mount = context.ReaderReactViewer.mount;
+    let failed = false;
+    context.ReaderReactViewer.mount = (host) => {
+      if (!failed) {
+        failed = true;
+        throw new Error("reader_view_mount_failed");
+      }
+      return mount(host);
+    };
+  }
   vm.runInNewContext(source, context);
 
   return {
@@ -477,6 +657,18 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
     listenerCount(type) {
       return (documentListeners.get(type) || []).length;
     },
+    liveHandleCount() {
+      return session.liveHandleCount();
+    },
+    reactMountCount() {
+      return reactMountCount;
+    },
+    reactUnmountCount() {
+      return reactUnmountCount;
+    },
+    resizeObserverLiveCount() {
+      return resizeObserverLiveCount;
+    },
     sessionState() {
       return session.snapshot();
     },
@@ -487,6 +679,51 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
     sessionCommands,
   };
 }
+
+test("Chrome React harness preserves attribute presence and DOM move semantics", () => {
+  const root = new FakeElement("div");
+  const first = new FakeElement("div");
+  const second = new FakeElement("div");
+  const child = new FakeElement("span");
+  first.setAttribute("data-reader-marker", "true");
+  root.append(first, second);
+  first.append(child);
+  assert.deepEqual(root.querySelectorAll("[data-reader-marker]"), [first]);
+  assert.deepEqual(root.querySelectorAll("[data-reader-missing]"), []);
+  second.append(child);
+  assert.equal(first.children.includes(child), false);
+  assert.equal(second.children.includes(child), true);
+  assert.equal(child.parentNode, second);
+  assert.equal(second.insertBefore(child, child), child);
+  assert.deepEqual(second.children, [child]);
+});
+
+test("Chrome viewer leaves rendering to ReaderView", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.ts"), "utf8");
+  for (const symbol of [
+    "createTopbar",
+    "createMinimap",
+    "createButton",
+    "createTextBlock",
+    "createTextFigure",
+    "createVeiledImageSurface",
+    "createFigureStatus",
+    "scheduleFigureLoadingIndicator",
+    "renderCurrentUnit",
+    "applyUnitStyle",
+    "updateMinimap",
+    "fadeContext",
+    "renderCurrentFlowItem",
+    "showFigure",
+    "loadingLayer",
+    "progressLabel",
+    "playbackState",
+    "currentUnitIndex",
+    "nextFigureIndex",
+  ]) {
+    assert.equal(source.includes(symbol), false, `obsolete Chrome renderer symbol: ${symbol}`);
+  }
+});
 
 test("reader replaces loading only for the matching request", () => {
   const harness = createOutlineReaderHarness();
@@ -1164,6 +1401,26 @@ test("reader cancel closes the dialog once and remains safe when Escape follows"
   assert.equal(dialog.closeCalls, 1);
 });
 
+test("reader removes its focus listener when the dialog closes", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "focus-cleanup-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "focus listenerのcleanupを確認します。",
+    requestId: "focus-cleanup-request",
+  });
+
+  const host = document.getElementById("__rsvp-reader-root");
+  const dialog = findElement(host, (element) => element.tagName === "DIALOG");
+  assert.equal(dialog.listeners.get("focusin")?.length, 1);
+
+  const closeButton = findElement(host, (element) => element.attributes["aria-label"] === "readerを閉じる");
+  closeButton.dispatchEvent({ type: "click" });
+  assert.equal(dialog.listeners.get("focusin")?.length, 0);
+});
+
 test("reader does not scale controls when reduced motion is enabled", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
@@ -1293,6 +1550,146 @@ test("reader does not resurrect a fast error after the stale loading reveal call
   revealTimer.callback();
   assert.equal(document.getElementById("__rsvp-reader-root"), errorOverlay);
   assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 1);
+});
+
+test("reader removes a failed React mount before reopening", () => {
+  const harness = createOutlineReaderHarness({ mountFailsOnce: true });
+  const { document, documentElement, messageListener, timers } = harness;
+  const reactRoots = () => findElements(
+    documentElement,
+    (element) => element.attributes["data-reader-react-root"] === "true",
+  );
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mount-failure-request" });
+  const revealTimer = [...timers.values()].find((timer) => timer.delay === 100);
+  assert.ok(revealTimer);
+  assert.throws(() => revealTimer.callback(), /reader_view_mount_failed/u);
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 0);
+  assert.equal(reactRoots().length, 0);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mount-reopen-request" });
+  messageListener({ type: "START_RSVP", text: "再開後の本文です。", requestId: "mount-reopen-request" });
+  assert.ok(document.getElementById("__rsvp-reader-root"));
+  assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 1);
+  assert.equal(reactRoots().length, 1);
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(reactRoots().length, 0);
+});
+
+test("reader releases the Session handle with each React mount", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener } = harness;
+  const reactRoots = () => findElements(
+    documentElement,
+    (element) => element.attributes["data-reader-react-root"] === "true",
+  );
+
+  assert.equal(harness.liveHandleCount(), 0);
+  assert.equal(harness.reactMountCount(), 0);
+  assert.equal(harness.reactUnmountCount(), 0);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resource-first" });
+  messageListener({ type: "START_RSVP", text: "一回目の本文です。", requestId: "resource-first" });
+  assert.equal(harness.liveHandleCount(), 1);
+  assert.equal(harness.reactMountCount(), 1);
+  assert.equal(reactRoots().length, 1);
+
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+    .dispatchEvent({ type: "click" });
+  assert.equal(harness.liveHandleCount(), 0);
+  assert.equal(harness.reactMountCount(), harness.reactUnmountCount());
+  assert.equal(reactRoots().length, 0);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resource-second" });
+  messageListener({ type: "START_RSVP", text: "二回目の本文です。", requestId: "resource-second" });
+  assert.equal(harness.liveHandleCount(), 1);
+  assert.equal(harness.reactMountCount(), 2);
+  assert.equal(reactRoots().length, 1);
+
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+    .dispatchEvent({ type: "click" });
+  assert.equal(harness.liveHandleCount(), 0);
+  assert.equal(harness.reactMountCount(), harness.reactUnmountCount());
+  assert.equal(reactRoots().length, 0);
+});
+
+test("reader disconnects its ResizeObserver across close and reopen", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  assert.equal(harness.resizeObserverLiveCount(), 0);
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resize-resource-first" });
+  messageListener({ type: "START_RSVP", text: "サイズを監視する本文です。", requestId: "resize-resource-first" });
+  assert.equal(harness.resizeObserverLiveCount(), 1);
+
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+    .dispatchEvent({ type: "click" });
+  assert.equal(harness.resizeObserverLiveCount(), 0);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resize-resource-second" });
+  messageListener({ type: "START_RSVP", text: "再開後も一つだけ監視します。", requestId: "resize-resource-second" });
+  assert.equal(harness.resizeObserverLiveCount(), 1);
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+    .dispatchEvent({ type: "click" });
+  assert.equal(harness.resizeObserverLiveCount(), 0);
+});
+
+test("reader restores document listeners without multiplying them on reopen", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  const listenerCounts = () => ({
+    visibility: harness.listenerCount("visibilitychange"),
+    keydown: harness.listenerCount("keydown"),
+  });
+
+  assert.deepEqual(listenerCounts(), { visibility: 0, keydown: 0 });
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "listener-resource-first" });
+  messageListener({ type: "START_RSVP", text: "リスナーを確認する本文です。", requestId: "listener-resource-first" });
+  assert.deepEqual(listenerCounts(), { visibility: 1, keydown: 1 });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+    .dispatchEvent({ type: "click" });
+  assert.deepEqual(listenerCounts(), { visibility: 0, keydown: 0 });
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "listener-resource-second" });
+  messageListener({ type: "START_RSVP", text: "再開後のリスナーです。", requestId: "listener-resource-second" });
+  assert.deepEqual(listenerCounts(), { visibility: 1, keydown: 1 });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+    .dispatchEvent({ type: "click" });
+  assert.deepEqual(listenerCounts(), { visibility: 0, keydown: 0 });
+});
+
+test("reader ignores a pending animation completion after close", async () => {
+  const originalAnimate = FakeElement.prototype.animate;
+  const finishers = [];
+  FakeElement.prototype.animate = function (keyframes, options) {
+    const animation = originalAnimate.call(this, keyframes, options);
+    animation.finished = new Promise((resolve) => finishers.push(resolve));
+    return animation;
+  };
+  try {
+    const harness = createOutlineReaderHarness();
+    const { document, documentElement, messageListener, timers } = harness;
+    messageListener({ type: "SHOW_RSVP_LOADING", requestId: "animation-resource" });
+    revealLoading(timers);
+    const slowEntry = [...timers.entries()].find(([, timer]) => timer.delay === 400);
+    assert.ok(slowEntry);
+    timers.delete(slowEntry[0]);
+    slowEntry[1].callback();
+    assert.ok(finishers.length > 0);
+    findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+      .dispatchEvent({ type: "click" });
+    assert.equal(harness.liveHandleCount(), 0);
+    finishers.forEach((finish) => finish());
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(findElement(documentElement, (element) => element.attributes["data-reader-react-root"] === "true"), null);
+    assert.equal(document.getElementById("__rsvp-reader-root"), null);
+    assert.equal(harness.liveHandleCount(), 0);
+  } finally {
+    FakeElement.prototype.animate = originalAnimate;
+  }
 });
 
 test("reader keeps keyboard focus trapped after switching to text mode", () => {
@@ -1779,6 +2176,7 @@ function createTimingReaderHarness(engine = Engine) {
     },
   };
   context.globalThis = context;
+  loadReaderView(context, document);
   vm.runInNewContext(source, context);
 
   return { document, messageListener, timers };
@@ -2035,6 +2433,7 @@ function createFigureReaderHarness() {
   };
   context.globalThis = context;
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
+  loadReaderView(context, document);
   vm.runInNewContext(source, context);
 
   return {

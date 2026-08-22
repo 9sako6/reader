@@ -2,9 +2,10 @@
   type PlaybackState = "idle" | "paused" | "playing";
   type FigureViewState =
     | { kind: "idle" }
-    | { kind: "loading"; token: number; figureIndex: number }
+    | { kind: "loading"; token: number; figureIndex: number; brightness?: "dimmed" | "revealed" }
     | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "failed"; token: number; figureIndex: number };
+  type ReactReaderBlock = ReaderBlock & { sentenceSpans: SentenceSpan[] };
   type ReaderMessage =
     | { type: "SHOW_RSVP_LOADING"; requestId: string }
     | { type: "START_RSVP"; requestId: string; text: string; readingContext?: Partial<ReadingContext> | null }
@@ -32,42 +33,43 @@
   let readerShadow: ShadowRoot | null = null;
   let root: HTMLDialogElement | HTMLDivElement | null = null;
   let rootStyle: HTMLStyleElement | null = null;
-  let loadingLayer: HTMLDivElement | null = null;
   let loadingRevealTimerId: number | null = null;
   let loadingSlowTimerId: number | null = null;
   let loadingRevealRequestId: string | null = null;
   let loadingStartedAt: number | null = null;
-  let loadingIndicator: HTMLDivElement | null = null;
-  let loadingIndicatorAnimation: Animation | null = null;
-  let loadingStatus: HTMLDivElement | null = null;
-  let loadingCancelButton: HTMLButtonElement | null = null;
-  let previousContext: HTMLDivElement | null = null;
+  let loadingSlowVisible = false;
+  let loadingCoverVisible = false;
+  let loadingCoverTimerId: number | null = null;
   let display: HTMLDivElement | null = null;
-  let nextContext: HTMLDivElement | null = null;
-  let contextSentenceIndex: number | null = null;
-  let playPauseButton: HTMLButtonElement | null = null;
   let headings: ReaderHeading[] = [];
-  let headingNodes: HTMLButtonElement[] = [];
   let sectionTransitions: ReaderSectionTransition[] = [];
   let initialHeadingIndex = -1;
   let activeRequestId: string | null = null;
-  let progressLabel: HTMLSpanElement | null = null;
   let displayResizeObserver: ResizeObserver | null = null;
   let figures: ReaderFigure[] = [];
   let flowItems: ReaderFlowItem[] = [];
-  let figurePanel: HTMLElement | null = null;
   let figureViewState: FigureViewState = { kind: "idle" };
   let figureLoadToken = 0;
   let figureLoadRevealTimerId: number | null = null;
-  let readerMain: HTMLDivElement | null = null;
   let sourceText = "";
   let blocks: ReaderBlock[] = [];
+  let viewBlocks: ReactReaderBlock[] = [];
   let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
   let textScroller: HTMLElement | null = null;
   let textPositionMarkers: HTMLElement[] = [];
   let textPositionDirty = false;
   let textRestoreScrollTop: number | null = null;
   let textRestoring = false;
+  let textRestoreGeneration = 0;
+  let textRestorePending = false;
+  let reactTextFigureCorrections = new WeakMap<HTMLImageElement, {
+    scroller: HTMLElement;
+    positionMarkers: HTMLElement[];
+    currentMarker?: HTMLElement;
+    shouldCorrect: boolean;
+    beforeTop: number;
+    settled: boolean;
+  }>();
   let launchFocus: HTMLElement | null = null;
   let sourceScrollPosition: { left: number; top: number } | null = null;
   let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
@@ -84,6 +86,248 @@
   let sessionEnabled = false;
   let applyingSession = false;
   let sessionLifecycleAttached = false;
+  let reactViewMount: ReaderReactViewerMount | null = null;
+  let reactRenderedKind: ReactReaderViewModel["kind"] | null = null;
+  let reactRenderedPositionKey: string | null = null;
+  let reactLoadingRevealed = false;
+  let performanceReactInitStarted = false;
+  let performanceReactInitMarked = false;
+  let performanceUnitMarked = false;
+
+  type ReactReaderViewModel = {
+    kind: "closed" | "loading" | "error" | "rsvp" | "text";
+    slow?: boolean;
+    revealed?: boolean;
+    reducedMotion?: boolean;
+    message?: string;
+    canRetry?: boolean;
+    previous?: string;
+    next?: string;
+    unit?: ReaderUnit | null;
+    figure?: { figure: ReaderFigure; figureIndex: number; status: "loading" | "ready" | "failed" } | null;
+    playing?: boolean;
+    progress?: number;
+    loadingCover?: boolean;
+    headings?: ReaderHeading[];
+    activeHeadingIndex?: number;
+    blocks?: ReactReaderBlock[];
+    figures?: ReaderFigure[];
+    language?: string;
+    position?: ReaderPosition;
+    title?: string;
+  };
+
+  function reactViewerAvailable(): boolean {
+    return typeof globalThis.ReaderReactViewer?.mount === "function";
+  }
+
+  function mountReactViewer(dialog: HTMLDialogElement): void {
+    if (reactViewMount) return;
+    if (!reactViewerAvailable()) throw new Error("reader_view_unavailable");
+    const host = document.createElement("div");
+    host.setAttribute("data-reader-react-root", "true");
+    Object.assign(host.style, { position: "absolute", inset: "0", pointerEvents: "auto" });
+    dialog.append(host);
+    const viewer = globalThis.ReaderReactViewer;
+    if (!viewer) throw new Error("reader_view_unavailable");
+    performanceReactInitStarted = true;
+    markPerformance("reader:react-init-start");
+    try {
+      reactViewMount = viewer.mount(host);
+    } catch (error) {
+      host.remove();
+      performanceReactInitStarted = false;
+      throw error;
+    }
+  }
+
+  function unmountReactViewer(): void {
+    reactViewMount?.unmount();
+    reactViewMount = null;
+    performanceReactInitStarted = false;
+    performanceReactInitMarked = false;
+    performanceUnitMarked = false;
+  }
+
+  function renderReactView(model: ReactReaderViewModel): void {
+    if (!reactViewMount) return;
+    const wasVisibleLoading = reactRenderedKind === "loading" && reactLoadingRevealed;
+    const previousDisplay = display;
+    const previousPositionKey = reactRenderedPositionKey;
+    const nextPositionKey = model.kind === "rsvp"
+      ? model.figure
+        ? `figure:${model.figure.figureIndex}`
+        : `text:${model.unit?.start ?? 0}`
+      : null;
+    reactViewMount.render(model, {
+      close,
+      cancel: cancelLoading,
+      retry: retryPreparation,
+      switchToText: showTextView,
+      switchToRsvp: showRsvpView,
+      previousSentence: goBackOneSentence,
+      headingSelect: jumpToHeading,
+      togglePlayback: togglePlayPause,
+      resumeFigure: advanceFromFigure,
+      figureLoad: (figureIndex: number, token?: number) => settleReactFigure(figureIndex, true, token),
+      figureError: (figureIndex: number, token?: number) => settleReactFigure(figureIndex, false, token),
+      figureImage: (element: HTMLImageElement, figureIndex: number, token?: number) => {
+        if (typeof token !== "number" || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token || !element.complete) return;
+        const capturedToken = token;
+        void Promise.resolve().then(() => {
+          if (element.isConnected === false || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== capturedToken) return;
+          settleReactFigure(figureIndex, element.naturalWidth > 0, capturedToken);
+        });
+      },
+      toggleFigureBrightness: (figureIndex: number) => toggleReactFigureBrightness(figureIndex),
+      loadingAnimation: animateLoadingIndicator,
+      rewindAnimation: animateRewindFeedback,
+      textScroll: (element: HTMLElement | null) => {
+        if (!element) {
+          textScroller = null;
+          textPositionMarkers = [];
+          return;
+        }
+        textScroller = element;
+        textPositionMarkers = [...element.querySelectorAll<HTMLElement>('[data-reader-position-kind="text"], [data-reader-position-kind="figure"]')];
+        textRestoreScrollTop = element.scrollTop;
+        attachReactTextFigureLoadCorrections(element);
+        if (textRestorePending) {
+          scheduleTextRestore(element, textPositionMarkers);
+        }
+      },
+      textPosition: (element: HTMLElement) => {
+        if (textRestoring) {
+          if (textRestoreScrollTop === null || Math.abs(element.scrollTop - textRestoreScrollTop) < 1) return;
+          if (textRestorePending) {
+            textRestorePending = false;
+            textRestoreGeneration += 1;
+          }
+        }
+        updateTextPosition(element, textPositionMarkers);
+        textRestoreScrollTop = element.scrollTop;
+      },
+    });
+    if (model.kind === "rsvp" && model.unit && !performanceUnitMarked) {
+      performanceUnitMarked = true;
+      markPerformance("reader:first-unit");
+    }
+    if (performanceReactInitStarted && !performanceReactInitMarked) {
+      performanceReactInitMarked = true;
+      markPerformance("reader:react-init-end");
+    }
+    display = root?.querySelector?.<HTMLDivElement>('[data-reader-unit="true"]') || null;
+    if (
+      model.kind === "rsvp"
+      && previousDisplay
+      && previousPositionKey
+      && nextPositionKey
+      && previousPositionKey !== nextPositionKey
+      && !prefersReducedMotion()
+    ) {
+      const enteringFigure = nextPositionKey.startsWith("figure:");
+      previousDisplay.animate(
+        enteringFigure ? [{ opacity: 1 }, { opacity: 0 }] : [{ opacity: 0 }, { opacity: 1 }],
+        { duration: 180, easing: "ease-out" },
+      );
+      if (enteringFigure) {
+        root?.querySelector?.<HTMLElement>('[aria-label="本文画像"]')?.animate(
+          [{ opacity: 0 }, { opacity: 1 }],
+          { duration: 180, easing: "ease-out" },
+        );
+      }
+    }
+    const stage = root?.querySelector?.<HTMLDivElement>('[data-reader-stage="true"]');
+    if (stage && model.kind === "rsvp" && wasVisibleLoading && !prefersReducedMotion()) {
+      stage.animate(
+        [{ opacity: 0 }, { opacity: 1 }],
+        { duration: LOADING_COVER_TRANSITION_MS, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+      );
+    }
+    if (model.kind === "rsvp" && model.next && !prefersReducedMotion()) {
+      root?.querySelector?.<HTMLDivElement>('[data-reader-context-next="true"]')?.animate(
+        [{ opacity: 0.12 }, { opacity: 0.26 }],
+        { duration: 120, easing: "ease-out" },
+      );
+    }
+    reactLoadingRevealed = model.kind === "loading" && model.revealed !== false;
+    reactRenderedKind = model.kind;
+    reactRenderedPositionKey = nextPositionKey;
+  }
+
+  function reactViewModel(): ReactReaderViewModel {
+    if (activePreparation.kind === "preparing") {
+      return { kind: "loading", slow: loadingSlowVisible, revealed: loadingRevealTimerId === null, reducedMotion: prefersReducedMotion() };
+    }
+    if (activePreparation.kind === "failed") {
+      return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: true };
+    }
+    const state = readingSessionState();
+    if (state?.mode === "text") {
+      return {
+        kind: "text",
+        blocks: viewBlocks,
+        figures,
+        language: segmentationLocale,
+        position: currentPosition,
+        progress: sourceText ? globalThis.Engine.calculateReadingProgress(currentPosition.sourceOffset, sourceText.length) : 0,
+        title: "",
+      };
+    }
+    const item = state ? flowItems[state.flowIndex] : flowItems[0];
+    const unitIndex = state?.unitIndex ?? (item?.kind === "unit" ? item.unitIndex : 0);
+    const unit = item?.kind === "unit" ? units[unitIndex] || null : null;
+    const figureIndex = item?.kind === "figure" ? item.figureIndex : null;
+    const figure = figureIndex === null ? null : figures[figureIndex] || null;
+    const figureState = figure && figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex
+      ? figureViewState.kind
+      : figure ? "loading" : null;
+    const figureView = figureIndex !== null && figure && figureState
+      ? {
+        figure,
+        figureIndex,
+        status: figureState,
+        token: figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.token : undefined,
+        loadingVisible: figureState === "loading" && figureLoadRevealTimerId === null,
+        brightness: figureViewState.kind === "ready" || figureViewState.kind === "loading"
+          ? figureViewState.brightness || "dimmed"
+          : "dimmed",
+      }
+      : null;
+    const position = state?.position || currentPosition;
+    return {
+      kind: "rsvp",
+      previous: unit ? globalThis.Engine.surroundingSentences(units, unitIndex).previous : "",
+      next: unit ? globalThis.Engine.surroundingSentences(units, unitIndex).next : "",
+      unit,
+      figure: figureView,
+      playing: state?.playback === "playing",
+      reducedMotion: prefersReducedMotion(),
+      progress: sourceText ? globalThis.Engine.calculateReadingProgress(position.sourceOffset, sourceText.length) : 0,
+      loadingCover: loadingCoverVisible,
+      headings,
+      activeHeadingIndex: activeHeadingAt(position.sourceOffset),
+    };
+  }
+
+  function settleReactFigure(figureIndex: number, loaded: boolean, token?: number): void {
+    if (typeof token !== "number" || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token) return;
+    if (figureLoadRevealTimerId !== null) {
+      globalThis.clearTimeout(figureLoadRevealTimerId);
+      figureLoadRevealTimerId = null;
+    }
+    const brightness = figureViewState.brightness;
+    figureViewState = loaded
+      ? { kind: "ready", token: figureViewState.token, figureIndex, brightness: brightness || "dimmed" }
+      : { kind: "failed", token: figureViewState.token, figureIndex };
+    renderReactView(reactViewModel());
+  }
+
+  function toggleReactFigureBrightness(figureIndex: number): void {
+    if ((figureViewState.kind !== "ready" && figureViewState.kind !== "loading") || figureViewState.figureIndex !== figureIndex) return;
+    figureViewState = { ...figureViewState, brightness: figureViewState.brightness === "revealed" ? "dimmed" : "revealed" };
+    renderReactView(reactViewModel());
+  }
 
   function readingSessionState(): ReaderSessionObservableState | null {
     return sessionState?.phase === "reading" ? sessionState : null;
@@ -169,19 +413,20 @@
       : null);
     activeRequestId = requestId;
     activePreparation = { kind: "preparing", requestId, startedAt: Date.now() };
+    loadingSlowVisible = false;
     beginReaderSession(requestId);
     loadingStartedAt = Date.now();
     loadingRevealRequestId = requestId;
     loadingRevealTimerId = globalThis.setTimeout(() => {
       loadingRevealTimerId = null;
-      if (requestId !== activeRequestId || requestId !== loadingRevealRequestId || loadingLayer) return;
+      if (requestId !== activeRequestId || requestId !== loadingRevealRequestId || reactRenderedKind === "loading") return;
       loadingRevealRequestId = null;
       createLoadingOverlay();
     }, LOADER_REVEAL_DELAY_MS);
     loadingSlowTimerId = globalThis.setTimeout(() => {
       loadingSlowTimerId = null;
       if (requestId !== activeRequestId || activePreparation.kind !== "preparing") return;
-      if (!loadingLayer) createLoadingOverlay();
+      if (!root) createLoadingOverlay();
       showSlowLoading();
     }, SLOW_PREPARATION_DELAY_MS);
   }
@@ -193,7 +438,7 @@
   ): void {
     if (requestId !== activeRequestId || activePreparation.kind !== "preparing") return;
 
-    const loadingWasVisible = loadingLayer !== null;
+    const loadingWasVisible = loadingCoverVisible || (reactRenderedKind === "loading" && reactLoadingRevealed);
     const elapsed = loadingStartedAt === null ? 0 : Date.now() - loadingStartedAt;
     if (!loadingWasVisible && elapsed >= LOADER_REVEAL_DELAY_MS) {
       cancelLoadingReveal();
@@ -223,6 +468,7 @@
 
     const figureBoundaries = figures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
     segmentationLocale = readingContext.language;
+    viewBlocks = buildViewBlocks(blocks.length > 0 ? blocks : fallbackBlocks(sourceText), segmentationLocale);
     baseUnits = globalThis.Engine.segmentText(content.text, segmentationLocale, figureBoundaries)
       .map((unit) => {
         const value = unit.text.trim();
@@ -246,15 +492,24 @@
     currentPosition = flowItems[0]
       ? globalThis.Engine.positionForFlowItem(flowItems[0], units)
       : { kind: "text", sourceOffset: 0 };
+    activePreparation = { kind: "ready", requestId };
     createOverlay();
     rebuildUnitsForViewport();
-    activePreparation = { kind: "ready", requestId };
-    renderCurrentFlowItem();
+    renderReactView(reactViewModel());
+    if (loadingCoverVisible) {
+      if (loadingCoverTimerId !== null) globalThis.clearTimeout(loadingCoverTimerId);
+      loadingCoverTimerId = globalThis.setTimeout(() => {
+        loadingCoverTimerId = null;
+        loadingCoverVisible = false;
+        renderReactView(reactViewModel());
+      }, LOADING_COVER_TRANSITION_MS);
+    }
     dispatchSession({
       type: "prepareSucceeded",
       requestId,
       flow: sessionPreparation(),
     });
+    focusAfterPaint(findCloseButton());
   }
 
   function readerSessionAvailable(): boolean {
@@ -314,9 +569,11 @@
     }
     if (!sessionInitPromise) {
       markPerformance("reader:session-init-start");
+      markPerformance("reader:wasm-init-start");
       sessionInitPromise = globalThis.ReaderSession.init()
         .then(() => {
           markPerformance("reader:session-init-end");
+          markPerformance("reader:wasm-init-end");
           const currentRequestId = activeRequestId;
           if (!currentRequestId || activePreparation.kind === "cancelled") return;
           if (sessionHandle) {
@@ -351,7 +608,6 @@
     const state = sessionState;
     if (!state) return;
     if (state.phase === "reading" && state.position) currentPosition = state.position;
-    updatePlayPauseButton();
   }
 
   function dispatchSession(command: ReaderSessionCommand): void {
@@ -395,96 +651,28 @@
   }
 
   function renderSessionState(): void {
-    const state = sessionState;
-    if (!state || state.phase !== "reading" || state.mode !== "rsvp") return;
-    renderCurrentFlowItem();
+    prepareReactFigure(flowItems[sessionFlowIndex()]);
+    renderReactView(reactViewModel());
   }
 
   function createLoadingOverlay() {
-    if (loadingLayer) return;
-    root = createRoot();
-    loadingLayer = document.createElement("div");
-    loadingLayer.setAttribute("data-reader-loading", "true");
-    Object.assign(loadingLayer.style, {
-      position: "absolute",
-      inset: "0",
-    });
-
-    const track = document.createElement("div");
-    track.setAttribute("data-reader-loading-bar", "true");
-    track.setAttribute("aria-hidden", "true");
-    Object.assign(track.style, {
-      position: "absolute",
-      left: "50%",
-      top: "50%",
-      transform: "translate(-50%, -50%)",
-      width: "min(180px, calc(100% - 48px))",
-      height: "2px",
-      borderRadius: "999px",
-      overflow: "hidden",
-      background: "rgba(255,255,255,0.18)",
-      pointerEvents: "none",
-    });
-
-    const indicator = document.createElement("div");
-    indicator.setAttribute("data-reader-loading-indicator", "true");
-    Object.assign(indicator.style, {
-      width: "100%",
-      height: "100%",
-      borderRadius: "inherit",
-      background: "rgba(255,255,255,0.82)",
-      transform: "translateX(-100%) scaleX(.35)",
-      transformOrigin: "left center",
-    });
-    if (!prefersReducedMotion()) {
-      loadingIndicatorAnimation = indicator.animate(
-        [
-          { transform: "translateX(-100%) scaleX(.35)" },
-          { transform: "translateX(220%) scaleX(.35)" },
-        ],
-        { duration: 1100, iterations: Infinity, easing: "linear" },
-      );
-    } else indicator.style.transform = "translateX(0) scaleX(.35)";
-    loadingIndicator = indicator;
-    track.append(indicator);
-    loadingLayer.append(track);
-    root.append(loadingLayer);
+    loadingCoverVisible = true;
+    if (!root) root = createRoot();
+    renderReactView(reactViewModel());
     attachKeydownListener();
   }
 
   function showSlowLoading(): void {
-    if (!loadingLayer || loadingStatus || loadingCancelButton) return;
-    loadingLayer.style.pointerEvents = "auto";
-    loadingStatus = document.createElement("div");
-    loadingStatus.setAttribute("data-reader-loading-label", "true");
-    loadingStatus.setAttribute("role", "status");
-    loadingStatus.textContent = "文章を準備しています";
-    Object.assign(loadingStatus.style, {
-      position: "absolute",
-      left: "50%",
-      top: "calc(50% + 24px)",
-      transform: "translateX(-50%)",
-      color: "rgba(255,255,255,0.82)",
-      fontSize: "14px",
-      whiteSpace: "nowrap",
-    });
-
-    loadingCancelButton = createButton("中止", cancelLoading);
-    Object.assign(loadingCancelButton.style, {
-      position: "absolute",
-      left: "50%",
-      bottom: "32px",
-      transform: "translateX(-50%)",
-    });
-    const closeButton = createButton("閉じる", close);
-    Object.assign(closeButton.style, {
-      position: "absolute",
-      right: "24px",
-      bottom: "24px",
-      pointerEvents: "auto",
-    });
-    loadingLayer.append(loadingStatus, loadingCancelButton, closeButton);
-    focusAfterPaint(loadingCancelButton);
+    loadingSlowVisible = true;
+    if (reactViewMount) {
+      renderReactView(reactViewModel());
+      focusAfterPaint(findLoadingCancelButton());
+      return;
+    }
+    if (!root) root = createRoot();
+    renderReactView(reactViewModel());
+    focusAfterPaint(findLoadingCancelButton());
+    return;
   }
 
   function cancelLoadingReveal(): void {
@@ -497,6 +685,7 @@
       globalThis.clearTimeout(loadingSlowTimerId);
       loadingSlowTimerId = null;
     }
+    loadingSlowVisible = false;
   }
 
   function cancelLoading(): void {
@@ -514,50 +703,17 @@
       dispatchSession({ type: "prepareFailed", requestId, reason });
     }
     cancelLoadingReveal();
-    loadingIndicatorAnimation?.cancel?.();
-    loadingIndicatorAnimation = null;
-    loadingIndicator = null;
-    loadingStatus = null;
-    loadingCancelButton = null;
-    loadingLayer = null;
     activePreparation = { kind: "failed", requestId, reason };
-    if (!root) {
-      root = createRoot();
+    loadingCoverVisible = false;
+    if (loadingCoverTimerId !== null) {
+      globalThis.clearTimeout(loadingCoverTimerId);
+      loadingCoverTimerId = null;
     }
-    root.replaceChildren(...(rootStyle ? [rootStyle] : []));
-
-    const status = document.createElement("div");
-    status.textContent = preparationFailureLabel(reason);
-    Object.assign(status.style, {
-      position: "absolute",
-      left: "50%",
-      top: "50%",
-      transform: "translate(-50%, -50%)",
-      fontSize: "clamp(22px, 3vw, 34px)",
-      fontWeight: "600",
-    });
-
-    const closeButton = createButton("元に戻る", close);
-    Object.assign(closeButton.style, {
-      position: "absolute",
-      left: "50%",
-      bottom: "32px",
-      transform: "translateX(-50%)",
-    });
-    const actions = document.createElement("div");
-    Object.assign(actions.style, {
-      position: "absolute",
-      left: "50%",
-      bottom: "32px",
-      transform: "translateX(-50%)",
-      display: "flex",
-      gap: "10px",
-    });
-    const retryButton = createButton("やり直す", retryPreparation);
-    actions.append(retryButton, closeButton);
-    root.append(status, actions);
+    if (!root) root = createRoot();
+    renderReactView(reactViewModel());
     attachKeydownListener();
-    focusAfterPaint(closeButton);
+    focusAfterPaint(findCloseButton());
+    return;
   }
 
   function preparationFailureLabel(reason: PreparationFailure): string {
@@ -659,276 +815,17 @@
     return context;
   }
 
-  function createOverlay() {
-    if (!root) {
-      root = createRoot();
-    }
-
-    const stage = document.createElement("div");
-    stage.setAttribute("data-reader-stage", "true");
-    Object.assign(stage.style, {
-      position: "absolute",
-      left: "50%",
-      top: "50%",
-      transform: "translate(-50%, -50%)",
-      width: "min(980px, calc(100% - 48px))",
-      height: "calc(100% - 48px)",
-      display: "grid",
-      gridTemplateColumns: headings.length > 0 ? "280px minmax(0, 1fr)" : "minmax(0, 1fr)",
-      columnGap: headings.length > 0 ? "32px" : "0",
-      alignItems: "stretch",
-    });
-
-    if (headings.length > 0) {
-      stage.append(createMinimap());
-    }
-
-    const main = document.createElement("div");
-    Object.assign(main.style, {
-      position: "relative",
-      minWidth: "0",
-      height: "100%",
-    });
-    readerMain = main;
-
-    previousContext = createContext("previous");
-
-    display = document.createElement("div");
-    display.setAttribute("data-reader-unit", "true");
-    display.setAttribute("aria-live", "off");
-    display.setAttribute("aria-atomic", "false");
-    Object.assign(display.style, {
-      position: "absolute",
-      left: "50%",
-      top: "50%",
-      transform: "translate(-50%, -50%)",
-      width: "min(100%, 640px)",
-      maxWidth: "calc(100% - 32px)",
-      height: "1.35em",
-      boxSizing: "border-box",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      padding: "0 12px",
-      borderRadius: "12px",
-      fontSize: DISPLAY_FONT_SIZE,
-      fontWeight: "600",
-      lineHeight: "1.35",
-      textAlign: "center",
-      whiteSpace: "nowrap",
-      overflow: "hidden",
-      overflowWrap: "normal",
-      wordBreak: "keep-all",
-      transition: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-        ? "none"
-        : "color 120ms ease, background-color 120ms ease",
-    });
-
-    nextContext = createContext("next");
-    contextSentenceIndex = null;
-
-    progressLabel = document.createElement("span");
-    progressLabel.setAttribute("data-reader-progress", "true");
-    progressLabel.textContent = "0%";
-    Object.assign(progressLabel.style, {
-      position: "absolute",
-      right: "16px",
-      bottom: "16px",
-      zIndex: "3",
-      color: "rgba(235,235,235,0.58)",
-      fontSize: "13px",
-      fontVariantNumeric: "tabular-nums",
-      pointerEvents: "none",
-    });
-
-    const topbar = createTopbar("文章で読む", showTextView);
-    const controls = document.createElement("div");
-    Object.assign(controls.style, {
-      position: "absolute",
-      left: "50%",
-      bottom: "8px",
-      transform: "translateX(-50%)",
-      width: "min(100%, 264px)",
-      minHeight: "56px",
-      display: "grid",
-      gridTemplateColumns: "1fr 56px 1fr",
-      alignItems: "center",
-    });
-
-    const backButton = createIconControl("previous", "1文戻る", goBackOneSentence, 30, 52);
-    playPauseButton = createIconControl("play", "再生", togglePlayPause, 30, 56);
-    backButton.setAttribute("aria-keyshortcuts", "ArrowLeft");
-    playPauseButton.setAttribute("aria-keyshortcuts", "Space");
-
-    controls.append(backButton, playPauseButton);
-    main.append(topbar, previousContext, display, nextContext, controls, progressLabel);
-    stage.append(main);
-    revealReader(stage);
+  function createOverlay(): void {
+    if (!root) root = createRoot();
+    renderReactView(reactViewModel());
     attachKeydownListener();
     focusAfterPaint(findCloseButton());
-
-    if (typeof globalThis.ResizeObserver === "function") {
+    if (typeof globalThis.ResizeObserver === "function" && root && !displayResizeObserver) {
       displayResizeObserver = new globalThis.ResizeObserver(() => {
-        if (rebuildUnitsForViewport()) renderCurrentFlowItem();
+        if (rebuildUnitsForViewport()) renderSessionState();
       });
-      displayResizeObserver.observe(main);
+      displayResizeObserver.observe(root);
     }
-  }
-
-  function createTopbar(modeLabel: string, switchMode: () => void): HTMLDivElement {
-    const topbar = document.createElement("div");
-    topbar.setAttribute("data-reader-topbar", "true");
-    Object.assign(topbar.style, {
-      position: "absolute",
-      top: "8px",
-      left: "0",
-      right: "0",
-      height: "44px",
-      zIndex: "2",
-      pointerEvents: "none",
-    });
-
-    const modeButton = document.createElement("button");
-    modeButton.type = "button";
-    modeButton.setAttribute("data-reader-mode-button", "true");
-    modeButton.textContent = modeLabel;
-    Object.assign(modeButton.style, {
-      position: "absolute",
-      left: "50%",
-      top: "0",
-      transform: "translateX(-50%)",
-      minWidth: "112px",
-      height: "40px",
-      padding: "0 12px",
-      border: "1px solid transparent",
-      borderRadius: "14px",
-      background: "transparent",
-      color: "rgba(245,245,247,0.66)",
-      font: "inherit",
-      fontSize: "14px",
-      fontWeight: "600",
-      whiteSpace: "nowrap",
-      cursor: "pointer",
-      pointerEvents: "auto",
-      transition: "color 120ms ease, background-color 120ms ease, scale 100ms ease",
-    });
-    modeButton.addEventListener("pointerenter", () => {
-      modeButton.style.color = "rgba(245,245,247,0.86)";
-      modeButton.style.background = "rgba(255,255,255,0.06)";
-    });
-    modeButton.addEventListener("pointerleave", () => {
-      modeButton.style.color = "rgba(245,245,247,0.66)";
-      modeButton.style.background = "transparent";
-      modeButton.style.scale = "1";
-    });
-    modeButton.addEventListener("pointerdown", () => {
-      if (prefersReducedMotion()) return;
-      modeButton.style.scale = "0.96";
-    });
-    modeButton.addEventListener("pointerup", () => {
-      modeButton.style.scale = "1";
-    });
-    modeButton.addEventListener("focus", () => {
-      modeButton.style.borderColor = "rgba(255,255,255,0.52)";
-    });
-    modeButton.addEventListener("blur", () => {
-      modeButton.style.borderColor = "transparent";
-    });
-    modeButton.addEventListener("click", switchMode);
-
-    const closeButton = createIconControl("close", "readerを閉じる", close, 22, 44);
-    Object.assign(closeButton.style, {
-      position: "absolute",
-      top: "0",
-      right: "0",
-      pointerEvents: "auto",
-    });
-    topbar.append(modeButton, closeButton);
-    return topbar;
-  }
-
-  function createIconControl(
-    icon: ReaderIconName,
-    accessibilityLabel: string,
-    action: () => void,
-    iconSize: number,
-    buttonSize: number,
-  ): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.replaceChildren(globalThis.ReaderIcons.create(document, icon, iconSize));
-    button.setAttribute("aria-label", accessibilityLabel);
-    button.title = accessibilityLabel;
-    Object.assign(button.style, {
-      appearance: "none",
-      width: `${buttonSize}px`,
-      height: `${buttonSize}px`,
-      minWidth: "44px",
-      minHeight: "44px",
-      padding: "0",
-      border: "1px solid transparent",
-      borderRadius: "14px",
-      background: "transparent",
-      color: "rgba(245,245,247,0.66)",
-      display: "grid",
-      placeItems: "center",
-      justifySelf: "center",
-      cursor: "pointer",
-      transition: "background-color 120ms ease, opacity 100ms ease, scale 100ms ease",
-    });
-    button.addEventListener("pointerenter", () => {
-      button.style.background = "rgba(255,255,255,0.08)";
-      button.style.color = "rgba(245,245,247,0.86)";
-    });
-    button.addEventListener("pointerleave", () => {
-      button.style.background = "transparent";
-      button.style.color = "rgba(245,245,247,0.66)";
-      button.style.opacity = "1";
-      button.style.scale = "1";
-    });
-    button.addEventListener("pointerdown", () => {
-      if (prefersReducedMotion()) return;
-      button.style.opacity = "0.62";
-      button.style.scale = "0.94";
-    });
-    button.addEventListener("pointerup", () => {
-      button.style.opacity = "1";
-      button.style.scale = "1";
-    });
-    button.addEventListener("focus", () => {
-      button.style.borderColor = "rgba(255,255,255,0.52)";
-    });
-    button.addEventListener("blur", () => {
-      button.style.borderColor = "transparent";
-    });
-    button.addEventListener("click", action);
-    return button;
-  }
-
-  function createContext(position: "previous" | "next"): HTMLDivElement {
-    const element = document.createElement("div");
-    element.setAttribute("aria-hidden", "true");
-    Object.assign(element.style, {
-      position: "absolute",
-      left: "50%",
-      transform: "translateX(-50%)",
-      width: "min(100%, 640px)",
-      maxWidth: "calc(100% - 32px)",
-      display: "-webkit-box",
-      overflow: "hidden",
-      color: "rgba(255,255,255,0.26)",
-      fontSize: "clamp(16px, 1.5vw, 20px)",
-      fontWeight: "550",
-      lineHeight: "1.4",
-      textAlign: "center",
-      opacity: "0.26",
-      WebkitBoxOrient: "vertical",
-      WebkitLineClamp: "2",
-      ...(position === "previous"
-        ? { bottom: "calc(50% + 82px)" }
-        : { top: "calc(50% + 82px)" }),
-    });
-    return element;
   }
 
   function createRoot(): HTMLDialogElement | HTMLDivElement {
@@ -1046,6 +943,16 @@
     else host.append(style, dialog);
 
     root = dialog;
+    try {
+      mountReactViewer(dialog);
+    } catch (error) {
+      host.remove();
+      root = null;
+      rootHost = null;
+      readerShadow = null;
+      rootStyle = null;
+      throw error;
+    }
     root.addEventListener("focusin", rememberReaderFocus, true);
     dialogCancelListener = (event: Event) => {
       event.preventDefault();
@@ -1104,6 +1011,10 @@
       return null;
     };
     return find(root);
+  }
+
+  function findLoadingCancelButton(): HTMLButtonElement | null {
+    return root?.querySelector?.<HTMLButtonElement>('[data-reader-loading-cancel="true"]') || null;
   }
 
   function findModeButton(): HTMLButtonElement | null {
@@ -1211,308 +1122,41 @@
     dialogCancelListener = null;
   }
 
-  function revealReader(stage: HTMLDivElement): void {
-    if (!root || !rootStyle) return;
-    if (!loadingLayer) {
-      root.append(stage);
-      return;
-    }
-
-    const outgoing = loadingLayer;
-    loadingLayer = null;
-    loadingIndicatorAnimation?.cancel?.();
-    loadingIndicatorAnimation = null;
-    loadingStatus = null;
-    loadingCancelButton = null;
-    loadingIndicator = null;
-    outgoing.style.pointerEvents = "none";
-    root.replaceChildren(rootStyle, stage, outgoing);
-    const outgoingAnimation = animateOpacity(outgoing, 1, 0, LOADING_COVER_TRANSITION_MS);
-    animateOpacity(stage, 0, 1, LOADING_COVER_TRANSITION_MS);
-    afterAnimation(outgoingAnimation, () => outgoing.remove());
-  }
-
-  function createMinimap() {
-    const minimap = document.createElement("aside");
-    minimap.setAttribute("data-reader-minimap", "true");
-    minimap.setAttribute("aria-label", "読書位置");
-    Object.assign(minimap.style, {
-      position: "relative",
-      width: "100%",
-      maxHeight: "min(72vh, 640px)",
-      boxSizing: "border-box",
-      zIndex: "1",
-      display: "flex",
-      flexDirection: "column",
-      alignSelf: "center",
-      padding: "14px 10px 10px",
-      border: "1px solid rgba(255,255,255,0.11)",
-      borderRadius: "18px",
-      background: "rgba(36,36,36,0.72)",
-      boxShadow: "0 18px 50px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.05)",
-      backdropFilter: "blur(28px) saturate(150%)",
-      WebkitBackdropFilter: "blur(28px) saturate(150%)",
-    });
-
-    const location = document.createElement("div");
-    Object.assign(location.style, {
-      minWidth: "0",
-      padding: "0 6px 10px",
-    });
-
-    const locationMeta = document.createElement("div");
-    Object.assign(locationMeta.style, {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "baseline",
-      marginBottom: "5px",
-      color: "rgba(235,235,235,0.60)",
-      fontSize: "11px",
-      fontWeight: "600",
-      letterSpacing: "0.02em",
-      fontVariantNumeric: "tabular-nums",
-    });
-    const locationLabel = document.createElement("span");
-    locationLabel.textContent = "記事の構成";
-    locationMeta.append(locationLabel);
-
-    const outline = document.createElement("nav");
-    outline.setAttribute("aria-label", "記事の構成");
-    Object.assign(outline.style, {
-      minHeight: "0",
-      overflowY: "auto",
-      padding: "2px 0",
-      scrollbarWidth: "none",
-      msOverflowStyle: "none",
-    });
-
-    headingNodes = headings.map((heading, headingIndex) => {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.textContent = heading.text;
-      item.title = heading.text;
-      Object.assign(item.style, {
-        appearance: "none",
-        width: "100%",
-        marginBottom: "2px",
-        padding: "7px 8px",
-        paddingLeft: `${8 + Math.max(0, heading.level - 1) * 11}px`,
-        border: "0",
-        borderRadius: "8px",
-        background: "transparent",
-        color: "rgba(235,235,235,0.58)",
-        fontFamily: "inherit",
-        fontSize: "13px",
-        fontWeight: heading.level === 1 ? "600" : "450",
-        lineHeight: "1.35",
-        textAlign: "left",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        boxSizing: "border-box",
-        cursor: "pointer",
-        transition: "color 180ms ease, background-color 180ms ease",
-      });
-      item.addEventListener("click", () => jumpToHeading(headingIndex));
-      outline.append(item);
-      return item;
-    });
-
-    location.append(locationMeta);
-    minimap.append(location, outline);
-
-    return minimap;
-  }
-
-  function createButton(label: string, onClick: () => void): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = label;
-    Object.assign(button.style, {
-      appearance: "none",
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-      border: "1px solid transparent",
-      borderRadius: "999px",
-      padding: "10px 16px",
-      boxSizing: "border-box",
-      background: "rgba(118,118,118,0.18)",
-      color: "#ffffff",
-      font: "inherit",
-      fontSize: "14px",
-      fontWeight: "500",
-      textAlign: "center",
-      whiteSpace: "nowrap",
-      cursor: "pointer",
-      backdropFilter: "blur(18px)",
-      WebkitBackdropFilter: "blur(18px)",
-      transition: "background-color 180ms ease, transform 120ms ease",
-    });
-    button.addEventListener("pointerenter", () => {
-      button.style.background = "rgba(174,174,174,0.26)";
-    });
-    button.addEventListener("pointerleave", () => {
-      button.style.background = "rgba(118,118,118,0.18)";
-      button.style.scale = "1";
-    });
-    button.addEventListener("pointerdown", () => {
-      if (prefersReducedMotion()) return;
-      button.style.scale = "0.97";
-    });
-    button.addEventListener("pointerup", () => {
-      button.style.scale = "1";
-    });
-    button.addEventListener("focus", () => {
-      button.style.borderColor = "rgba(255,255,255,0.86)";
-    });
-    button.addEventListener("blur", () => {
-      button.style.borderColor = "transparent";
-    });
-    button.addEventListener("click", onClick);
-    return button;
-  }
-
   function showTextView() {
     if (!root || !sourceText) return;
     const activeElement = readerActiveElement();
+    textRestoring = true;
+    textRestorePending = true;
     if (!applyingSession) {
       dispatchSession({ type: "switchToText", position: currentPosition });
     }
-    clearRenderedView();
-
-    const shell = document.createElement("div");
-    shell.setAttribute("data-reader-text-shell", "true");
-    Object.assign(shell.style, {
-      width: "min(900px, calc(100% - 32px))",
-      height: "calc(100% - 32px)",
-      margin: "16px auto",
-      position: "relative",
-      boxSizing: "border-box",
-      border: "1px solid rgba(255,255,255,0.10)",
-      borderRadius: "24px",
-      background: "rgba(24,24,24,0.92)",
-      overflow: "hidden",
-    });
-
-    const scroller = document.createElement("main");
-    scroller.setAttribute("data-reader-text-scroller", "true");
-    Object.assign(scroller.style, {
-      width: "100%",
-      height: "100%",
-      overflowY: "auto",
-      boxSizing: "border-box",
-      padding: "72px clamp(24px, 7vw, 96px) 112px",
-      scrollbarGutter: "stable",
-    });
-    const article = document.createElement("article");
-    Object.assign(article.style, {
-      maxWidth: "42rem",
-      margin: "0 auto",
-      color: "rgba(255,255,255,0.92)",
-      fontSize: "clamp(17px, 1.7vw, 20px)",
-      lineHeight: "1.9",
-      letterSpacing: "0.01em",
-    });
-
-    const readableBlocks = blocks.length > 0 ? blocks : fallbackBlocks(sourceText);
-    const blockElements = readableBlocks.map((block) => createTextBlock(block));
-    const figureElements: HTMLElement[] = [];
-    appendTextContent(article, readableBlocks, blockElements, figures, figureElements);
-    const positionMarkers = [...blockElements.flatMap((element) => descendantElements(element)
-      .filter((child) => child.dataset.readerTextAnchor === "true")), ...figureElements].sort((left, right) => (
-      Number(left.dataset.sourceStart) - Number(right.dataset.sourceStart)
-      || (left.dataset.readerPositionKind === right.dataset.readerPositionKind
-        ? Number(left.dataset.figureIndex || 0) - Number(right.dataset.figureIndex || 0)
-        : left.dataset.readerPositionKind === "figure" ? -1 : 1)
-    ));
-    scroller.append(article);
-
-    textScroller = scroller;
-    textPositionMarkers = positionMarkers;
-    textPositionDirty = false;
-    textRestoreScrollTop = null;
-    const topbar = createTopbar("RSVPで読む", () => {
-      updateTextPosition(scroller, positionMarkers, true, false);
-      showRsvpView();
-    });
-    Object.assign(topbar.style, { left: "16px", right: "16px" });
-    progressLabel = document.createElement("span");
-    progressLabel.setAttribute("data-reader-progress", "true");
-    progressLabel.textContent = `${globalThis.Engine.calculateReadingProgress(
-      currentPosition.sourceOffset,
-      sourceText.length,
-    )}%`;
-    Object.assign(progressLabel.style, {
-      position: "absolute",
-      right: "16px",
-      bottom: "16px",
-      zIndex: "3",
-      color: "rgba(235,235,235,0.58)",
-      fontSize: "13px",
-      fontVariantNumeric: "tabular-nums",
-      pointerEvents: "none",
-    });
-    shell.append(topbar, scroller, progressLabel);
-    root.append(shell);
+    renderReactView(reactViewModel());
     attachKeydownListener();
-
-    const updatePosition = () => {
-      if (textRestoring) return;
-      if (textRestoreScrollTop !== null && Math.abs(scroller.scrollTop - textRestoreScrollTop) < 1) return;
-      textPositionDirty = true;
-      updateTextPosition(scroller, positionMarkers);
-    };
-    scroller.addEventListener("scroll", updatePosition, { passive: true });
-    const initializeTextView = () => {
-      textRestoring = true;
-      if (scroller.scrollTop > 0) updateTextPosition(scroller, positionMarkers);
-      else restoreTextPosition(scroller, positionMarkers);
-      textRestoreScrollTop = scroller.scrollTop;
-      textPositionDirty = false;
-      textRestoring = false;
-      figureElements.forEach((figureElement) => attachTextFigureLoadCorrection(scroller, figureElement, positionMarkers));
-    };
-    if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(initializeTextView);
-    else {
-      initializeTextView();
-      textRestoreScrollTop = null;
-    }
     focusCloseIfNeeded(activeElement);
+    return;
   }
 
   function showRsvpView() {
     if (!root || units.length === 0) return;
     const previousFocus = readerActiveElement();
     const restoreModeFocus = previousFocus?.getAttribute?.("data-reader-mode-button") === "true";
-    dispatchSession({ type: "switchToRsvp", position: currentPosition });
-    clearRenderedView();
-    createOverlay();
-    renderCurrentFlowItem();
+    const modeRestorePending = textRestorePending;
+    textRestorePending = false;
+    let capturedPosition = currentPosition;
+    if (sessionMode() === "text" && textScroller) {
+      const scrollChanged = textRestoreScrollTop === null || Math.abs(textScroller.scrollTop - textRestoreScrollTop) >= 1;
+      if (!modeRestorePending || scrollChanged) {
+        textRestoring = true;
+        updateTextPosition(textScroller, textPositionMarkers, true, false);
+      }
+      capturedPosition = currentPosition;
+    }
+    dispatchSession({ type: "switchToRsvp", position: capturedPosition });
+    renderReactView(reactViewModel());
+    scheduleTextRestoreRelease();
+    attachKeydownListener();
     if (restoreModeFocus) focusAfterPaint(findModeButton());
-  }
-
-  function clearRenderedView() {
-    if (!root || !rootStyle) return;
-    invalidateFigureLoad();
-    figurePanel = null;
-    detachKeydownListener();
-    displayResizeObserver?.disconnect();
-    displayResizeObserver = null;
-    root.replaceChildren(rootStyle);
-    previousContext = null;
-    display = null;
-    nextContext = null;
-    contextSentenceIndex = null;
-    playPauseButton = null;
-    headingNodes = [];
-    progressLabel = null;
-    readerMain = null;
-    textScroller = null;
-    textPositionMarkers = [];
-    textPositionDirty = false;
-    textRestoreScrollTop = null;
-    textRestoring = false;
+    return;
   }
 
   function fallbackBlocks(text: string): ReaderBlock[] {
@@ -1528,264 +1172,67 @@
     return result;
   }
 
-  function createTextBlock(block: ReaderBlock): HTMLElement {
-    let tagName = "p";
-    if (block.kind === "heading") tagName = `h${Math.min(6, Math.max(1, block.level || 2))}`;
-    if (block.kind === "quote") tagName = "blockquote";
-    if (block.kind === "preformatted") tagName = "pre";
-    const element = document.createElement(tagName);
-    element.dataset.sourceStart = String(block.start ?? 0);
-    element.dataset.sourceEnd = String(block.end ?? (block.start ?? 0) + block.text.length);
-    Object.assign(element.style, {
-      margin: tagName === "p" ? "0 0 1.45em" : "1.8em 0 0.8em",
-      whiteSpace: tagName === "pre" ? "pre-wrap" : "pre-line",
-      overflowWrap: "anywhere",
-    });
-    if (tagName === "blockquote") {
-      Object.assign(element.style, {
-        paddingLeft: "1em",
-        borderLeft: "2px solid rgba(255,255,255,0.28)",
-        color: "rgba(255,255,255,0.68)",
-      });
-    }
-    const sentenceSpans = globalThis.Engine.splitSentenceSpans(block.text, segmentationLocale);
-    if (sentenceSpans.length === 0) {
-      element.textContent = block.text;
-      element.setAttribute("data-reader-text-anchor", "true");
-      element.dataset.readerTextAnchor = "true";
-      element.dataset.readerPositionKind = "text";
-      return element;
-    }
-    for (const sentence of sentenceSpans) {
-      const anchor = document.createElement("span");
-      anchor.setAttribute("data-reader-text-anchor", "true");
-      anchor.dataset.readerTextAnchor = "true";
-      anchor.dataset.sourceStart = String((block.start ?? 0) + sentence.start);
-      anchor.dataset.sourceEnd = String((block.start ?? 0) + sentence.end);
-      anchor.dataset.readerPositionKind = "text";
-      anchor.textContent = block.text.slice(sentence.start, sentence.end);
-      element.append(anchor);
-    }
-    return element;
+  function buildViewBlocks(sourceBlocks: ReaderBlock[], locale: string): ReactReaderBlock[] {
+    return sourceBlocks.map((block) => ({ ...block, sentenceSpans: globalThis.Engine.splitSentenceSpans(block.text, locale) }));
   }
 
-  function descendantElements(element: HTMLElement): HTMLElement[] {
-    return [...element.children].flatMap((child) => {
-      const childElement = child as HTMLElement;
-      return [childElement, ...descendantElements(childElement)];
-    });
-  }
-
-  function appendTextContent(
-    article: HTMLElement,
-    readableBlocks: ReaderBlock[],
-    blockElements: HTMLElement[],
-    articleFigures: ReaderFigure[],
-    figureElements: HTMLElement[],
-  ): void {
-    const orderedFigures = articleFigures
-      .map((figure, figureIndex) => ({ figure, figureIndex }))
-      .sort((left, right) => (
-        left.figure.sourceOffset - right.figure.sourceOffset
-        || left.figureIndex - right.figureIndex
-      ));
-    let figureIndex = 0;
-    readableBlocks.forEach((block, blockIndex) => {
-      let currentFigure = orderedFigures[figureIndex];
-      while (currentFigure && currentFigure.figure.sourceOffset <= block.start) {
-        const figureElement = createTextFigure(currentFigure.figure, currentFigure.figureIndex);
-        article.append(figureElement);
-        figureElements.push(figureElement);
-        figureIndex += 1;
-        currentFigure = orderedFigures[figureIndex];
+  function attachReactTextFigureLoadCorrections(scroller: HTMLElement): void {
+    const positionMarkers = [...scroller.querySelectorAll<HTMLElement>('[data-reader-position-kind="text"], [data-reader-position-kind="figure"]')];
+    for (const figureElement of scroller.querySelectorAll<HTMLElement>('[data-reader-text-figure="true"]')) {
+      const image = figureElement.querySelector<HTMLImageElement>("img");
+      if (!image) continue;
+      const existing = reactTextFigureCorrections.get(image);
+      if (existing) {
+        existing.scroller = scroller;
+        existing.positionMarkers = positionMarkers;
+        continue;
       }
-      const blockElement = blockElements[blockIndex];
-      if (blockElement) article.append(blockElement);
-      currentFigure = orderedFigures[figureIndex];
-      while (currentFigure && currentFigure.figure.sourceOffset <= block.end) {
-        const figureElement = createTextFigure(currentFigure.figure, currentFigure.figureIndex);
-        article.append(figureElement);
-        figureElements.push(figureElement);
-        figureIndex += 1;
-        currentFigure = orderedFigures[figureIndex];
-      }
-    });
-    let currentFigure = orderedFigures[figureIndex];
-    while (currentFigure) {
-      const figureElement = createTextFigure(currentFigure.figure, currentFigure.figureIndex);
-      article.append(figureElement);
-      figureElements.push(figureElement);
-      figureIndex += 1;
-      currentFigure = orderedFigures[figureIndex];
-    }
-  }
-
-  function createTextFigure(figure: ReaderFigure, figureIndex: number): HTMLElement {
-    const container = document.createElement("figure");
-    container.setAttribute("data-reader-text-figure", "true");
-    container.dataset.sourceStart = String(figure.sourceOffset);
-    container.dataset.sourceEnd = String(figure.sourceEnd);
-    container.dataset.readerPositionKind = "figure";
-    container.dataset.figureIndex = String(figureIndex);
-    Object.assign(container.style, {
-      margin: "2em 0",
-    });
-    const image = document.createElement("img");
-    configureFigureImage(image, figure, true, true);
-    image.dataset.readerSource = figure.src;
-    const imageSurface = createVeiledImageSurface(image, "72vh", "10px");
-    Object.assign(image.style, {
-      display: "block",
-      width: "auto",
-      maxWidth: "100%",
-      objectFit: "contain",
-    });
-    container.append(imageSurface);
-    if (figure.caption) {
-      const caption = document.createElement("figcaption");
-      caption.textContent = figure.caption;
-      Object.assign(caption.style, {
-        marginTop: "0.65em",
-        color: "rgba(255,255,255,0.58)",
-        fontSize: "0.78em",
-        lineHeight: "1.5",
-        textAlign: "center",
-      });
-      container.append(caption);
-    }
-    return container;
-  }
-
-  function configureFigureImage(
-    image: HTMLImageElement,
-    figure: ReaderFigure,
-    lazy: boolean,
-    deferSource = false,
-  ): void {
-    if (deferSource) {
-      if (figure.srcset !== undefined) image.dataset.readerSrcset = figure.srcset;
-      if (figure.sizes !== undefined) image.dataset.readerSizes = figure.sizes;
-    } else {
-      if (figure.srcset !== undefined) image.srcset = figure.srcset;
-      if (figure.sizes !== undefined) image.sizes = figure.sizes;
-    }
-    if (figure.width !== undefined) image.width = figure.width;
-    if (figure.height !== undefined) image.height = figure.height;
-    image.alt = figure.alt || figure.caption || "本文画像";
-    image.decoding = "async";
-    if (lazy) image.loading = "lazy";
-  }
-
-  function createVeiledImageSurface(image: HTMLImageElement, maxHeight: string, borderRadius: string): HTMLButtonElement {
-    const surface = document.createElement("button");
-    surface.type = "button";
-    surface.setAttribute("data-reader-image-surface", "true");
-    surface.setAttribute("aria-pressed", "false");
-    surface.setAttribute("aria-label", "画像を明るく表示");
-    surface.title = "画像を明るく表示";
-    Object.assign(surface.style, {
-      appearance: "none",
-      border: "0",
-      padding: "0",
-      background: "transparent",
-      color: "inherit",
-      position: "relative",
-      width: "min(100%, 720px)",
-      margin: "0 auto",
-      overflow: "hidden",
-      borderRadius,
-      touchAction: "manipulation",
-    });
-    image.style.width = "100%";
-    image.style.height = "auto";
-    image.style.maxHeight = maxHeight;
-    const veil = document.createElement("div");
-    veil.setAttribute("data-reader-image-veil", "true");
-    Object.assign(veil.style, {
-      position: "absolute",
-      inset: "0",
-      background: "rgba(0,0,0,0.46)",
-      opacity: "1",
-      pointerEvents: "none",
-      transition: prefersReducedMotion() ? "none" : "opacity 120ms ease-out",
-    });
-    let revealed = false;
-    const updateBrightness = () => {
-      surface.setAttribute("aria-pressed", String(revealed));
-      const label = revealed ? "画像を暗く表示" : "画像を明るく表示";
-      surface.setAttribute("aria-label", label);
-      surface.title = label;
-      veil.style.opacity = revealed ? "0" : "1";
-      if (figureViewState.kind === "ready") {
-        figureViewState = {
-          ...figureViewState,
-          brightness: revealed ? "revealed" : "dimmed",
-        };
-      }
-    };
-    surface.addEventListener("click", () => {
-      revealed = !revealed;
-      updateBrightness();
-    });
-    surface.append(image, veil);
-    return surface;
-  }
-
-  function attachTextFigureLoadCorrection(
-    scroller: HTMLElement,
-    figureElement: HTMLElement,
-    positionMarkers: HTMLElement[],
-  ): void {
-    const surface = Array.from(figureElement.children).find((child) => child.tagName === "BUTTON");
-    const image = surface && Array.from(surface.children).find((child) => child.tagName === "IMG") as HTMLImageElement | undefined;
-    if (!image) return;
-    const source = image.dataset.readerSource;
-    const srcset = image.dataset.readerSrcset;
-    const sizes = image.dataset.readerSizes;
-    if (!source) return;
-    delete image.dataset.readerSource;
-    delete image.dataset.readerSrcset;
-    delete image.dataset.readerSizes;
-    const currentMarker = currentTextPositionMarker(positionMarkers);
-    const figureOffset = Number(figureElement.dataset.sourceStart);
-    const markerOffset = Number(currentMarker?.dataset.sourceStart);
-    const shouldCorrect = Boolean(
-      currentMarker
-      && Number.isFinite(figureOffset)
-      && Number.isFinite(markerOffset)
-      && figureOffset <= markerOffset,
-    );
-    const beforeTop = shouldCorrect ? elementRect(currentMarker as HTMLElement, 0, 100).top : 0;
-    let settled = false;
-    const adjustAfterDecode = async () => {
-      if (settled) return;
-      settled = true;
-      if (!shouldCorrect || textScroller !== scroller) return;
-      try {
-        if (typeof image.decode === "function") await image.decode();
-      } catch {
-      }
-      if (textScroller !== scroller) return;
-      const applyCorrection = () => {
-        if (textScroller !== scroller) return;
-        const afterTop = elementRect(currentMarker as HTMLElement, 0, 100).top;
-        const delta = afterTop - beforeTop;
-        if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
-          textRestoring = true;
-          scroller.scrollTop += delta;
-          textRestoreScrollTop = scroller.scrollTop;
-          textRestoring = false;
-        }
+      const currentMarker = currentTextPositionMarker(positionMarkers);
+      const figureOffset = Number(figureElement.dataset.sourceStart);
+      const markerOffset = Number(currentMarker?.dataset.sourceStart);
+      const shouldCorrect = Boolean(
+        currentMarker
+        && Number.isFinite(figureOffset)
+        && Number.isFinite(markerOffset)
+        && figureOffset <= markerOffset,
+      );
+      const beforeTop = shouldCorrect ? elementRect(currentMarker as HTMLElement, 0, 100).top : 0;
+      const correction = {
+        scroller,
+        positionMarkers,
+        currentMarker,
+        shouldCorrect,
+        beforeTop,
+        settled: false,
       };
-      if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(applyCorrection);
-      else applyCorrection();
-    };
-    image.addEventListener("load", () => { void adjustAfterDecode(); });
-    image.addEventListener("error", () => { void adjustAfterDecode(); });
-    if (srcset !== undefined) image.srcset = srcset;
-    if (sizes !== undefined) image.sizes = sizes;
-    image.src = source;
-    if (image.complete && image.naturalWidth > 0) void adjustAfterDecode();
+      reactTextFigureCorrections.set(image, correction);
+      const adjustAfterDecode = async () => {
+        if (correction.settled) return;
+        correction.settled = true;
+        if (!correction.shouldCorrect || textScroller !== correction.scroller) return;
+        try {
+          if (typeof image.decode === "function") await image.decode();
+        } catch {
+        }
+        if (textScroller !== correction.scroller) return;
+        const applyCorrection = () => {
+          if (textScroller !== correction.scroller || !correction.currentMarker) return;
+          const afterTop = elementRect(correction.currentMarker, 0, 100).top;
+          const delta = afterTop - correction.beforeTop;
+          if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
+            textRestoring = true;
+            correction.scroller.scrollTop += delta;
+            textRestoreScrollTop = correction.scroller.scrollTop;
+            scheduleTextRestoreRelease(false);
+          }
+        };
+        if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(applyCorrection);
+        else applyCorrection();
+      };
+      image.addEventListener("load", () => { void adjustAfterDecode(); });
+      image.addEventListener("error", () => { void adjustAfterDecode(); });
+      if (image.complete && image.naturalWidth > 0) void adjustAfterDecode();
+    }
   }
 
   function currentTextPositionMarker(positionMarkers: HTMLElement[]): HTMLElement | undefined {
@@ -1869,7 +1316,7 @@
         ? firstTextAfterFigure
         : preferReadableTop
           ? firstReadable || (anchoredVisible ? anchoredMarker : firstVisible)
-          : firstVisible;
+        : firstVisible;
     if (!selected) return;
     const sourceOffset = Number(selected.dataset.sourceStart);
     if (!Number.isFinite(sourceOffset)) return;
@@ -1885,12 +1332,6 @@
         type: sessionMode() === "text" ? "switchToText" : "switchToRsvp",
         position: currentPosition,
       });
-    }
-    if (progressLabel && sourceText) {
-      progressLabel.textContent = `${globalThis.Engine.calculateReadingProgress(
-        currentPosition.sourceOffset,
-        sourceText.length,
-      )}%`;
     }
   }
 
@@ -1916,6 +1357,41 @@
     scroller.scrollTop = Math.max(0, targetY - 72);
   }
 
+  function scheduleTextRestoreRelease(invalidate = true): void {
+    const generation = invalidate ? ++textRestoreGeneration : textRestoreGeneration;
+    const release = () => {
+      if (generation === textRestoreGeneration && !textRestorePending) textRestoring = false;
+    };
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(release));
+    } else {
+      release();
+    }
+  }
+
+  function scheduleTextRestore(element: HTMLElement, positionMarkers: HTMLElement[]): void {
+    const generation = ++textRestoreGeneration;
+    const apply = () => {
+      if (generation !== textRestoreGeneration || textScroller !== element) return;
+      restoreTextPosition(element, positionMarkers);
+      textRestoreScrollTop = element.scrollTop;
+      textRestorePending = false;
+      const release = () => {
+        if (generation === textRestoreGeneration && textScroller === element) textRestoring = false;
+      };
+      if (typeof globalThis.requestAnimationFrame === "function") {
+        globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(release));
+      } else {
+        release();
+      }
+    };
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(apply));
+    } else {
+      apply();
+    }
+  }
+
   function elementRect(element: HTMLElement, fallbackTop: number, fallbackBottom: number): DOMRect {
     if (typeof element.getBoundingClientRect === "function") return element.getBoundingClientRect();
     return {
@@ -1929,60 +1405,6 @@
       y: fallbackTop,
       toJSON: () => ({}),
     } as DOMRect;
-  }
-
-  function renderCurrentFlowItem(): boolean {
-    const item = flowItems[sessionFlowIndex()];
-    if (!item) return true;
-    if (item.kind === "figure") {
-      const figure = figures[item.figureIndex];
-      if (figure) {
-        showFigure(figure, item.figureIndex);
-        return true;
-      }
-    }
-    dismissFigurePanel();
-    renderCurrentUnit();
-    updatePlayPauseButton();
-    return false;
-  }
-
-  function renderCurrentUnit() {
-    if (!display || units.length === 0) return;
-
-    const unitIndex = sessionUnitIndex();
-    const unit = units[unitIndex];
-    if (!unit) return;
-    if (globalThis.performance?.getEntriesByName?.("reader:first-unit", "mark").length === 0) {
-      globalThis.performance?.mark?.("reader:first-unit");
-    }
-    currentPosition = { kind: "text", sourceOffset: unit.start };
-    if (unit.sentenceIndex !== contextSentenceIndex) {
-      const context = globalThis.Engine.surroundingSentences(units, unitIndex);
-      if (previousContext) {
-        previousContext.textContent = context.previous;
-        fadeContext(previousContext);
-      }
-      if (nextContext) {
-        nextContext.textContent = context.next;
-        fadeContext(nextContext);
-      }
-      contextSentenceIndex = unit.sentenceIndex;
-    }
-    display.textContent = unit.text;
-    display.dataset.sourceStart = String(unit.start);
-    display.dataset.sourceEnd = String(unit.end);
-    display.dataset.readerPositionKind = "text";
-    applyUnitStyle(unit.kind);
-    updateMinimap(currentPosition.sourceOffset);
-  }
-
-  function fadeContext(element: HTMLElement): void {
-    if (!element.textContent || prefersReducedMotion()) return;
-    element.animate(
-      [{ opacity: 0.12 }, { opacity: 0.26 }],
-      { duration: 120, easing: "ease-out" },
-    );
   }
 
   function computedFixedFontSize(): number {
@@ -2017,56 +1439,6 @@
     return true;
   }
 
-  function applyUnitStyle(kind: ReaderUnitKind): void {
-    const displayNode = display;
-    if (!displayNode) return;
-    Object.assign(displayNode.style, {
-      color: "#ffffff",
-      backgroundColor: "transparent",
-      opacity: "1",
-    });
-
-    if (kind === "aside") {
-      Object.assign(displayNode.style, {
-        color: "rgba(255,255,255,0.58)",
-        backgroundColor: "rgba(255,255,255,0.025)",
-      });
-    } else if (kind === "quote") {
-      Object.assign(displayNode.style, {
-        color: "rgba(255,255,255,0.90)",
-        backgroundColor: "rgba(255,255,255,0.04)",
-      });
-    }
-  }
-
-  function updateMinimap(currentSourceOffset: number): void {
-    const activeHeadingIndex = globalThis.Engine.findActiveHeadingIndex(
-      sectionTransitions,
-      currentSourceOffset,
-      initialHeadingIndex,
-    );
-
-    if (progressLabel && sourceText) {
-      const progress = globalThis.Engine.calculateReadingProgress(
-        currentPosition.sourceOffset,
-        sourceText.length,
-      );
-      progressLabel.textContent = `${progress}%`;
-    }
-    if (headingNodes.length === 0) return;
-    headingNodes.forEach((node, index) => {
-      const active = index === activeHeadingIndex;
-      const heading = headings[index];
-      Object.assign(node.style, {
-        color: active ? "rgba(255,255,255,0.98)" : "rgba(235,235,235,0.58)",
-        background: active ? "rgba(118,118,118,0.18)" : "transparent",
-        boxShadow: "none",
-        fontWeight: active ? "600" : heading?.level === 1 ? "600" : "450",
-      });
-      node.setAttribute("aria-current", active ? "location" : "false");
-    });
-  }
-
   function activeHeadingAt(offset: number): number {
     return globalThis.Engine.findActiveHeadingIndex(
       sectionTransitions,
@@ -2075,238 +1447,22 @@
     );
   }
 
-  function showFigure(figure: ReaderFigure, figureIndex: number): void {
-    if (!readerMain || !display) return;
-    if (
-      figurePanel?.isConnected
-      && figurePanel.dataset.figureIndex === String(figureIndex)
-      && figureViewState.kind !== "idle"
-    ) {
-      updatePlayPauseButton();
+  function prepareReactFigure(item: ReaderFlowItem | undefined): void {
+    if (!item || item.kind !== "figure") {
+      invalidateFigureLoad();
       return;
     }
-    dismissFigurePanel();
-    const token = ++figureLoadToken;
-    figureViewState = { kind: "loading", token, figureIndex };
-
-    currentPosition = {
-      kind: "figure",
-      sourceOffset: figure.sourceOffset,
-      figureIndex,
-    };
-    updateMinimap(currentPosition.sourceOffset);
-
-    animateOpacity(display, 1, 0, 180);
-    display.style.pointerEvents = "none";
-
-    const panel = document.createElement("figure");
-    panel.setAttribute("aria-label", "本文画像");
-    panel.dataset.sourceStart = String(figure.sourceOffset);
-    panel.dataset.sourceEnd = String(figure.sourceEnd);
-    panel.dataset.readerPositionKind = "figure";
-    panel.dataset.figureIndex = String(figureIndex);
-    Object.assign(panel.style, {
-      position: "absolute",
-      inset: "52px 0 64px",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: "12px",
-      padding: "20px 16px 8px",
-      boxSizing: "border-box",
-    });
-
-    const image = document.createElement("img");
-    configureFigureImage(image, figure, false, true);
-    const imageSurface = createVeiledImageSurface(image, "min(54vh, 560px)", "12px");
-    imageSurface.hidden = true;
-    imageSurface.disabled = true;
-    imageSurface.setAttribute("aria-hidden", "true");
-    Object.assign(image.style, {
-      display: "block",
-      maxWidth: "100%",
-      objectFit: "contain",
-    });
-
-    const status = createFigureStatus();
-    const description = document.createElement("div");
-    description.setAttribute("data-reader-figure-description", "true");
-    description.textContent = figureDescription(figure);
-    description.hidden = true;
-    Object.assign(description.style, {
-      color: "rgba(255,255,255,0.72)",
-      fontSize: "14px",
-      lineHeight: "1.45",
-      textAlign: "center",
-    });
-    let caption: HTMLElement | null = null;
-    if (figure.caption) {
-      caption = document.createElement("figcaption");
-      caption.textContent = figure.caption;
-      Object.assign(caption.style, {
-        width: "min(720px, 100%)",
-        color: "rgba(255,255,255,0.58)",
-        fontSize: "13px",
-        lineHeight: "1.4",
-        textAlign: "center",
-      });
+    const figure = figures[item.figureIndex];
+    if (!figure) return;
+    if (figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) {
+      invalidateFigureLoad();
+      const token = ++figureLoadToken;
+      figureViewState = { kind: "loading", token, figureIndex: item.figureIndex };
+      figureLoadRevealTimerId = globalThis.setTimeout(() => {
+        figureLoadRevealTimerId = null;
+        if (figureViewState.kind === "loading" && figureViewState.token === token) renderReactView(reactViewModel());
+      }, 100);
     }
-    image.addEventListener("load", () => {
-      void settleFigureImage(token, image, panel, status, description, imageSurface, caption);
-    });
-    image.addEventListener("error", () => {
-      failFigureImage(token, figureIndex, panel, status, description, imageSurface, caption);
-    });
-
-    panel.append(imageSurface, status, description);
-    if (caption) panel.append(caption);
-    figurePanel = panel;
-    readerMain.append(panel);
-    updatePlayPauseButton();
-    scheduleFigureLoadingIndicator(token, panel, status, description, caption);
-    if (figure.srcset !== undefined) image.srcset = figure.srcset;
-    if (figure.sizes !== undefined) image.sizes = figure.sizes;
-    image.src = figure.src;
-    if (image.complete && image.naturalWidth > 0) {
-      void settleFigureImage(token, image, panel, status, description, imageSurface, caption);
-    }
-    animateOpacity(panel, 0, 1, 180);
-  }
-
-  function createFigureStatus(): HTMLDivElement {
-    const status = document.createElement("div");
-    status.setAttribute("data-reader-figure-status", "true");
-    status.setAttribute("role", "status");
-    status.setAttribute("aria-live", "polite");
-    status.textContent = "画像を準備しています";
-    status.hidden = true;
-    Object.assign(status.style, {
-      display: "none",
-      alignItems: "center",
-      gap: "8px",
-      color: "rgba(255,255,255,0.72)",
-      fontSize: "14px",
-      lineHeight: "1.4",
-    });
-    return status;
-  }
-
-  function figureDescription(figure: ReaderFigure): string {
-    const alt = figure.alt.trim();
-    const caption = figure.caption.trim();
-    if (alt && caption && alt !== caption) return `${alt}。${caption}`;
-    return alt || caption || "本文画像";
-  }
-
-  function scheduleFigureLoadingIndicator(
-    token: number,
-    panel: HTMLElement,
-    status: HTMLElement,
-    description: HTMLElement,
-    caption: HTMLElement | null,
-  ): void {
-    if (figureLoadRevealTimerId !== null) globalThis.clearTimeout(figureLoadRevealTimerId);
-    figureLoadRevealTimerId = globalThis.setTimeout(() => {
-      figureLoadRevealTimerId = null;
-      if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
-      status.hidden = false;
-      status.style.display = "flex";
-      description.hidden = false;
-      if (caption) caption.hidden = true;
-      const indicator = document.createElement("span");
-      indicator.setAttribute("data-reader-figure-indicator", "true");
-      indicator.setAttribute("aria-hidden", "true");
-      Object.assign(indicator.style, {
-        width: "28px",
-        height: "2px",
-        borderRadius: "999px",
-        background: "rgba(255,255,255,0.28)",
-        display: "inline-block",
-        overflow: "hidden",
-      });
-      const bar = document.createElement("span");
-      Object.assign(bar.style, {
-        display: "block",
-        width: "100%",
-        height: "100%",
-        background: "rgba(255,255,255,0.84)",
-        transform: "translateX(-100%) scaleX(.35)",
-        transformOrigin: "left center",
-      });
-      indicator.append(bar);
-      if (!prefersReducedMotion()) bar.animate(
-        [
-          { transform: "translateX(-100%) scaleX(.35)" },
-          { transform: "translateX(220%) scaleX(.35)" },
-        ],
-        { duration: 900, iterations: Infinity, easing: "linear" },
-      );
-      status.append(indicator);
-    }, 100);
-  }
-
-  async function settleFigureImage(
-    token: number,
-    image: HTMLImageElement,
-    panel: HTMLElement,
-    status: HTMLElement,
-    description: HTMLElement,
-    imageSurface: HTMLButtonElement,
-    caption: HTMLElement | null,
-  ): Promise<void> {
-    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
-    try {
-      if (typeof image.decode === "function") await image.decode();
-    } catch {
-      if (!(image.complete && image.naturalWidth > 0)) {
-        failFigureImage(token, figureViewState.figureIndex, panel, status, description, imageSurface, caption);
-        return;
-      }
-    }
-    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
-    if (figureLoadRevealTimerId !== null) {
-      globalThis.clearTimeout(figureLoadRevealTimerId);
-      figureLoadRevealTimerId = null;
-    }
-    status.hidden = true;
-    status.style.display = "none";
-    description.hidden = true;
-    if (caption) caption.hidden = false;
-    figureViewState = { kind: "ready", token, figureIndex: figureViewState.figureIndex, brightness: "dimmed" };
-    imageSurface.setAttribute("aria-pressed", "false");
-    imageSurface.setAttribute("aria-label", "画像を明るく表示");
-    imageSurface.title = "画像を明るく表示";
-    imageSurface.hidden = false;
-    imageSurface.disabled = false;
-    imageSurface.removeAttribute("aria-hidden");
-    const veil = Array.from(imageSurface.children).find((child) => child.getAttribute?.("data-reader-image-veil") === "true");
-    if (veil) (veil as HTMLElement).style.opacity = "1";
-    updatePlayPauseButton();
-  }
-
-  function failFigureImage(
-    token: number,
-    figureIndex: number,
-    panel: HTMLElement,
-    status: HTMLElement,
-    description: HTMLElement,
-    imageSurface: HTMLElement,
-    caption: HTMLElement | null,
-  ): void {
-    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
-    if (figureLoadRevealTimerId !== null) {
-      globalThis.clearTimeout(figureLoadRevealTimerId);
-      figureLoadRevealTimerId = null;
-    }
-    status.hidden = false;
-    status.style.display = "block";
-    status.textContent = "画像を読み込めませんでした";
-    description.hidden = false;
-    if (caption) caption.hidden = true;
-    imageSurface.remove();
-    figureViewState = { kind: "failed", token, figureIndex };
-    updatePlayPauseButton();
   }
 
   function advanceFromFigure() {
@@ -2322,21 +1478,6 @@
     }
   }
 
-  function dismissFigurePanel() {
-    invalidateFigureLoad();
-    const outgoing = figurePanel;
-    if (!outgoing) return;
-    figurePanel = null;
-    outgoing.style.pointerEvents = "none";
-    const outgoingAnimation = animateOpacity(outgoing, 1, 0, 180);
-    outgoing.remove();
-    afterAnimation(outgoingAnimation, () => outgoing.remove());
-    if (display) {
-      animateOpacity(display, 0, 1, 180);
-      display.style.pointerEvents = "auto";
-    }
-  }
-
   function play() {
     dispatchSession({ type: "play" });
   }
@@ -2346,7 +1487,7 @@
   }
 
   function togglePlayPause() {
-    if (figurePanel) {
+    if (readingSessionState()?.currentKind === "figure") {
       advanceFromFigure();
       return;
     }
@@ -2372,24 +1513,6 @@
     pause();
   }
 
-  function updatePlayPauseButton() {
-    if (!playPauseButton) return;
-    if (figurePanel) {
-      playPauseButton.replaceChildren(globalThis.ReaderIcons.create(document, "play", 30));
-      playPauseButton.setAttribute("aria-label", "続きを読む");
-      playPauseButton.setAttribute("aria-pressed", "false");
-      playPauseButton.title = "続きを読む";
-      return;
-    }
-    const playing = sessionPlaybackState() === "playing";
-    playPauseButton.replaceChildren(
-      globalThis.ReaderIcons.create(document, playing ? "pause" : "play", playing ? 26 : 30),
-    );
-    playPauseButton.setAttribute("aria-label", playing ? "一時停止" : "再生");
-    playPauseButton.setAttribute("aria-pressed", playing ? "true" : "false");
-    playPauseButton.title = playing ? "一時停止" : "再生";
-  }
-
   function handleKeyDown(event: KeyboardEvent): void {
     if (!root || event.repeat) return;
     if (event.key === "Escape") {
@@ -2401,7 +1524,7 @@
       trapFocus(event);
       return;
     }
-    if (!display || isEditableTarget(event) || isButtonTarget(event)) return;
+    if (isEditableTarget(event) || isButtonTarget(event)) return;
     if (event.code === "Space" || event.key === " ") {
       event.preventDefault();
       togglePlayPause();
@@ -2508,24 +1631,54 @@
     return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
   }
 
-  function animateOpacity(element: HTMLElement, from: number, to: number, duration: number): Animation | null {
-    element.style.opacity = String(to);
-    if (prefersReducedMotion()) return null;
-    return element.animate(
-      [{ opacity: from }, { opacity: to }],
-      {
-        duration,
-        easing: "cubic-bezier(0.22, 1, 0.36, 1)",
-      },
+  function animateLoadingIndicator(element: HTMLElement, reducedMotion: boolean): (() => void) | undefined {
+    if (reducedMotion || typeof element.animate !== "function") return undefined;
+    const animation = element.animate(
+      [
+        { transform: "translateX(-100%) scaleX(.35)" },
+        { transform: "translateX(220%) scaleX(.35)" },
+      ],
+      { duration: 1100, iterations: Infinity, easing: "linear" },
     );
+    return () => animation.cancel?.();
   }
 
-  function afterAnimation(animation: Animation | null, callback: () => void): void {
-    if (!animation?.finished) {
-      callback();
-      return;
-    }
-    animation.finished.then(callback, callback);
+  function animateRewindFeedback(
+    elements: { firstRing: HTMLElement; secondRing: HTMLElement; icon: SVGElement },
+    reducedMotion: boolean,
+    onDone: () => void,
+  ): (() => void) | undefined {
+    const { firstRing, secondRing, icon } = elements;
+    if (typeof firstRing.animate !== "function" || typeof secondRing.animate !== "function" || typeof icon.animate !== "function") return undefined;
+    const ringFrames = reducedMotion
+      ? [{ opacity: 0.28 }, { opacity: 0 }]
+      : [
+        { opacity: 0.08, transform: "scale(.32)" },
+        { opacity: 0.26, transform: "scale(.9)" },
+        { opacity: 0, transform: "scale(2.15)" },
+      ];
+    const firstAnimation = firstRing.animate(ringFrames, { duration: reducedMotion ? 160 : 420, easing: "cubic-bezier(.22, 1, .36, 1)", fill: "forwards" });
+    const secondAnimation = secondRing.animate(ringFrames, { duration: reducedMotion ? 160 : 420, delay: reducedMotion ? 0 : 80, easing: "cubic-bezier(.22, 1, .36, 1)", fill: "forwards" });
+    const iconAnimation = icon.animate(
+      reducedMotion
+        ? [{ opacity: 0.72 }, { opacity: 0 }]
+        : [
+          { opacity: 0, transform: "translateX(8px) scale(.9)" },
+          { opacity: 0.72, transform: "translateX(0) scale(1)" },
+          { opacity: 0, transform: "translateX(-8px) scale(.96)" },
+        ],
+      { duration: reducedMotion ? 160 : 360, easing: "ease-out", fill: "forwards" },
+    );
+    let cancelled = false;
+    Promise.allSettled([firstAnimation.finished, secondAnimation.finished, iconAnimation.finished]).then(() => {
+      if (!cancelled) onDone();
+    });
+    return () => {
+      cancelled = true;
+      firstAnimation.cancel?.();
+      secondAnimation.cancel?.();
+      iconAnimation.cancel?.();
+    };
   }
 
   function stopTimer() {
@@ -2538,15 +1691,17 @@
   function removeOverlay() {
     cancelLoadingReveal();
     invalidateFigureLoad();
-    loadingIndicatorAnimation?.cancel?.();
-    loadingIndicatorAnimation = null;
-    loadingIndicator = null;
+    if (loadingCoverTimerId !== null) {
+      globalThis.clearTimeout(loadingCoverTimerId);
+      loadingCoverTimerId = null;
+    }
     stopTimer();
     detachKeydownListener();
     displayResizeObserver?.disconnect();
     displayResizeObserver = null;
     detachDialogCancelListener();
     const dialog = root;
+    dialog?.removeEventListener("focusin", rememberReaderFocus as EventListener, true);
     if (dialog && isOpenDialog(dialog)) {
       try {
         dialog.close();
@@ -2555,30 +1710,27 @@
     }
     const host = rootHost;
     try {
+      unmountReactViewer();
       host?.remove();
     } finally {
       root = null;
       rootHost = null;
       readerShadow = null;
       rootStyle = null;
-      loadingLayer = null;
-      loadingStatus = null;
-      loadingCancelButton = null;
-      previousContext = null;
+      loadingSlowVisible = false;
+      loadingCoverVisible = false;
       display = null;
-      nextContext = null;
-      contextSentenceIndex = null;
-      readerMain = null;
-      playPauseButton = null;
-      headingNodes = [];
-      progressLabel = null;
-      figurePanel = null;
       textScroller = null;
       textPositionMarkers = [];
       textPositionDirty = false;
       textRestoreScrollTop = null;
       textRestoring = false;
+      textRestorePending = false;
+      textRestoreGeneration += 1;
+      reactTextFigureCorrections = new WeakMap();
       lastReaderFocusedElement = null;
+      reactRenderedKind = null;
+      reactLoadingRevealed = false;
     }
   }
 
@@ -2629,6 +1781,7 @@
           flowItems = [];
           sourceText = "";
           blocks = [];
+          viewBlocks = [];
           baseUnits = [];
           currentPosition = { kind: "text", sourceOffset: 0 };
           segmentationLocale = "ja";
