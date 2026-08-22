@@ -30,6 +30,12 @@ async function waitFor(url, predicate = (response) => response.status === 200) {
   throw new Error(`service did not become ready: ${url}`);
 }
 
+function freshPageUrl() {
+  const url = new URL(pageUrl);
+  url.searchParams.set("runtime", `${Date.now()}-${process.pid}`);
+  return url.href;
+}
+
 async function findFreePort() {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
@@ -131,7 +137,7 @@ async function verifySafariRuntime() {
     throw new Error(`Safari WebDriver returned an invalid session: ${JSON.stringify(created)}`);
   }
   sessionId = created.sessionId;
-  await driverRequest("POST", `/session/${sessionId}/url`, { url: pageUrl });
+  await driverRequest("POST", `/session/${sessionId}/url`, { url: freshPageUrl() });
   const result = await executeScript(`
     const done = arguments[arguments.length - 1];
     globalThis.MobileViewer.close();
@@ -205,7 +211,7 @@ async function verifyGeneratedRuntimeInWebKit() {
   const browser = await webkit.launch({ headless: true });
   try {
     const page = await browser.newPage();
-    await page.goto(pageUrl, { waitUntil: "load" });
+    await page.goto(freshPageUrl(), { waitUntil: "load" });
     const result = await page.evaluate(async () => {
       globalThis.MobileViewer.close();
       const originalInit = globalThis.ReaderSession.init;
