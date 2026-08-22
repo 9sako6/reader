@@ -507,6 +507,81 @@ test("reader restores background inert state and launch focus after Escape", () 
   assert.equal(document.activeElement, launchButton);
 });
 
+test("reader keeps a fast error dialog focused and restores inert state after Escape", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener } = harness;
+  const body = new FakeElement("body");
+  body.ownerDocument = document;
+  const head = new FakeElement("head");
+  head.ownerDocument = document;
+  head.inert = true;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(body, head, launchButton);
+  launchButton.focus();
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "fast-error-request" });
+  messageListener({ type: "RSVP_ERROR", requestId: "fast-error-request" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const closeButton = findElement(overlay, (element) => element.textContent === "閉じる");
+  assert.equal(document.activeElement, closeButton);
+  assert.equal(body.inert, true);
+  assert.equal(head.inert, true);
+
+  let shiftTabPrevented = false;
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Tab",
+    shiftKey: true,
+    target: closeButton,
+    preventDefault() {
+      shiftTabPrevented = true;
+    },
+  });
+  assert.equal(shiftTabPrevented, true);
+  assert.equal(document.activeElement, closeButton);
+
+  let tabPrevented = false;
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Tab",
+    target: closeButton,
+    preventDefault() {
+      tabPrevented = true;
+    },
+  });
+  assert.equal(tabPrevented, true);
+  assert.equal(document.activeElement, closeButton);
+
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Escape",
+    target: closeButton,
+    preventDefault() {},
+  });
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(body.inert, false);
+  assert.equal(head.inert, true);
+  assert.equal(document.activeElement, launchButton);
+});
+
+test("reader does not resurrect a fast error after the stale loading reveal callback runs", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener, timers } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "stale-error-request" });
+  const revealTimer = [...timers.values()].find((timer) => timer.delay === 100);
+  assert.ok(revealTimer);
+  messageListener({ type: "RSVP_ERROR", requestId: "stale-error-request" });
+  const errorOverlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(errorOverlay);
+
+  revealTimer.callback();
+  assert.equal(document.getElementById("__rsvp-reader-root"), errorOverlay);
+  assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 1);
+});
+
 test("reader keeps keyboard focus trapped after switching to text mode", () => {
   const harness = createOutlineReaderHarness();
   const { document, documentElement, messageListener } = harness;

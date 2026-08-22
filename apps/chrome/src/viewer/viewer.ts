@@ -25,6 +25,7 @@
   let rootStyle: HTMLStyleElement | null = null;
   let loadingLayer: HTMLDivElement | null = null;
   let loadingRevealTimerId: number | null = null;
+  let loadingRevealRequestId: string | null = null;
   let loadingStartedAt: number | null = null;
   let loadingIndicator: HTMLDivElement | null = null;
   let loadingIndicatorAnimation: Animation | null = null;
@@ -86,9 +87,11 @@
       : null;
     activeRequestId = requestId;
     loadingStartedAt = Date.now();
+    loadingRevealRequestId = requestId;
     loadingRevealTimerId = globalThis.setTimeout(() => {
       loadingRevealTimerId = null;
-      if (requestId !== activeRequestId || loadingLayer) return;
+      if (requestId !== activeRequestId || requestId !== loadingRevealRequestId || loadingLayer) return;
+      loadingRevealRequestId = null;
       createLoadingOverlay();
     }, LOADER_REVEAL_DELAY_MS);
   }
@@ -217,6 +220,7 @@
   }
 
   function cancelLoadingReveal(): void {
+    loadingRevealRequestId = null;
     if (loadingRevealTimerId !== null) {
       globalThis.clearTimeout(loadingRevealTimerId);
       loadingRevealTimerId = null;
