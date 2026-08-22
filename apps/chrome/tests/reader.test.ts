@@ -570,6 +570,8 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
       currentScrollY = position.top;
     },
     ResizeObserver: class {
+      active: boolean;
+
       constructor(callback) {
         resizeCallback = callback;
         resizeObserverLiveCount += 1;

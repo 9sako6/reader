@@ -454,6 +454,8 @@ function createSafariReaderHarness(
   context.Comment = FakeElement;
   context.Document = Object;
   context.MutationObserver = class {
+    active: boolean;
+
     constructor() {
       mutationObserverLiveCount += 1;
       this.active = true;
