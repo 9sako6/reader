@@ -75,7 +75,7 @@
       metrics,
     );
     if (dominantArticle) {
-      await runExtractionPhase("defuddle_parse", options, () => dominantArticle, metrics);
+      options.onPhase?.("defuddle_parse", 0);
     }
     if (!result || typeof result.content !== "string" || !result.content.trim()) {
       options.onMetrics?.(metrics);
@@ -222,12 +222,13 @@
   ): Promise<T> {
     throwIfAborted(options.signal);
     await yieldToAnimationFrame(options.signal);
-    const startedAt = options.onPhase || options.onMetrics ? phaseNow() : 0;
+    const shouldMeasure = Boolean(options.onPhase || options.onMetrics);
+    const startedAt = shouldMeasure ? phaseNow() : 0;
     const result = work();
+    const durationMs = shouldMeasure ? Math.max(0, Math.round(phaseNow() - startedAt)) : 0;
     throwIfAborted(options.signal);
     await yieldToAnimationFrame(options.signal);
-    if (options.onPhase || options.onMetrics) {
-      const durationMs = Math.max(0, Math.round(phaseNow() - startedAt));
+    if (shouldMeasure) {
       options.onPhase?.(phase, durationMs);
       if (phase === "dominant_article") metrics.dominantArticleMs = durationMs;
       if (phase === "defuddle_parse") metrics.defuddleMs = durationMs;

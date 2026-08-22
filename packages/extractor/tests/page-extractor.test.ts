@@ -10,8 +10,8 @@ const {
   fromText,
 } = require("../../../.build/packages/extractor/src/extractor.js");
 
-function createLanguagePageFixture(language) {
-  const paragraphText = "ページ本文です。";
+function createLanguagePageFixture(language, { dominantArticle = false } = {}) {
+  const paragraphText = dominantArticle ? "ページ本文です。".repeat(200) : "ページ本文です。";
   const textNode = { nodeType: 3, nodeValue: paragraphText, childNodes: [] };
   const paragraph = {
     nodeType: 1,
@@ -29,9 +29,28 @@ function createLanguagePageFixture(language) {
       return [paragraph];
     },
   };
+  const dominantArticleNode = {
+    parentElement: null,
+    textContent: paragraphText,
+    querySelectorAll(selector) {
+      return selector === "p, li, blockquote, pre" ? [paragraph, paragraph, paragraph] : [];
+    },
+    cloneNode() {
+      return {
+        innerHTML: `<p>${paragraphText}</p>`,
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
+      };
+    },
+  };
   const template = { content: contentRoot, innerHTML: "" };
   const document = {
     documentElement: { lang: language },
+    body: dominantArticle ? { textContent: paragraphText } : null,
+    title: "",
+    querySelectorAll(selector) {
+      return dominantArticle && selector === "article" ? [dominantArticleNode] : [];
+    },
     createElement(tagName) {
       return tagName === "template" ? template : contentRoot;
     },
@@ -519,6 +538,91 @@ test("fromPageAsync reports phase durations only through the metrics callback", 
     "indexMs",
   ]);
   assert.ok(Object.values(metrics || {}).every((durationMs) => Number.isFinite(Number(durationMs)) && Number(durationMs) >= 0));
+});
+
+test("fromPageAsync measures work separately from RAF waits and reports Defuddle only on fallback", async () => {
+  const originalPerformance = globalThis.performance;
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  let now = 0;
+  const frames = [];
+  Object.defineProperty(globalThis, "performance", {
+    configurable: true,
+    value: { now: () => now },
+  });
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: (callback) => {
+      frames.push(callback);
+      return frames.length;
+    },
+  });
+
+  async function settleWithFrames(promise) {
+    let settled = false;
+    promise.then(() => { settled = true; }, () => { settled = true; });
+    for (let attempt = 0; !settled && attempt < 1000; attempt += 1) {
+      await Promise.resolve();
+      const callback = frames.shift();
+      if (callback) {
+        now += 16;
+        callback(now);
+      }
+    }
+    assert.equal(settled, true, "extraction should settle while flushing RAF callbacks");
+    return promise;
+  }
+
+  try {
+    const fallbackFixture = createLanguagePageFixture("en-US");
+    class TimedDefuddle {
+      parse() {
+        now += 7;
+        return { content: "<p>ページ本文です。</p>" };
+      }
+    }
+    const fallbackPhases = [];
+    let fallbackMetrics;
+    await settleWithFrames(extractPageAsync(fallbackFixture.document, TimedDefuddle, {
+      onPhase(phase, durationMs) {
+        fallbackPhases.push({ phase, durationMs });
+      },
+      onMetrics(value) {
+        fallbackMetrics = value;
+      },
+    }));
+
+    assert.equal(fallbackPhases.find(({ phase }) => phase === "defuddle_parse").durationMs, 7);
+    assert.equal(fallbackMetrics.defuddleMs, 7);
+
+    const dominantFixture = createLanguagePageFixture("en-US", { dominantArticle: true });
+    class UnexpectedDefuddle {
+      parse() {
+        throw new Error("Defuddle must not run for a dominant article");
+      }
+    }
+    const dominantPhases = [];
+    let dominantMetrics;
+    await settleWithFrames(extractPageAsync(dominantFixture.document, UnexpectedDefuddle, {
+      onPhase(phase, durationMs) {
+        dominantPhases.push({ phase, durationMs });
+      },
+      onMetrics(value) {
+        dominantMetrics = value;
+      },
+    }));
+
+    assert.equal(dominantPhases.find(({ phase }) => phase === "defuddle_parse").durationMs, 0);
+    assert.equal(dominantMetrics.defuddleMs, 0);
+  } finally {
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: originalPerformance,
+    });
+    Object.defineProperty(globalThis, "requestAnimationFrame", {
+      configurable: true,
+      value: originalRequestAnimationFrame,
+    });
+  }
 });
 
 test("fromPageAsync rejects with AbortError before committing a later phase", async () => {
