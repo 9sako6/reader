@@ -92,12 +92,20 @@ class FakeElement {
 }
 
 function findElement(root, predicate) {
+  if (!root) return null;
   if (predicate(root)) return root;
   for (const child of root.children) {
     const match = findElement(child, predicate);
     if (match) return match;
   }
   return null;
+}
+
+function revealLoading(timers) {
+  const entry = [...timers.entries()].find(([, timer]) => timer.delay === 100);
+  assert.ok(entry, "the loading bar reveal is scheduled after 100ms");
+  timers.delete(entry[0]);
+  entry[1].callback();
 }
 
 function createOutlineReaderHarness() {
@@ -167,6 +175,7 @@ function createOutlineReaderHarness() {
   };
   let nextTimerId = 1;
   const timers = new Map();
+  let currentTime = 0;
   let reduceMotion = false;
   const context: any = {
     chrome: {
@@ -184,6 +193,11 @@ function createOutlineReaderHarness() {
     },
     matchMedia() {
       return { matches: reduceMotion };
+    },
+    Date: {
+      now() {
+        return currentTime;
+      },
     },
     getComputedStyle(element) {
       const assignedFontSize = Number.parseFloat(element.style.fontSize);
@@ -233,27 +247,91 @@ function createOutlineReaderHarness() {
     enableReducedMotion() {
       reduceMotion = true;
     },
+    advanceTime(milliseconds) {
+      currentTime += milliseconds;
+    },
   };
 }
 
 test("reader replaces loading only for the matching request", () => {
   const harness = createOutlineReaderHarness();
-  const { document, messageListener } = harness;
+  const { document, messageListener, timers } = harness;
 
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "request-1" });
-  const loadingOverlay = document.getElementById("__rsvp-reader-root");
-  assert.ok(findElement(loadingOverlay, (element) => element.textContent === "文章を準備しています…"));
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
   messageListener({ type: "START_RSVP", text: "最初の節です。次の節です。", requestId: "stale-request" });
-  assert.equal(document.getElementById("__rsvp-reader-root"), loadingOverlay);
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  revealLoading(timers);
+  const loadingOverlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(findElement(loadingOverlay, (element) => element.attributes["data-reader-loading-bar"] === "true"));
   messageListener({ type: "START_RSVP", text: "最初の節です。次の節です。", requestId: "request-1" });
   assert.ok(findElement(loadingOverlay, (element) => element.attributes["data-reader-stage"] === "true"));
 });
 
-test("reader shows the article outline beside the focal point", () => {
+test("reader omits loading and cover transition when preparation finishes at 0ms", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "zero-ms-request" });
+  messageListener({ type: "START_RSVP", text: "0msの本文です。", requestId: "zero-ms-request" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
+  assert.equal(stage.animations.length, 0);
+  assert.equal(findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true"), null);
+});
+
+test("reader omits loading and cover transition when preparation finishes at 99ms", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ninety-nine-ms-request" });
+  harness.advanceTime(99);
+  messageListener({ type: "START_RSVP", text: "99msの本文です。", requestId: "ninety-nine-ms-request" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
+  assert.equal(stage.animations.length, 0);
+  assert.equal(findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true"), null);
+});
+
+test("reader reveals the bar and uses a cover transition when preparation finishes at 100ms", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "one-hundred-ms-request" });
+  harness.advanceTime(100);
+  messageListener({ type: "START_RSVP", text: "100msの本文です。", requestId: "one-hundred-ms-request" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const bar = findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true");
+  const indicator = findElement(overlay, (element) => element.attributes["data-reader-loading-indicator"] === "true");
+  const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
+  assert.ok(bar);
+  assert.ok(indicator.animations.some(({ keyframes }) => keyframes.at(-1)?.transform === "translateX(0) scaleX(1)"));
+  assert.equal(stage.animations.at(-1).options.duration, 220);
+});
+
+test("reader reveals the bar and uses a cover transition when preparation finishes at 1200ms", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "twelve-hundred-ms-request" });
+  harness.advanceTime(1200);
+  messageListener({ type: "START_RSVP", text: "1200msの本文です。", requestId: "twelve-hundred-ms-request" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true"));
+  const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
+  assert.equal(stage.animations.at(-1).options.duration, 220);
+});
+
+test("reader shows the article outline beside the focal point", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener, timers } = harness;
   const text = "最初の節です。次の節です。";
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "request-1" });
+  revealLoading(timers);
   messageListener({ type: "START_RSVP", text, requestId: "request-1" });
 
   const overlay = document.getElementById("__rsvp-reader-root");
@@ -427,6 +505,81 @@ test("reader restores background inert state and launch focus after Escape", () 
   assert.equal(body.inert, false);
   assert.equal(head.inert, true);
   assert.equal(document.activeElement, launchButton);
+});
+
+test("reader keeps a fast error dialog focused and restores inert state after Escape", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener } = harness;
+  const body = new FakeElement("body");
+  body.ownerDocument = document;
+  const head = new FakeElement("head");
+  head.ownerDocument = document;
+  head.inert = true;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(body, head, launchButton);
+  launchButton.focus();
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "fast-error-request" });
+  messageListener({ type: "RSVP_ERROR", requestId: "fast-error-request" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const closeButton = findElement(overlay, (element) => element.textContent === "閉じる");
+  assert.equal(document.activeElement, closeButton);
+  assert.equal(body.inert, true);
+  assert.equal(head.inert, true);
+
+  let shiftTabPrevented = false;
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Tab",
+    shiftKey: true,
+    target: closeButton,
+    preventDefault() {
+      shiftTabPrevented = true;
+    },
+  });
+  assert.equal(shiftTabPrevented, true);
+  assert.equal(document.activeElement, closeButton);
+
+  let tabPrevented = false;
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Tab",
+    target: closeButton,
+    preventDefault() {
+      tabPrevented = true;
+    },
+  });
+  assert.equal(tabPrevented, true);
+  assert.equal(document.activeElement, closeButton);
+
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Escape",
+    target: closeButton,
+    preventDefault() {},
+  });
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(body.inert, false);
+  assert.equal(head.inert, true);
+  assert.equal(document.activeElement, launchButton);
+});
+
+test("reader does not resurrect a fast error after the stale loading reveal callback runs", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener, timers } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "stale-error-request" });
+  const revealTimer = [...timers.values()].find((timer) => timer.delay === 100);
+  assert.ok(revealTimer);
+  messageListener({ type: "RSVP_ERROR", requestId: "stale-error-request" });
+  const errorOverlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(errorOverlay);
+
+  revealTimer.callback();
+  assert.equal(document.getElementById("__rsvp-reader-root"), errorOverlay);
+  assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 1);
 });
 
 test("reader keeps keyboard focus trapped after switching to text mode", () => {
@@ -641,10 +794,11 @@ test("reader disables loading and stage animations for reduced motion", () => {
 
   harness.enableReducedMotion();
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "reduced-motion-request" });
+  revealLoading(harness.timers);
   const reducedLoadingOverlay = document.getElementById("__rsvp-reader-root");
   const reducedIndicator = findElement(
     reducedLoadingOverlay,
-    (element) => element.textContent === "文章を準備しています…",
+    (element) => element.attributes["data-reader-loading-indicator"] === "true",
   );
   assert.equal(reducedIndicator.animations.length, 0);
   messageListener({
