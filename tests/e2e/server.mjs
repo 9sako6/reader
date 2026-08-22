@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
+const baselineRoot = process.env.READER_E2E_BASELINE_ROOT ? resolve(process.env.READER_E2E_BASELINE_ROOT) : null;
 const port = Number(process.env.READER_E2E_PORT) || 4173;
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -24,6 +25,11 @@ const intrinsicImages = new Map([
 const failedRuntimeRequests = new Set();
 
 createServer(async (request, response) => {
+  const rawPath = (request.url || "").split("?", 1)[0];
+  if (/(?:^|\/)\.\.(?:\/|$)/u.test(rawPath) || /%2e%2e/iu.test(rawPath)) {
+    response.writeHead(403).end();
+    return;
+  }
   const requestUrl = new URL(request.url || "/", "http://localhost");
   const pathname = decodeURIComponent(requestUrl.pathname);
   if (requestUrl.searchParams.has("delay") && pathname.startsWith("/apps/ios/ReaderExtension/Resources/generated/")) {
@@ -68,8 +74,12 @@ createServer(async (request, response) => {
     response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" }).end(immediateImage);
     return;
   }
-  const filePath = resolve(repositoryRoot, `.${pathname}`);
-  if (!filePath.startsWith(`${repositoryRoot}${sep}`)) {
+  const baselinePrefix = "/__reader-baseline__/";
+  const filePath = pathname.startsWith(baselinePrefix) && baselineRoot
+    ? resolve(baselineRoot, `.${pathname.slice(baselinePrefix.length - 1)}`)
+    : resolve(repositoryRoot, `.${pathname}`);
+  const fileRoot = pathname.startsWith(baselinePrefix) && baselineRoot ? baselineRoot : repositoryRoot;
+  if (!filePath.startsWith(`${fileRoot}${sep}`)) {
     response.writeHead(403).end();
     return;
   }

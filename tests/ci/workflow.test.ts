@@ -11,7 +11,8 @@ const chromiumJob = workflow.slice(chromiumJobStart, iosJobStart);
 const iosJob = workflow.slice(iosJobStart);
 
 test("CI uploads the performance baseline before Chromium E2E can clear test-results", () => {
-  const measure = chromiumJob.indexOf("run: mise run measure:performance");
+  const baselineBuild = chromiumJob.indexOf("name: Build main performance baseline");
+  const measure = chromiumJob.indexOf("run: READER_PERFORMANCE_ENFORCE=1 mise run measure:performance");
   const upload = chromiumJob.indexOf("name: Upload reader performance baseline");
   const uploadPath = chromiumJob.indexOf("path: test-results/performance/reader.json", upload);
   const e2e = chromiumJob.indexOf("run: mise run test:e2e -- --project=chromium");
@@ -22,12 +23,18 @@ test("CI uploads the performance baseline before Chromium E2E can clear test-res
 
   assert.ok(chromiumJobStart >= 0);
   assert.ok(iosJobStart > chromiumJobStart);
+  assert.ok(baselineBuild >= 0 && baselineBuild < measure);
+  assert.match(chromiumJob.slice(baselineBuild, measure), /READER_PERFORMANCE_BASELINE_ROOT=/);
+  assert.match(chromiumJob.slice(baselineBuild, measure), /READER_PERFORMANCE_BASE_COMMIT=/);
+  assert.match(chromiumJob.slice(baselineBuild, measure), /rustfmt,clippy --target wasm32-unknown-unknown/);
+  assert.match(chromiumJob.slice(baselineBuild, measure), /rustup override set 1\.97\.1/);
   assert.ok(measure >= 0 && measure < upload);
   assert.ok(upload >= 0 && upload < uploadPath && uploadPath < e2e);
   assert.ok(e2e >= 0 && e2e < extensionSmoke && extensionSmoke < timingUpload);
   assert.ok(timingUpload >= 0 && timingUpload < timingPath && timingPath < diagnostics);
   assert.match(chromiumJob.slice(timingUpload, diagnostics), /if: success\(\)/);
   assert.match(chromiumJob.slice(timingUpload, diagnostics), /if-no-files-found: error/);
+  assert.match(chromiumJob, /git worktree remove --force.*RUNNER_TEMP\/reader-main-baseline/s);
 });
 
 test("CI uploads WebKit reader timing reports before the iOS build", () => {
