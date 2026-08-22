@@ -590,13 +590,15 @@
     scroller.addEventListener("scroll", updatePosition, { passive: true });
     getNodes().textScroller = scroller;
     getNodes().textMarkers = positionMarkers;
-    figureElements.forEach((figureElement) => attachTextFigureLoadCorrection(scroller, figureElement, positionMarkers));
-    global.requestAnimationFrame(() => {
+    const initializeTextView = () => {
       if (!isCurrentSession(generation) || !nodes || !content) return;
       if (scroller.scrollTop > 0) captureTextPosition(scroller, positionMarkers, getNodes().progress, true);
       else restoreTextPosition(scroller, positionMarkers);
       getNodes().textRestoreScrollTop = scroller.scrollTop;
-    });
+      figureElements.forEach((figureElement) => attachTextFigureLoadCorrection(scroller, figureElement, positionMarkers));
+    };
+    if (typeof global.requestAnimationFrame === "function") global.requestAnimationFrame(initializeTextView);
+    else initializeTextView();
   }
 
   function fallbackBlocks(text: string): ReaderBlock[] {
@@ -702,7 +704,7 @@
     container.dataset.figureIndex = String(figureIndex);
     const image = global.document.createElement("img");
     configureFigureImage(image, figure, true);
-    image.src = figure.src;
+    image.dataset.readerSource = figure.src;
     container.append(createVeiledImageSurface(image));
     if (figure.caption) {
       const caption = global.document.createElement("figcaption");
@@ -771,13 +773,26 @@
     const surface = Array.from(figureElement.children).find((child) => child.tagName === "BUTTON");
     const image = surface && Array.from(surface.children).find((child) => child.tagName === "IMG") as HTMLImageElement | undefined;
     if (!image) return;
+    const source = image.dataset.readerSource;
+    if (!source) return;
+    delete image.dataset.readerSource;
+    const currentMarker = currentTextPositionMarker(positionMarkers);
+    const figureOffset = Number(figureElement.dataset.sourceStart);
+    const markerOffset = Number(currentMarker?.dataset.sourceStart);
+    const shouldCorrect = Boolean(
+      currentMarker
+      && Number.isFinite(figureOffset)
+      && Number.isFinite(markerOffset)
+      && figureOffset <= markerOffset,
+    );
+    const beforeTop = shouldCorrect && currentMarker
+      ? currentMarker.getBoundingClientRect().top
+      : 0;
+    let settled = false;
     const adjustAfterDecode = async () => {
-      if (nodes?.textScroller !== scroller) return;
-      const currentMarker = currentTextPositionMarker(positionMarkers);
-      const figureOffset = Number(figureElement.dataset.sourceStart);
-      const markerOffset = Number(currentMarker?.dataset.sourceStart);
-      if (!currentMarker || !Number.isFinite(figureOffset) || !Number.isFinite(markerOffset) || figureOffset > markerOffset) return;
-      const beforeTop = currentMarker.getBoundingClientRect().top;
+      if (settled) return;
+      settled = true;
+      if (!shouldCorrect || nodes?.textScroller !== scroller) return;
       try {
         if (typeof image.decode === "function") await image.decode();
       } catch {
@@ -785,9 +800,9 @@
       if (nodes?.textScroller !== scroller) return;
       const applyCorrection = () => {
         if (getNodes().textScroller !== scroller) return;
-        const afterTop = currentMarker.getBoundingClientRect().top;
+        const afterTop = (currentMarker as HTMLElement).getBoundingClientRect().top;
         const delta = afterTop - beforeTop;
-        if (Number.isFinite(delta)) {
+        if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
           scroller.scrollTop += delta;
           getNodes().textRestoreScrollTop = scroller.scrollTop;
         }
@@ -797,6 +812,8 @@
     };
     image.addEventListener("load", () => { void adjustAfterDecode(); });
     image.addEventListener("error", () => { void adjustAfterDecode(); });
+    image.src = source;
+    if (image.complete && image.naturalWidth > 0) void adjustAfterDecode();
   }
 
   function currentTextPositionMarker(positionMarkers: HTMLElement[]): HTMLElement | undefined {
@@ -1336,7 +1353,7 @@
     const status = createFigureStatus();
     const description = global.document.createElement("div");
     description.setAttribute("data-reader-figure-description", "true");
-    description.textContent = figure.alt || figure.caption || "本文画像";
+    description.textContent = figureDescription(figure);
     description.hidden = true;
     Object.assign(description.style, {
       color: "var(--reader-secondary)",
@@ -1344,25 +1361,26 @@
       lineHeight: "1.45",
       textAlign: "center",
     });
+    let caption: HTMLElement | null = null;
+    if (figure.caption) {
+      caption = global.document.createElement("figcaption");
+      caption.textContent = figure.caption;
+    }
     image.addEventListener("load", () => {
-      void settleFigureImage(token, image, panel, status, description, imageSurface);
+      void settleFigureImage(token, image, panel, status, description, imageSurface, caption);
     });
     image.addEventListener("error", () => {
-      failFigureImage(token, figureIndex, panel, status, description);
+      failFigureImage(token, figureIndex, panel, status, description, imageSurface, caption);
     });
     panel.append(imageSurface, status, description);
-    if (figure.caption) {
-      const caption = global.document.createElement("figcaption");
-      caption.textContent = figure.caption;
-      panel.append(caption);
-    }
+    if (caption) panel.append(caption);
     getNodes().content.append(panel);
     figurePanel = panel;
     updatePlayButton();
-    scheduleFigureLoadingIndicator(token, panel, status);
+    scheduleFigureLoadingIndicator(token, panel, status, description, caption);
     image.src = figure.src;
     if (image.complete && image.naturalWidth > 0) {
-      void settleFigureImage(token, image, panel, status, description, imageSurface);
+      void settleFigureImage(token, image, panel, status, description, imageSurface, caption);
     }
   }
 
@@ -1384,13 +1402,28 @@
     return status;
   }
 
-  function scheduleFigureLoadingIndicator(token: number, panel: HTMLElement, status: HTMLElement): void {
+  function figureDescription(figure: ReaderFigure): string {
+    const alt = figure.alt.trim();
+    const caption = figure.caption.trim();
+    if (alt && caption && alt !== caption) return `${alt}。${caption}`;
+    return alt || caption || "本文画像";
+  }
+
+  function scheduleFigureLoadingIndicator(
+    token: number,
+    panel: HTMLElement,
+    status: HTMLElement,
+    description: HTMLElement,
+    caption: HTMLElement | null,
+  ): void {
     if (figureLoadRevealTimerId !== null) global.clearTimeout(figureLoadRevealTimerId);
     figureLoadRevealTimerId = global.setTimeout(() => {
       figureLoadRevealTimerId = null;
       if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
       status.hidden = false;
       status.style.display = "flex";
+      description.hidden = false;
+      if (caption) caption.hidden = true;
       const indicator = global.document.createElement("span");
       indicator.setAttribute("data-reader-figure-indicator", "true");
       indicator.setAttribute("aria-hidden", "true");
@@ -1430,13 +1463,14 @@
     status: HTMLElement,
     description: HTMLElement,
     imageSurface: HTMLElement,
+    caption: HTMLElement | null,
   ): Promise<void> {
     if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
     try {
       if (typeof image.decode === "function") await image.decode();
     } catch {
       if (!(image.complete && image.naturalWidth > 0)) {
-        failFigureImage(token, figureViewState.figureIndex, panel, status, description);
+        failFigureImage(token, figureViewState.figureIndex, panel, status, description, imageSurface, caption);
         return;
       }
     }
@@ -1448,6 +1482,7 @@
     status.hidden = true;
     status.style.display = "none";
     description.hidden = true;
+    if (caption) caption.hidden = false;
     figureViewState = { kind: "ready", token, figureIndex: figureViewState.figureIndex, brightness: "dimmed" };
     imageSurface.setAttribute("aria-pressed", "false");
     imageSurface.setAttribute("aria-label", "画像を明るく表示");
@@ -1463,6 +1498,8 @@
     panel: HTMLElement,
     status: HTMLElement,
     description: HTMLElement,
+    imageSurface: HTMLElement,
+    caption: HTMLElement | null,
   ): void {
     if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
     if (figureLoadRevealTimerId !== null) {
@@ -1473,6 +1510,8 @@
     status.style.display = "block";
     status.textContent = "画像を読み込めませんでした";
     description.hidden = false;
+    if (caption) caption.hidden = true;
+    imageSurface.remove();
     figureViewState = { kind: "failed", token, figureIndex };
     updatePlayButton();
   }
