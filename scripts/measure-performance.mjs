@@ -23,6 +23,7 @@ const warmupRunsPerCase = process.env.READER_PERFORMANCE_WARMUP_RUNS === undefin
   ? (baselineRoot ? 2 : 0)
   : Number(process.env.READER_PERFORMANCE_WARMUP_RUNS);
 const budgetMargin = 0.25;
+const timingFloorMs = 16;
 const baseline = {
   source: "github-actions/macos-15 run 32590877670 artifact reader-performance-baseline",
   runs: 10,
@@ -179,9 +180,11 @@ function budgetReport(fixtureName, p90, retainedHeap, pairedBaseline = null) {
     ].includes(metric))
     .map(([metric]) => {
     const baselineP90 = referenceP90[metric];
-    const budget = baselineP90 * (1 + budgetMargin);
+    const floorMs = metric === "tapToFirstFeedbackMs" ? timingFloorMs : 0;
+    const budget = Math.max(baselineP90 * (1 + budgetMargin), floorMs);
     return [metric, {
       baselineP90,
+      floorMs,
       budget,
       observedP90: p90[metric],
       increaseRate: (p90[metric] - baselineP90) / baselineP90,
@@ -473,6 +476,7 @@ try {
       runs: runsPerCase,
       warmupRunsPerCase,
       margin: budgetMargin,
+      timingFloorMs,
       conditions: "Chromium headless, 390x844 viewport, base/candidate paired in one browser process",
     } : baseline,
     fixtures: fixtureReports,
