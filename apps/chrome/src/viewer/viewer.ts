@@ -86,8 +86,7 @@
   });
 
   function showLoading(requestId: string): void {
-    const retryLaunchFocus = activePreparation.kind === "failed"
-      && launchFocus
+    const existingLaunchFocus = launchFocus
       && launchFocus.isConnected !== false
       ? launchFocus
       : null;
@@ -97,7 +96,7 @@
       top: globalThis.scrollY || 0,
     };
     close(false, true);
-    launchFocus = retryLaunchFocus || (activeElement && typeof (activeElement as HTMLElement).focus === "function"
+    launchFocus = existingLaunchFocus || (activeElement && typeof (activeElement as HTMLElement).focus === "function"
       ? activeElement as HTMLElement
       : null);
     activeRequestId = requestId;

@@ -176,6 +176,8 @@ function createOutlineReaderHarness() {
   let nextTimerId = 1;
   const timers = new Map();
   let currentTime = 0;
+  let currentScrollX = 0;
+  let currentScrollY = 0;
   let reduceMotion = false;
   const runtimeMessages = [];
   const context: any = {
@@ -217,6 +219,10 @@ function createOutlineReaderHarness() {
     ReaderIcons,
     Intl,
     console,
+    scrollTo(position) {
+      currentScrollX = position.left;
+      currentScrollY = position.top;
+    },
     ResizeObserver: class {
       constructor(callback) {
         resizeCallback = callback;
@@ -236,6 +242,10 @@ function createOutlineReaderHarness() {
       timers.delete(id);
     },
   };
+  Object.defineProperties(context, {
+    scrollX: { get: () => currentScrollX },
+    scrollY: { get: () => currentScrollY },
+  });
   context.globalThis = context;
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   vm.runInNewContext(source, context);
@@ -254,6 +264,13 @@ function createOutlineReaderHarness() {
     },
     advanceTime(milliseconds) {
       currentTime += milliseconds;
+    },
+    setScrollPosition(left, top) {
+      currentScrollX = left;
+      currentScrollY = top;
+    },
+    scrollPosition() {
+      return { left: currentScrollX, top: currentScrollY };
     },
     runtimeMessages,
   };
@@ -440,6 +457,52 @@ test("reader retries a classified error without replacing its launch focus", () 
   findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
 
   assert.equal(document.activeElement, launchButton);
+});
+
+test("reader preserves launch focus and source scroll when request B replaces preparing request A", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener, timers } = harness;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(launchButton);
+  launchButton.focus();
+  harness.setScrollPosition(12, 320);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "preparing-request-a" });
+  revealLoading(timers);
+  const slowTimer = [...timers.entries()].find(([, timer]) => timer.delay === 400);
+  assert.ok(slowTimer);
+  timers.delete(slowTimer[0]);
+  slowTimer[1].callback();
+  assert.equal(document.activeElement.textContent, "中止");
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "preparing-request-b" });
+  messageListener({ type: "START_RSVP", text: "Bの本文です。", requestId: "preparing-request-b" });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+
+  assert.equal(document.activeElement, launchButton);
+  assert.deepEqual(harness.scrollPosition(), { left: 12, top: 320 });
+});
+
+test("reader preserves launch focus and source scroll when ready request A is reopened", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener } = harness;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(launchButton);
+  launchButton.focus();
+  harness.setScrollPosition(24, 640);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ready-request-a" });
+  messageListener({ type: "START_RSVP", text: "Aの本文です。", requestId: "ready-request-a" });
+  assert.equal(document.activeElement.attributes["aria-label"], "readerを閉じる");
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ready-request-b" });
+  messageListener({ type: "START_RSVP", text: "Bの本文です。", requestId: "ready-request-b" });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+
+  assert.equal(document.activeElement, launchButton);
+  assert.deepEqual(harness.scrollPosition(), { left: 24, top: 640 });
 });
 
 test("reader shows the article outline beside the focal point", () => {
