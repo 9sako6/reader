@@ -73,11 +73,13 @@ const buttonStyle = {
 
 function button(label: string, onClick: () => void, extra: Record<string, unknown> = {}): ReactElement {
   const modeButton = extra["data-reader-mode-button"];
+  const ariaLabel = extra["aria-label"] ?? (label === "続きを読む" ? label : label === "閉じる" ? "readerを閉じる" : undefined);
   const styleExtra = { ...extra };
   delete styleExtra["data-reader-mode-button"];
+  delete styleExtra["aria-label"];
   return createElement("button", {
     type: "button",
-    "aria-label": label === "続きを読む" ? label : label === "閉じる" ? "readerを閉じる" : undefined,
+    "aria-label": ariaLabel,
     "data-reader-mode-button": modeButton,
     style: { ...buttonStyle, ...styleExtra },
     onClick,
@@ -277,7 +279,7 @@ function LoadingIndicator({ mobile, reducedMotion, revealed }: { mobile: boolean
 }
 
 function renderError(model: Extract<ReaderViewModel, { kind: "error" }>, handlers: ReaderViewHandlers): ReactElement {
-  const actions = [model.canRetry ? button("やり直す", handlers.retry) : null, button("元に戻る", handlers.close)];
+  const actions = [model.canRetry ? button("やり直す", handlers.retry) : null, button("元に戻る", handlers.close, { "aria-label": "readerを閉じる" })];
   if (model.mobile) {
     return createElement("section", { className: "reader", role: "dialog", "aria-label": "reader", "aria-modal": "true", children: createElement("main", { className: "content", children: createElement("div", { className: "error", "data-reader-error": "true", children: [createElement("div", { key: "message", children: model.message }), createElement("div", { key: "actions", className: "error-actions", children: actions })] }) }) });
   }

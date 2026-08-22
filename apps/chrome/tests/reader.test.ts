@@ -70,6 +70,7 @@ class FakeElement {
 
   insertBefore(child, before) {
     if (child === this || child.contains?.(this)) throw new Error("invalid DOM hierarchy");
+    if (child === before) return child;
     if (child.parent) child.remove();
     child.parent = this;
     child.ownerDocument ||= this.ownerDocument;
@@ -640,6 +641,8 @@ test("Chrome React harness preserves attribute presence and DOM move semantics",
   assert.equal(first.children.includes(child), false);
   assert.equal(second.children.includes(child), true);
   assert.equal(child.parentNode, second);
+  assert.equal(second.insertBefore(child, child), child);
+  assert.deepEqual(second.children, [child]);
 });
 
 test("Chrome viewer leaves rendering to ReaderView", () => {
