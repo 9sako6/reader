@@ -219,14 +219,7 @@
     button.className = "entry";
     button.type = "button";
     button.setAttribute("aria-label", "readerで読む");
-    button.addEventListener("click", () => {
-      const runtimeGate = global.ReaderRuntimeGate;
-      if (runtimeGate) {
-        void runtimeGate(open);
-        return;
-      }
-      void open();
-    });
+    button.addEventListener("click", open);
     return button;
   }
 
