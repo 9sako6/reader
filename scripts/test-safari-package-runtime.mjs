@@ -166,6 +166,7 @@ async function verifySafariRuntime() {
           wasmResponses,
           host: Boolean(host),
           unit: true,
+          unitText: unit.textContent?.trim() || "",
         });
         return;
       }
@@ -184,6 +185,7 @@ async function verifySafariRuntime() {
   assert.deepEqual(result.wasmResponses, [{ status: 200, contentType: "application/wasm" }]);
   assert.equal(result.host, true);
   assert.equal(result.unit, true);
+  assert.notEqual(result.unitText, "");
 }
 
 async function verifyGeneratedRuntimeInWebKit() {
@@ -237,6 +239,7 @@ async function verifyGeneratedRuntimeInWebKit() {
         wasmResponses,
         host: Boolean(host),
         unit: Boolean(host?.shadowRoot?.querySelector('[data-reader-unit="true"]')),
+        unitText: host?.shadowRoot?.querySelector('[data-reader-unit="true"]')?.textContent?.trim() || "",
       };
     });
     assert.equal(result.initialized, true);
@@ -245,6 +248,7 @@ async function verifyGeneratedRuntimeInWebKit() {
     assert.deepEqual(result.wasmResponses, [{ status: 200, contentType: "application/wasm" }]);
     assert.equal(result.host, true);
     assert.equal(result.unit, true);
+    assert.notEqual(result.unitText, "");
   } finally {
     await browser.close();
   }
