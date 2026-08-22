@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { timingCorpus } from "../packages/engine/tests/timing-corpus.ts";
+import { timingCorpus } from "../packages/engine/tests/timing-corpus.mjs";
 
 const require = createRequire(import.meta.url);
 const Engine = require("../.build/packages/engine/src/engine.js");
@@ -32,6 +32,14 @@ function percentile(values, ratio) {
   return lowerValue + (upperValue - lowerValue) * (position - lower);
 }
 
+function activeSectionAt(entry, offset) {
+  let activeHeadingIndex = entry.initialHeadingIndex;
+  for (const transition of entry.sectionTransitions) {
+    if (transition.offset <= offset) activeHeadingIndex = transition.headingIndex;
+  }
+  return activeHeadingIndex;
+}
+
 function timingForCorpus(entry) {
   const units = Engine.segmentText(entry.text, entry.locale);
   const zeroPauseProfile = {
@@ -53,9 +61,9 @@ function timingForCorpus(entry) {
   let sectionPauseMs = 0;
   const durations = units.map((unit, index) => {
     const nextUnit = units[index + 1];
-    const gap = nextUnit ? entry.text.slice(unit.end, nextUnit.start) : "";
     const sectionBreak = Boolean(
-      nextUnit && /\n[ \t]*\n/u.test(`${unit.text}${gap}${nextUnit.text}`),
+      nextUnit
+      && activeSectionAt(entry, unit.start) !== activeSectionAt(entry, nextUnit.start),
     );
     if (sectionBreak) sectionBreakCount += 1;
 
