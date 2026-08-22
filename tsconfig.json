@@ -2,6 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "commonjs",
+    "jsx": "react-jsx",
     "types": ["chrome"],
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "rootDir": ".",
@@ -13,6 +14,7 @@
   },
   "include": [
     "packages/**/*.ts",
+    "packages/**/*.tsx",
     "apps/chrome/src/**/*.ts",
     "apps/ios/ReaderExtension/Resources/viewer/**/*.ts"
   ],
