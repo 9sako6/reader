@@ -6,6 +6,45 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { fromPage: extractPage, fromText } = require("../../../.build/packages/extractor/src/extractor.js");
 
+function createLanguagePageFixture(language) {
+  const paragraphText = "ページ本文です。";
+  const textNode = { nodeType: 3, nodeValue: paragraphText, childNodes: [] };
+  const paragraph = {
+    nodeType: 1,
+    tagName: "P",
+    textContent: paragraphText,
+    childNodes: [textNode],
+    parentElement: { closest() { return null; } },
+  };
+  const contentRoot = {
+    nodeType: 11,
+    childNodes: [paragraph],
+    querySelector() { return null; },
+    querySelectorAll(selector) {
+      if (selector === "h1, h2, h3, h4, h5, h6" || selector === "img") return [];
+      return [paragraph];
+    },
+  };
+  const template = { content: contentRoot, innerHTML: "" };
+  const document = {
+    documentElement: { lang: language },
+    createElement(tagName) {
+      return tagName === "template" ? template : contentRoot;
+    },
+    createRange() {
+      return {
+        selectNodeContents() {},
+        setEndBefore() {},
+        toString() { return paragraphText; },
+      };
+    },
+  };
+  class FakeDefuddle {
+    parse() { return { content: `<p>${paragraphText}</p>` }; }
+  }
+  return { document, Defuddle: FakeDefuddle };
+}
+
 test("fromText produces the same Content contract as page extraction", () => {
   assert.deepEqual(fromText("  選択した文章  "), {
     text: "選択した文章",
@@ -128,6 +167,20 @@ test("extractPage returns article text and heading offsets", () => {
   assert.equal(defuddleOptions.removeLowScoring, true);
   assert.equal(defuddleOptions.removeImages, false);
   assert.equal(readerOverlayRemoved, true);
+});
+
+test("fromPage falls back to Japanese when html lang is empty", () => {
+  const { document, Defuddle } = createLanguagePageFixture("");
+  const result = extractPage(document, Defuddle);
+
+  assert.equal(result.readingContext.language, "ja");
+});
+
+test("fromPage falls back to Japanese when html lang is malformed", () => {
+  const { document, Defuddle } = createLanguagePageFixture("en_US");
+  const result = extractPage(document, Defuddle);
+
+  assert.equal(result.readingContext.language, "ja");
 });
 
 test("extractPage keeps every article image at its source offset", () => {

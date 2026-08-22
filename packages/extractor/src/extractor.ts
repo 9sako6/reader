@@ -81,7 +81,7 @@
 
     return {
       text,
-      readingContext: {
+      readingContext: normalizeReadingContext({
         language: sourceDocument.documentElement?.lang || "",
         title: title || headingEntries[0]?.text || "",
         blocks: extractBlocks(sourceDocument, contentRoot, text, leadingWhitespaceLength, sourceOffsets),
@@ -90,7 +90,7 @@
         sectionTransitions,
         initialHeadingIndex: includeTitle ? 0 : -1,
         figures: extractFigures(sourceDocument, contentRoot, text, leadingWhitespaceLength, sourceOffsets),
-      },
+      }),
     };
   }
 
