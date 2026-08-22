@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function loadViewer(page: Page, viewer: "chrome" | "mobile", query = ""): Promise<void> {
@@ -72,6 +73,7 @@ type ChromeOpenOptions = {
 };
 
 type MobileOpenOptions = {
+  text?: string;
   image?: "immediate" | "delayed" | "missing" | "broken" | "vertical" | "horizontal" | "transparent" | "huge" | "default";
   figureFirst?: boolean;
   alt?: string;
@@ -1558,6 +1560,110 @@ test("WASM is lazy until the viewer is opened", async ({ page }) => {
   await openMobile(page);
   await expect.poll(() => page.evaluate(() => performance.getEntriesByType("resource").filter((entry) => entry.name.endsWith("reader_session_bg.wasm")).length)).toBeGreaterThan(0);
 });
+
+for (const viewer of ["chrome", "mobile"] as const) {
+  test(`${viewer} pauses on hidden and does not auto-resume on visible`, async ({ page }) => {
+    await loadViewer(page, viewer);
+    if (viewer === "chrome") await openChrome(page, { text: "可視性確認。", paused: true });
+    else await openMobile(page, { text: "可視性確認。" });
+
+    const dialog = page.getByRole("dialog", { name: "reader" });
+    await expect(dialog).toBeVisible();
+    await pauseReaderIfPlaying(dialog);
+    await dialog.getByRole("button", { name: "再生" }).click();
+    await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+
+    const setVisibility = async (state: "hidden" | "visible") => {
+      await page.evaluate((nextState) => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          value: nextState,
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      }, state);
+    };
+
+    await setVisibility("hidden");
+    await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+    const hiddenPosition = await readReaderPosition(dialog);
+
+    await setVisibility("visible");
+    await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+    await page.waitForTimeout(700);
+    await expect.poll(() => readReaderPosition(dialog)).toEqual(hiddenPosition);
+  });
+}
+
+const TIMING_E2E_TEXT = Array.from({ length: 10 }, (_, index) => `計測用の文${index + 1}です。`).join("");
+
+for (const viewer of ["chrome", "mobile"] as const) {
+  test(`${viewer} reports planned and wall-clock RSVP timing`, async ({ page }, testInfo) => {
+    await loadViewer(page, viewer);
+    const plan = await page.evaluate((text) => {
+      const engine = (globalThis as typeof globalThis & {
+        Engine: {
+          segmentText(value: string, locale: string): Array<{ text: string; sentenceIndex: number }>;
+          displayDuration(
+            unit: { text: string; sentenceIndex: number },
+            nextUnit?: { sentenceIndex: number },
+            sectionBreak?: boolean,
+          ): number;
+        };
+      }).Engine;
+      const units = engine.segmentText(text, "ja");
+      const durations = units.map((unit, index) => engine.displayDuration(unit, units[index + 1], false));
+      return {
+        textLength: text.length,
+        unitCount: units.length,
+        plannedDurationMs: durations.reduce((total, duration) => total + duration, 0),
+      };
+    }, TIMING_E2E_TEXT);
+    expect(plan.plannedDurationMs).toBeGreaterThanOrEqual(5_000);
+    expect(plan.plannedDurationMs).toBeLessThanOrEqual(10_000);
+
+    if (viewer === "chrome") await openChrome(page, { text: TIMING_E2E_TEXT, paused: true });
+    else await openMobile(page, { text: TIMING_E2E_TEXT });
+
+    const dialog = page.getByRole("dialog", { name: "reader" });
+    await expect(dialog).toBeVisible();
+    await pauseReaderIfPlaying(dialog);
+    await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+    const startedAt = await page.evaluate(() => {
+      const hosts = Array.from(document.querySelectorAll<HTMLElement>('[data-reader-owned="true"], #__reader-host'));
+      const button = hosts
+        .map((host) => host.shadowRoot?.querySelector<HTMLButtonElement>('[aria-label="再生"]'))
+        .find((candidate): candidate is HTMLButtonElement => Boolean(candidate));
+      if (!button) throw new Error("paused RSVP control not found");
+      const timestamp = performance.now();
+      button.click();
+      return timestamp;
+    });
+    await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => Boolean(
+      Array.from(document.querySelectorAll<HTMLElement>('[data-reader-owned="true"], #__reader-host'))
+        .some((host) => Boolean(host.shadowRoot?.querySelector('[aria-label="再生"]'))),
+    )), { timeout: plan.plannedDurationMs * 2 }).toBe(true);
+    const actualDurationMs = await page.evaluate((start) => performance.now() - start, startedAt);
+    const timingReport = {
+      viewer,
+      project: testInfo.project.name,
+      textLength: plan.textLength,
+      unitCount: plan.unitCount,
+      plannedDurationMs: plan.plannedDurationMs,
+      actualDurationMs: Math.round(actualDurationMs),
+      relativeError: Math.abs(actualDurationMs - plan.plannedDurationMs) / plan.plannedDurationMs,
+      withinFifteenPercent: Math.abs(actualDurationMs - plan.plannedDurationMs) / plan.plannedDurationMs <= 0.15,
+    };
+    const timingReportPath = `test-results/timing/${viewer}-${testInfo.project.name}.json`;
+    await mkdir("test-results/timing", { recursive: true });
+    await writeFile(timingReportPath, `${JSON.stringify(timingReport, null, 2)}\n`, "utf8");
+    await testInfo.attach("reader-timing", {
+      path: timingReportPath,
+      contentType: "application/json",
+    });
+    expect(timingReport.actualDurationMs).toBeGreaterThan(0);
+  });
+}
 
 test("Chrome viewer RSVP state matches its visual baseline", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });

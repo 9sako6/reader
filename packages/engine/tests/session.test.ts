@@ -12,6 +12,7 @@ const {
   buildReadingFlow,
   findFlowIndexForPosition,
   positionForFlowItem,
+  DEFAULT_TIMING_PROFILE,
 } = require("../../../.build/packages/engine/src/engine.js");
 
 const units = [
@@ -66,6 +67,89 @@ test("display duration accounts for punctuation and section changes", () => {
   assert.equal(displayDuration({ text: "短い、", sentenceIndex: 0 }, sameSentence), 372);
   assert.equal(displayDuration({ text: "短い。", sentenceIndex: 0 }, nextSentence), 612);
   assert.equal(displayDuration({ text: "短い。", sentenceIndex: 0 }, nextSentence, true), 852);
+});
+
+test("default timing profile keeps the calibrated values in one immutable object", () => {
+  assert.deepEqual(DEFAULT_TIMING_PROFILE, {
+    baseUnitMs: 180,
+    msPerGrapheme: 24,
+    minUnitMs: 240,
+    maxUnitMs: 600,
+    clausePauseMs: 120,
+    sentencePauseMs: 360,
+    sectionPauseMs: 240,
+    speedMultiplier: 1,
+  });
+  assert.equal(Object.isFrozen(DEFAULT_TIMING_PROFILE), true);
+});
+
+test("speed multiplier scales the complete duration including pauses", () => {
+  const unit = { text: "短い、", sentenceIndex: 0 };
+  const nextSentence = { sentenceIndex: 1 };
+  assert.equal(displayDuration(unit, nextSentence, true, { ...DEFAULT_TIMING_PROFILE, speedMultiplier: 0.5 }), 1944);
+  assert.equal(displayDuration(unit, nextSentence, true, { ...DEFAULT_TIMING_PROFILE, speedMultiplier: 1 }), 972);
+  assert.equal(displayDuration(unit, nextSentence, true, { ...DEFAULT_TIMING_PROFILE, speedMultiplier: 2 }), 486);
+});
+
+test("invalid speed multipliers fall back to the default speed", () => {
+  const unit = { text: "短い、", sentenceIndex: 0 };
+  const nextSentence = { sentenceIndex: 1 };
+  for (const speedMultiplier of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(
+      displayDuration(unit, nextSentence, true, { ...DEFAULT_TIMING_PROFILE, speedMultiplier }),
+      972,
+    );
+  }
+});
+
+test("timing profile clamps empty, short, and long units", () => {
+  assert.equal(displayDuration({ text: "", sentenceIndex: 0 }), 240);
+  assert.equal(displayDuration({ text: "あ", sentenceIndex: 0 }), 240);
+  assert.equal(displayDuration({ text: "あ".repeat(30), sentenceIndex: 0 }), 600);
+});
+
+test("custom timing profile applies each pause and does not mutate the default", () => {
+  const customProfile = {
+    baseUnitMs: 100,
+    msPerGrapheme: 10,
+    minUnitMs: 0,
+    maxUnitMs: 1000,
+    clausePauseMs: 30,
+    sentencePauseMs: 50,
+    sectionPauseMs: 20,
+    speedMultiplier: 2,
+  };
+  assert.equal(
+    displayDuration({ text: "あ、", sentenceIndex: 0 }, { sentenceIndex: 1 }, true, customProfile),
+    110,
+  );
+  assert.deepEqual(DEFAULT_TIMING_PROFILE, {
+    baseUnitMs: 180,
+    msPerGrapheme: 24,
+    minUnitMs: 240,
+    maxUnitMs: 600,
+    clausePauseMs: 120,
+    sentencePauseMs: 360,
+    sectionPauseMs: 240,
+    speedMultiplier: 1,
+  });
+});
+
+test("invalid timing profile values safely fall back without throwing", () => {
+  const invalidProfile = {
+    baseUnitMs: Number.NaN,
+    msPerGrapheme: Number.POSITIVE_INFINITY,
+    minUnitMs: 900,
+    maxUnitMs: 100,
+    clausePauseMs: -1,
+    sentencePauseMs: Number.NaN,
+    sectionPauseMs: Number.POSITIVE_INFINITY,
+    speedMultiplier: 0,
+  };
+  assert.equal(
+    displayDuration({ text: "短い、", sentenceIndex: 0 }, { sentenceIndex: 1 }, true, invalidProfile),
+    972,
+  );
 });
 
 test("normal reading position uses the source offset at the viewport center", () => {

@@ -163,6 +163,7 @@ function revealLoading(timers) {
 
 function createSessionStub(commands, options: { initFails?: boolean } = {}) {
   let nextId = 1;
+  let lastHandle = null;
   const initialState = () => ({
     phase: "idle",
     mode: "rsvp",
@@ -209,7 +210,8 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
     },
     ready: () => !options.initFails,
     create() {
-      return { id: nextId++, state: initialState(), destroyed: false, flow: null };
+      lastHandle = { id: nextId++, state: initialState(), destroyed: false, flow: null };
+      return lastHandle;
     },
     dispatch(handle, command) {
       if (handle.destroyed) throw new Error("destroyed");
@@ -278,6 +280,13 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
         effects = playback === "playing"
           ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }]
           : [{ type: "cancelTimer" }];
+      } else if (command.type === "rebuildUnits" && previous.phase === "reading") {
+        handle.flow = { ...handle.flow, units: command.units };
+        const playback = previous.playback;
+        state = { ...previous, generation: previous.generation + 1 };
+        effects = playback === "playing"
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.units[state.unitIndex]?.durationMs || 1 }]
+          : [{ type: "cancelTimer" }];
       } else if (command.type === "visibilityHidden" && previous.phase === "preparing" && !previous.preparationHidden) {
         state = { ...previous, preparationHidden: true, generation: previous.generation + 1 };
       } else if (command.type === "visibilityHidden" && previous.phase === "reading") {
@@ -289,6 +298,9 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
     },
     destroy(handle) {
       handle.destroyed = true;
+    },
+    snapshot() {
+      return lastHandle?.state;
     },
   };
 }
@@ -302,6 +314,7 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
   const document = {
     documentElement,
     activeElement: null,
+    visibilityState: "visible",
     createElement(tagName) {
       const element = new FakeElement(tagName);
       element.ownerDocument = document;
@@ -366,6 +379,7 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
   let reduceMotion = false;
   const runtimeMessages = [];
   const sessionCommands = [];
+  const session = createSessionStub(sessionCommands, options);
   const context: any = {
     chrome: {
       runtime: {
@@ -403,7 +417,7 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
     Engine,
     Extractor,
     ReaderIcons,
-    ReaderSession: createSessionStub(sessionCommands, options),
+    ReaderSession: session,
     Intl,
     console,
     scrollTo(position) {
@@ -455,6 +469,16 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
     setScrollPosition(left, top) {
       currentScrollX = left;
       currentScrollY = top;
+    },
+    setVisibilityState(state) {
+      document.visibilityState = state;
+      document.dispatchEvent({ type: "visibilitychange" });
+    },
+    listenerCount(type) {
+      return (documentListeners.get(type) || []).length;
+    },
+    sessionState() {
+      return session.snapshot();
     },
     scrollPosition() {
       return { left: currentScrollX, top: currentScrollY };
@@ -586,6 +610,224 @@ test("reader cancel closes loading and sends the request id to the service worke
   assert.deepEqual(sessionCommands.map(({ type }) => type), ["open", "cancel", "close"]);
   assert.equal(document.getElementById("__rsvp-reader-root"), null);
 });
+
+test("reader attaches visibility lifecycle only while a session is active", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener, sessionCommands } = harness;
+
+  assert.equal(harness.listenerCount("visibilitychange"), 0);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "lifecycle-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の本文です。次の文です。",
+    requestId: "lifecycle-request",
+  });
+
+  assert.equal(harness.listenerCount("visibilitychange"), 1);
+  harness.setVisibilityState("hidden");
+  assert.equal(sessionCommands.at(-1)?.type, "visibilityHidden");
+
+  const closeButton = findElement(
+    documentElement,
+    (element) => element.attributes["aria-label"] === "readerを閉じる",
+  );
+  closeButton.dispatchEvent({ type: "click" });
+  assert.equal(harness.listenerCount("visibilitychange"), 0);
+
+  const commandCountAfterClose = sessionCommands.length;
+  document.visibilityState = "hidden";
+  document.dispatchEvent({ type: "visibilitychange" });
+  assert.equal(sessionCommands.length, commandCountAfterClose);
+});
+
+test("reader stays paused at the same position after visibility returns", () => {
+  const harness = createOutlineReaderHarness();
+  harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "visibility-round-trip" });
+  harness.messageListener({
+    type: "START_RSVP",
+    text: "可視性が変わっても現在位置を維持します。次の文です。",
+    requestId: "visibility-round-trip",
+  });
+
+  harness.setVisibilityState("hidden");
+  const hiddenState = harness.sessionState();
+  assert.equal(hiddenState.playback, "paused");
+  assert.equal(harness.timers.size, 0);
+
+  harness.setVisibilityState("visible");
+  assert.deepEqual(harness.sessionState(), hiddenState);
+  assert.equal(harness.timers.size, 0);
+});
+
+function readerCursor(state) {
+  return {
+    phase: state?.phase,
+    flowIndex: state?.flowIndex,
+    sourceOffset: state?.sourceOffset,
+    currentKind: state?.currentKind,
+  };
+}
+
+const chromeLateTimerScenarios = [
+  {
+    name: "pause",
+    createHarness: () => createOutlineReaderHarness(),
+    start(harness) {
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-pause" });
+      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-pause" });
+    },
+    capture(harness) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      return entry[1].callback;
+    },
+    operate(harness) {
+      const overlay = harness.document.getElementById("__rsvp-reader-root");
+      findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止")
+        .dispatchEvent({ type: "click" });
+    },
+  },
+  {
+    name: "mode switch",
+    createHarness: () => createOutlineReaderHarness(),
+    start(harness) {
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-mode" });
+      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-mode" });
+    },
+    capture(harness) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      return entry[1].callback;
+    },
+    operate(harness) {
+      const overlay = harness.document.getElementById("__rsvp-reader-root");
+      findElement(overlay, (element) => element.textContent === "文章で読む")
+        .dispatchEvent({ type: "click" });
+    },
+  },
+  {
+    name: "figure",
+    createHarness: () => createFigureReaderHarness(),
+    start(harness) {
+      const text = "結果を図1に示します。\n図1\n次の説明です。";
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-figure" });
+      harness.messageListener({
+        type: "START_RSVP",
+        text,
+        requestId: "late-figure",
+        readingContext: {
+          blocks: [
+            { text: "結果を図1に示します。", kind: "paragraph", level: null, start: 0, end: 11 },
+            { text: "次の説明です。", kind: "paragraph", level: null, start: 15, end: text.length },
+          ],
+          headings: [],
+          sectionTransitions: [],
+          initialHeadingIndex: -1,
+          figures: [{
+            src: "https://example.com/late.png",
+            alt: "遅い画像",
+            caption: "図1",
+            sourceOffset: 12,
+            sourceEnd: 14,
+          }],
+        },
+      });
+    },
+    capture(harness) {
+      let lateCallback = null;
+      while (harness.sessionState()?.currentKind !== "figure") {
+        const entry = [...harness.timers.entries()][0];
+        assert.ok(entry, "figure is reached before playback timers end");
+        harness.timers.delete(entry[0]);
+        lateCallback = entry[1].callback;
+        lateCallback();
+      }
+      assert.ok(lateCallback);
+      return lateCallback;
+    },
+    operate(harness) {
+      assert.equal(harness.sessionState()?.currentKind, "figure");
+    },
+  },
+  {
+    name: "resize",
+    createHarness: () => createOutlineReaderHarness(),
+    start(harness) {
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-resize" });
+      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-resize" });
+    },
+    capture(harness) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      return entry[1].callback;
+    },
+    operate(harness) {
+      const overlay = harness.document.getElementById("__rsvp-reader-root");
+      const display = findElement(
+        overlay,
+        (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+      );
+      display.clientWidth = 300;
+      harness.resizeDisplay();
+    },
+  },
+  {
+    name: "close",
+    createHarness: () => createOutlineReaderHarness(),
+    start(harness) {
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-close" });
+      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-close" });
+    },
+    capture(harness) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      return entry[1].callback;
+    },
+    operate(harness) {
+      const overlay = harness.document.getElementById("__rsvp-reader-root");
+      findElement(overlay, (element) => element.attributes["aria-label"] === "readerを閉じる")
+        .dispatchEvent({ type: "click" });
+    },
+  },
+  {
+    name: "hidden",
+    createHarness: () => createOutlineReaderHarness(),
+    start(harness) {
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-hidden" });
+      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-hidden" });
+    },
+    capture(harness) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      return entry[1].callback;
+    },
+    operate(harness) {
+      harness.setVisibilityState("hidden");
+    },
+  },
+];
+
+for (const scenario of chromeLateTimerScenarios) {
+  test(`reader ignores a late callback after ${scenario.name}`, () => {
+    const harness = scenario.createHarness();
+    scenario.start(harness);
+    const lateCallback = scenario.capture(harness);
+    scenario.operate(harness);
+    const stateAfterOperation = harness.sessionState();
+    const cursorAfterOperation = readerCursor(stateAfterOperation);
+
+    lateCallback();
+
+    assert.deepEqual(readerCursor(harness.sessionState()), cursorAfterOperation);
+    assert.deepEqual(harness.sessionState(), stateAfterOperation);
+  });
+}
 
 test("reader renders content-not-found errors with retry and return actions", () => {
   const harness = createOutlineReaderHarness();
@@ -1577,6 +1819,32 @@ test("reader varies timing for punctuation and phrase length", () => {
   assert.equal(secondTimer.delay, 828);
 });
 
+test("Chrome schedules the shared heading-transition durations", () => {
+  const { messageListener, timers } = createTimingReaderHarness();
+  const text = "短い、次です。";
+  const readingContext = {
+    headings: [
+      { text: "導入", level: 1 },
+      { text: "本論", level: 2 },
+    ],
+    sectionTransitions: [
+      { offset: 0, headingIndex: 0 },
+      { offset: 3, headingIndex: 1 },
+    ],
+    initialHeadingIndex: -1,
+    figures: [],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "parity-request" });
+  messageListener({ type: "START_RSVP", text, requestId: "parity-request", readingContext });
+
+  const [firstTimerId, firstTimer] = [...timers.entries()][0];
+  assert.equal(firstTimer.delay, 612);
+  timers.delete(firstTimerId);
+  firstTimer.callback();
+  const [secondTimer] = [...timers.values()];
+  assert.equal(secondTimer.delay, 276);
+});
+
 test("Chrome viewer segments with the ReaderContent language", () => {
   const locales: string[] = [];
   const engine = {
@@ -1656,6 +1924,43 @@ test("reader preserves the literal baseline effective reading rate", () => {
   assert.ok(equivalentWordsPerMinute >= 380 && equivalentWordsPerMinute <= 395);
 });
 
+test("reader keeps one timer and ends paused after a 30-minute-equivalent RSVP flow", () => {
+  const longText = Array.from(
+    { length: 1_550 },
+    () => "これは三十分相当の長文を検証する文です。",
+  ).join("");
+  const { messageListener, timers, sessionState } = createOutlineReaderHarness();
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "long-flow-request" });
+  messageListener({ type: "START_RSVP", text: longText, requestId: "long-flow-request" });
+
+  let elapsedMs = 0;
+  let firedTimerCount = 0;
+  let maxPendingTimerCount = 0;
+  while (timers.size > 0) {
+    assert.equal(timers.size, 1);
+    const [timerId, timer] = [...timers.entries()][0];
+    timers.delete(timerId);
+    elapsedMs += timer.delay;
+    firedTimerCount += 1;
+    timer.callback();
+    maxPendingTimerCount = Math.max(maxPendingTimerCount, timers.size);
+    assert.ok(firedTimerCount < 10_000);
+  }
+
+  const finalState = sessionState();
+  assert.ok(elapsedMs >= 30 * 60 * 1_000);
+  assert.ok(firedTimerCount > 3_000);
+  assert.equal(maxPendingTimerCount, 1);
+  assert.equal(finalState.phase, "reading");
+  assert.equal(finalState.playback, "paused");
+  assert.equal(finalState.timerPending, false);
+  assert.equal(finalState.flowIndex, finalState.flowLength - 1);
+  assert.equal(finalState.currentKind, "unit");
+  assert.equal(finalState.position.kind, "text");
+  assert.equal(finalState.sourceOffset, finalState.position.sourceOffset);
+  assert.ok(finalState.sourceOffset > 0 && finalState.sourceOffset < longText.length);
+});
+
 function createFigureReaderHarness() {
   const documentElement = new FakeElement("html");
   const documentListeners = new Map();
@@ -1691,6 +1996,7 @@ function createFigureReaderHarness() {
   let messageListener = null;
   let nextTimerId = 1;
   const timers = new Map();
+  const session = createSessionStub([]);
   const context: any = {
     chrome: {
       runtime: {
@@ -1714,7 +2020,7 @@ function createFigureReaderHarness() {
     Engine,
     Extractor,
     ReaderIcons,
-    ReaderSession: createSessionStub([]),
+    ReaderSession: session,
     Intl,
     console,
     setTimeout(callback, delay) {
@@ -1731,7 +2037,15 @@ function createFigureReaderHarness() {
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   vm.runInNewContext(source, context);
 
-  return { document, documentElement, messageListener, timers };
+  return {
+    document,
+    documentElement,
+    messageListener,
+    timers,
+    sessionState() {
+      return session.snapshot();
+    },
+  };
 }
 
 test("reader pauses on an article image and exposes its context", () => {

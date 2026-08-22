@@ -281,9 +281,12 @@
             mobileErrorOnce = null;
             return Promise.reject(new Error(reason));
           }
+          const content = typeof mobileFixtureOptions.text === "string"
+            ? customFixtureContent(mobileFixtureOptions.text)
+            : fixtureContent({ image: mobileFixtureOptions.image || imageFixture, figureFirst: mobileFixtureOptions.figureFirst || figureFirst, alt: mobileFixtureOptions.alt, caption: mobileFixtureOptions.caption, cacheKey: mobileFixtureOptions.cacheKey, srcset: mobileFixtureOptions.srcset, sizes: mobileFixtureOptions.sizes, imageDelay: mobileFixtureOptions.imageDelay });
           return defaultDelay === 0
-            ? fixtureContent({ image: mobileFixtureOptions.image || imageFixture, figureFirst: mobileFixtureOptions.figureFirst || figureFirst, alt: mobileFixtureOptions.alt, caption: mobileFixtureOptions.caption, cacheKey: mobileFixtureOptions.cacheKey, srcset: mobileFixtureOptions.srcset, sizes: mobileFixtureOptions.sizes, imageDelay: mobileFixtureOptions.imageDelay })
-            : new Promise((resolve) => setTimeout(() => resolve(fixtureContent({ image: mobileFixtureOptions.image || imageFixture, figureFirst: mobileFixtureOptions.figureFirst || figureFirst, alt: mobileFixtureOptions.alt, caption: mobileFixtureOptions.caption, cacheKey: mobileFixtureOptions.cacheKey, srcset: mobileFixtureOptions.srcset, sizes: mobileFixtureOptions.sizes, imageDelay: mobileFixtureOptions.imageDelay })), defaultDelay));
+            ? content
+            : new Promise((resolve) => setTimeout(() => resolve(content), defaultDelay));
         };
         globalThis.Extractor.fromPage = delayedFixtureContent;
         globalThis.Extractor.fromPageAsync = delayedFixtureContent;
