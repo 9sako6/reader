@@ -37,6 +37,12 @@
   const TEXT_VIEW_READABLE_TOP_PX = 72;
   const TEXT_VIEW_READABLE_BOTTOM_PX = 96;
   const RSVP_FONT_SIZE = 40;
+  const PERFORMANCE_PHASE_TO_METRIC: Record<ReaderExtractionPhase, keyof ReaderExtractionMetrics> = {
+    dominant_article: "dominantArticleMs",
+    defuddle_parse: "defuddleMs",
+    canonical_text: "indexMs",
+    blocks_figures: "contextMs",
+  };
   let shadow: ShadowRoot | null = null;
   let host: HTMLDivElement | null = null;
   let handle: HTMLButtonElement | null = null;
@@ -70,6 +76,12 @@
   let preparationGeneration = 0;
   let preparationController: AbortController | null = null;
   let activePreparation: PreparationState = { kind: "idle" };
+  let performanceRenderMarked = false;
+  let performanceControlsMarked = false;
+
+  function markPerformance(name: string): void {
+    global.performance?.mark?.(name);
+  }
 
   function getNodes(): MobileNodes {
     if (!nodes) throw new Error("reader shell is not available");
@@ -89,6 +101,7 @@
     global.addEventListener("scroll", fadeHandleDuringScroll, { passive: true });
     global.addEventListener("resize", handleViewportChange, { passive: true });
     global.document.addEventListener?.("visibilitychange", handleVisibilityChange);
+    markPerformance("reader:bootstrap-ready");
   }
 
   function createStyles() {
@@ -188,6 +201,9 @@
 
   async function open() {
     if (overlay || opening || !handle || !shadow) return;
+    markPerformance("reader:tap");
+    performanceRenderMarked = false;
+    performanceControlsMarked = false;
     const generation = ++sessionGeneration;
     preparationGeneration = generation;
     opening = true;
@@ -207,6 +223,7 @@
       return;
     }
     shadow.append(progress.element);
+    markPerformance("reader:first-feedback");
     await nextPaint();
     if (!isCurrentSession(generation)) {
       destroyLaunchProgress(progress);
@@ -216,9 +233,28 @@
     preparationController = controller;
     let preparationError: unknown = null;
     try {
-      const extractedContent = typeof global.Extractor.fromPageAsync === "function"
-        ? await global.Extractor.fromPageAsync(global.document, global.Defuddle, { signal: controller.signal })
-        : await global.Extractor.fromPage(global.document, global.Defuddle);
+      markPerformance("reader:extraction-start");
+      const extractionOptions: ReaderExtractionOptions = { signal: controller.signal };
+      const metrics: ReaderExtractionMetrics = {
+        dominantArticleMs: 0,
+        defuddleMs: 0,
+        indexMs: 0,
+        contextMs: 0,
+      };
+      if (global.__READER_PERFORMANCE_ENABLED) {
+        extractionOptions.onPhase = (phase, durationMs) => {
+          metrics[PERFORMANCE_PHASE_TO_METRIC[phase]] = durationMs;
+        };
+      }
+      let extractedContent: ReaderContent | null;
+      try {
+        extractedContent = typeof global.Extractor.fromPageAsync === "function"
+          ? await global.Extractor.fromPageAsync(global.document, global.Defuddle, extractionOptions)
+          : await global.Extractor.fromPage(global.document, global.Defuddle);
+      } finally {
+        markPerformance("reader:extraction-end");
+      }
+      if (global.__READER_PERFORMANCE_ENABLED) global.__READER_PERFORMANCE_LAST_METRICS = metrics;
       if (!isCurrentSession(generation)) {
         destroyLaunchProgress(progress);
         return;
@@ -226,6 +262,7 @@
       content = extractedContent;
       if (!content?.text) throw new Error("content_not_found");
       rebuildUnits();
+      markPerformance("reader:segmentation-end");
       if (units.length === 0) throw new Error("units_not_found");
       currentPosition = flowItems[0]
         ? global.Engine.positionForFlowItem(flowItems[0], units)
@@ -497,6 +534,10 @@
     updateModeButton();
     if (mode === "rsvp") renderRsvpView();
     else renderTextView();
+    if (!performanceRenderMarked) {
+      performanceRenderMarked = true;
+      markPerformance("reader:first-render");
+    }
   }
 
   function renderTextView() {
@@ -823,6 +864,10 @@
     getNodes().controlbar.append(dock);
     getNodes().play = playButton;
     getNodes().transport = dock;
+    if (!performanceControlsMarked) {
+      performanceControlsMarked = true;
+      markPerformance("reader:controls-ready");
+    }
   }
 
   function renderTextControls() {
