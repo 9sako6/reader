@@ -162,6 +162,9 @@ function createSessionStub(commands, options: { init?: () => Promise<void>; read
       handles.delete(handle.id);
       handle.destroyed = true;
     },
+    liveHandleCount() {
+      return handles.size;
+    },
     snapshot() {
       return lastHandle?.state;
     },
@@ -372,6 +375,9 @@ function createSafariReaderHarness(
   const sessionCommands = [];
   const globalListeners = new Map();
   const animationFrames = [];
+  let mutationObserverLiveCount = 0;
+  let reactMountCount = 0;
+  let reactUnmountCount = 0;
   const session = createSessionStub(sessionCommands, options);
   const context: any = {
     document,
@@ -448,8 +454,19 @@ function createSafariReaderHarness(
   context.Comment = FakeElement;
   context.Document = Object;
   context.MutationObserver = class {
+    constructor() {
+      mutationObserverLiveCount += 1;
+      this.active = true;
+    }
+
     observe() {}
-    disconnect() {}
+
+    disconnect() {
+      if (this.active) {
+        this.active = false;
+        mutationObserverLiveCount -= 1;
+      }
+    }
   };
   context.queueMicrotask = (callback) => Promise.resolve().then(callback);
   context.MessageChannel = class {
@@ -463,6 +480,18 @@ function createSafariReaderHarness(
   );
   vm.runInNewContext(sessionSource, context);
   assert.equal(typeof context.ReaderReactViewer?.mount, "function");
+  const originalReactMount = context.ReaderReactViewer.mount;
+  context.ReaderReactViewer.mount = (host) => {
+    const mount = originalReactMount(host);
+    reactMountCount += 1;
+    return {
+      ...mount,
+      unmount() {
+        reactUnmountCount += 1;
+        return mount.unmount();
+      },
+    };
+  };
   if (options.mountFailsOnce) {
     const mount = context.ReaderReactViewer.mount;
     let failed = false;
@@ -512,6 +541,21 @@ function createSafariReaderHarness(
     },
     listenerCount(type) {
       return (documentListeners.get(type) || []).length;
+    },
+    globalListenerCount(type) {
+      return (globalListeners.get(type) || []).length;
+    },
+    liveHandleCount() {
+      return session.liveHandleCount();
+    },
+    reactMountCount() {
+      return reactMountCount;
+    },
+    reactUnmountCount() {
+      return reactUnmountCount;
+    },
+    mutationObserverLiveCount() {
+      return mutationObserverLiveCount;
     },
     sessionState() {
       return session.snapshot();
@@ -572,6 +616,71 @@ test("Safari mounts one React root per open session and removes it on close", as
   assert.equal(harness.performanceMarks().filter((name) => name === "reader:react-init-end").length, 2);
   context.MobileViewer.close();
   assert.equal(reactRoots().length, 0);
+});
+
+test("Safari releases the Session handle with each React mount", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement } = harness;
+  const reactRoots = () => findElements(
+    documentElement,
+    (element) => element.attributes["data-reader-react-root"] === "true",
+  );
+
+  assert.equal(harness.liveHandleCount(), 0);
+  assert.equal(harness.reactMountCount(), 0);
+  await context.MobileViewer.open();
+  assert.equal(harness.liveHandleCount(), 1);
+  assert.equal(harness.reactMountCount(), 1);
+  assert.equal(reactRoots().length, 1);
+  context.MobileViewer.close();
+  assert.equal(harness.liveHandleCount(), 0);
+  assert.equal(harness.reactMountCount(), harness.reactUnmountCount());
+  assert.equal(reactRoots().length, 0);
+
+  await context.MobileViewer.open();
+  assert.equal(harness.liveHandleCount(), 1);
+  assert.equal(harness.reactMountCount(), 2);
+  context.MobileViewer.close();
+  assert.equal(harness.liveHandleCount(), 0);
+  assert.equal(harness.reactMountCount(), harness.reactUnmountCount());
+  assert.equal(reactRoots().length, 0);
+});
+
+test("Safari restores document and global listeners without reopening duplicates", async () => {
+  const harness = createSafariReaderHarness();
+  const { context } = harness;
+  const listenerCounts = () => ({
+    visibility: harness.listenerCount("visibilitychange"),
+    scroll: harness.globalListenerCount("scroll"),
+    resize: harness.globalListenerCount("resize"),
+    keydown: harness.globalListenerCount("keydown"),
+  });
+
+  const baseline = listenerCounts();
+  assert.deepEqual(baseline, { visibility: 0, scroll: 1, resize: 1, keydown: 0 });
+  await context.MobileViewer.open();
+  assert.deepEqual(listenerCounts(), { visibility: 1, scroll: 1, resize: 1, keydown: 1 });
+  context.MobileViewer.close();
+  assert.deepEqual(listenerCounts(), baseline);
+  await context.MobileViewer.open();
+  assert.deepEqual(listenerCounts(), { visibility: 1, scroll: 1, resize: 1, keydown: 1 });
+  context.MobileViewer.close();
+  assert.deepEqual(listenerCounts(), baseline);
+});
+
+test("Safari keeps MutationObserver ownership at the baseline through reopen", async () => {
+  const harness = createSafariReaderHarness();
+  const { context } = harness;
+
+  assert.equal(harness.mutationObserverLiveCount(), 0);
+  await context.MobileViewer.open();
+  assert.equal(harness.mutationObserverLiveCount(), 0);
+  context.MobileViewer.close();
+  assert.equal(harness.mutationObserverLiveCount(), 0);
+  await context.MobileViewer.open();
+  assert.equal(harness.mutationObserverLiveCount(), 0);
+  context.MobileViewer.close();
+  assert.equal(harness.mutationObserverLiveCount(), 0);
 });
 
 test("Safari removes a failed React mount before reopening", async () => {
