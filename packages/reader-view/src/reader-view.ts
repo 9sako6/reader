@@ -72,10 +72,14 @@ const buttonStyle = {
 };
 
 function button(label: string, onClick: () => void, extra: Record<string, unknown> = {}): ReactElement {
+  const modeButton = extra["data-reader-mode-button"];
+  const styleExtra = { ...extra };
+  delete styleExtra["data-reader-mode-button"];
   return createElement("button", {
     type: "button",
     "aria-label": label === "続きを読む" ? label : label === "閉じる" ? "readerを閉じる" : undefined,
-    style: { ...buttonStyle, ...extra },
+    "data-reader-mode-button": modeButton,
+    style: { ...buttonStyle, ...styleExtra },
     onClick,
     children: label === "閉じる"
       ? createElement("svg", { width: 22, height: 22, viewBox: "0 0 24 24", "aria-hidden": "true", children: createElement("path", { d: "M6 6l12 12M18 6L6 18", fill: "none", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round" }) })
@@ -314,7 +318,7 @@ function renderDesktopRsvp(model: Extract<ReaderViewModel, { kind: "rsvp" }>, ha
     ? button("続きを読む", handlers.resumeFigure, { key: "resume", minWidth: "88px" })
     : iconButton(model.playing ? "一時停止" : "再生", handlers.togglePlayback, { fontSize: "20px", width: "56px", height: "56px", color: "rgba(245,245,247,0.66)" }, model.playing);
   return createElement("div", { "data-reader-stage": "true", className: "rsvp-view", style: { position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(980px, calc(100% - 48px))", height: "calc(100% - 48px)", display: "grid", gridTemplateColumns: model.headings.length > 0 ? "280px minmax(0, 1fr)" : "minmax(0, 1fr)", columnGap: model.headings.length > 0 ? "32px" : "0", alignItems: "stretch" }, children: [renderMinimap(model, handlers), createElement("main", { key: "main", style: { position: "relative", minWidth: "0", height: "100%" }, children: [
-    createElement("div", { key: "topbar", "data-reader-topbar": "true", style: { position: "absolute", top: "8px", left: "0", right: "0", height: "44px", zIndex: "2", pointerEvents: "none", display: "flex", justifyContent: "space-between" }, children: [button("文章で読む", handlers.switchToText, { pointerEvents: "auto", minWidth: "112px" }), button("閉じる", handlers.close, { pointerEvents: "auto", width: "44px", height: "44px", padding: "0", background: "transparent" })] }),
+    createElement("div", { key: "topbar", "data-reader-topbar": "true", style: { position: "absolute", top: "8px", left: "0", right: "0", height: "44px", zIndex: "2", pointerEvents: "none", display: "flex", justifyContent: "space-between" }, children: [button("文章で読む", handlers.switchToText, { pointerEvents: "auto", minWidth: "112px", "data-reader-mode-button": "true" }), button("閉じる", handlers.close, { pointerEvents: "auto", width: "44px", height: "44px", padding: "0", background: "transparent" })] }),
     createElement("div", { key: "previous", "data-reader-context-previous": "true", "aria-hidden": "true", style: { position: "absolute", left: "50%", bottom: "calc(50% + 82px)", transform: "translateX(-50%)", width: "min(100%, 640px)", maxWidth: "calc(100% - 32px)", color: "rgba(255,255,255,0.26)", fontSize: "clamp(16px, 1.5vw, 20px)", lineHeight: "1.4", textAlign: "center", opacity: "0.26", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: "2", whiteSpace: "nowrap", textOverflow: "ellipsis" }, children: model.previous }),
     current,
     createElement("div", { key: "next", "data-reader-context-next": "true", "aria-hidden": "true", style: { position: "absolute", left: "50%", top: "calc(50% + 82px)", transform: "translateX(-50%)", width: "min(100%, 640px)", maxWidth: "calc(100% - 32px)", color: "rgba(255,255,255,0.26)", fontSize: "clamp(16px, 1.5vw, 20px)", lineHeight: "1.4", textAlign: "center", opacity: "0.26", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: "2", whiteSpace: "nowrap", textOverflow: "ellipsis" }, children: model.next }),
@@ -326,7 +330,7 @@ function renderDesktopRsvp(model: Extract<ReaderViewModel, { kind: "rsvp" }>, ha
 function renderDesktopText(model: Extract<ReaderViewModel, { kind: "text" }>, handlers: ReaderViewHandlers): ReactElement {
   return createElement("div", { "data-reader-text-shell": "true", className: "text-view", style: { width: "min(900px, calc(100% - 32px))", height: "calc(100% - 32px)", margin: "16px auto", position: "relative", boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.10)", borderRadius: "24px", background: "rgba(24,24,24,0.92)", overflow: "hidden" }, children: [
     createElement("main", { key: "scroller", "data-reader-text-scroller": "true", className: "text-view", ref: (element: HTMLElement | null) => { if (element) handlers.textScroll(element); }, onScroll: (event: { currentTarget: EventTarget | null }) => { if (event.currentTarget) handlers.textPosition(event.currentTarget as HTMLElement); }, style: { width: "100%", height: "100%", overflowY: "auto", boxSizing: "border-box", padding: "72px clamp(24px, 7vw, 96px) 112px", scrollbarGutter: "stable" }, children: createElement("article", { className: "article", style: { maxWidth: "42rem", margin: "0 auto", color: "rgba(255,255,255,0.92)", fontSize: "clamp(17px, 1.7vw, 20px)", lineHeight: "1.9", letterSpacing: "0.01em" }, children: [model.title ? createElement("h1", { key: "title", className: "article-title", children: model.title }) : null, ...orderedTextChildren(model, handlers)] }) }),
-    createElement("div", { key: "topbar", "data-reader-topbar": "true", style: { position: "absolute", top: "8px", left: "16px", right: "16px", height: "44px", zIndex: "2", display: "flex", justifyContent: "space-between", pointerEvents: "none" }, children: [button("RSVPで読む", handlers.switchToRsvp, { pointerEvents: "auto" }), button("閉じる", handlers.close, { pointerEvents: "auto" })] }),
+    createElement("div", { key: "topbar", "data-reader-topbar": "true", style: { position: "absolute", top: "8px", left: "16px", right: "16px", height: "44px", zIndex: "2", display: "flex", justifyContent: "space-between", pointerEvents: "none" }, children: [button("RSVPで読む", handlers.switchToRsvp, { pointerEvents: "auto", "data-reader-mode-button": "true" }), button("閉じる", handlers.close, { pointerEvents: "auto" })] }),
     createElement("span", { key: "progress", "data-reader-progress": "true", style: { position: "absolute", right: "16px", bottom: "16px", zIndex: "3", color: "rgba(235,235,235,0.58)", fontSize: "13px", fontVariantNumeric: "tabular-nums", pointerEvents: "none" }, children: `${model.progress}%` }),
   ] });
 }

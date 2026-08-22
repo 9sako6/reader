@@ -55,6 +55,7 @@ class FakeElement {
 
   append(...children) {
     for (const child of children) {
+      if (child === this || child.contains?.(this)) throw new Error("invalid DOM hierarchy");
       if (child.parent) child.remove();
       child.parent = this;
       child.ownerDocument ||= this.ownerDocument;
@@ -68,6 +69,7 @@ class FakeElement {
   }
 
   insertBefore(child, before) {
+    if (child === this || child.contains?.(this)) throw new Error("invalid DOM hierarchy");
     if (child.parent) child.remove();
     child.parent = this;
     child.ownerDocument ||= this.ownerDocument;
