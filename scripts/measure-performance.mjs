@@ -17,7 +17,7 @@ const baseline = {
   source: "origin/main@8739934e58fb3bf865ffbd27b0b62488504c098f",
   runs: 10,
   margin: budgetMargin,
-  conditions: "Chromium headless, 390x844 viewport, same fixture and toolchain for baseline/candidate",
+  conditions: "Chromium headless, 390x844 viewport, same fixture and toolchain for baseline/candidate; retained-heap baseline uses unchanged origin/main production artifacts",
   fixtures: {
     "short-article": { tapToFirstUnitMs: 289.5, tapToFirstRenderMs: 289.9, tapToFirstFeedbackMs: 7.4, sessionInitMs: 9.8 },
     "long-article": { tapToFirstUnitMs: 834.2, tapToFirstRenderMs: 856.5, tapToFirstFeedbackMs: 27.1, sessionInitMs: 31.9 },
@@ -31,6 +31,16 @@ const baseline = {
     "100000": { tapToFirstUnitMs: 6649.4, tapToFirstRenderMs: 6715.5, tapToFirstFeedbackMs: 237.3, extractionMs: 189.9, sessionInitMs: 267.9 },
   },
   passive: { bootstrapDecodedBytes: 10210, longTaskCount: 0 },
+  retainedHeap: {
+    floorBytes: 65_536,
+    fixtures: {
+      "short-article": 412_072,
+      "long-article": 577_352,
+      "dominant-article": 577_292,
+      "defuddle-fallback": -46_028,
+    },
+    nodeBenchmarks: { "1000": 412_072, "10000": 577_208, "50000": 1_219_132, "100000": 2_019_216 },
+  },
 };
 const fixtures = [
   { name: "short-article", nodeCount: 1000, extraction: "dominant" },
@@ -118,7 +128,7 @@ function retainedHeapReport(runs) {
   };
 }
 
-function budgetReport(fixtureName, p90) {
+function budgetReport(fixtureName, p90, retainedHeap) {
   const fixtureBaseline = baseline.fixtures[fixtureName] || baseline.nodeBenchmarks[fixtureName];
   if (!fixtureBaseline) return { status: "not-applicable", metrics: {} };
   const metrics = Object.fromEntries(Object.entries(fixtureBaseline)
@@ -137,6 +147,23 @@ function budgetReport(fixtureName, p90) {
       regression: p90[metric] > budget,
     }];
     }));
+  const retainedBaseline = (baseline.nodeBenchmarks[fixtureName]
+    ? baseline.retainedHeap.nodeBenchmarks[fixtureName]
+    : baseline.retainedHeap.fixtures[fixtureName]);
+  if (retainedBaseline !== null && retainedBaseline !== undefined) {
+    const normalizedBaseline = Math.max(retainedBaseline, 0);
+    const budget = Math.max(normalizedBaseline, baseline.retainedHeap.floorBytes) * (1 + budgetMargin);
+    const observedP90 = retainedHeap.p90Bytes;
+    metrics.retainedHeapDeltaBytes = {
+      baselineP90: retainedBaseline,
+      normalizedBaselineForBudget: normalizedBaseline,
+      floorBytes: baseline.retainedHeap.floorBytes,
+      budget,
+      observedP90,
+      increaseRate: retainedBaseline === 0 ? null : (observedP90 - retainedBaseline) / Math.abs(retainedBaseline),
+      regression: observedP90 > budget,
+    };
+  }
   return {
     status: Object.values(metrics).some((metric) => metric.regression) ? "regression" : "within-budget",
     metrics,
@@ -298,7 +325,8 @@ try {
     const median = medianReport(runs);
     const p50 = percentileReport(runs, 0.5);
     const p90 = percentileReport(runs, 0.9);
-    fixtureReports[fixture.name] = { runs, median, p50, p90, retainedHeap: retainedHeapReport(runs), budget: budgetReport(fixture.name, p90) };
+    const retainedHeap = retainedHeapReport(runs);
+    fixtureReports[fixture.name] = { runs, median, p50, p90, retainedHeap, budget: budgetReport(fixture.name, p90, retainedHeap) };
   }
 
   const nodeReports = {};
@@ -310,7 +338,8 @@ try {
     const median = medianReport(runs);
     const p50 = percentileReport(runs, 0.5);
     const p90 = percentileReport(runs, 0.9);
-    nodeReports[String(nodeCount)] = { runs, median, p50, p90, retainedHeap: retainedHeapReport(runs), budget: budgetReport(String(nodeCount), p90) };
+    const retainedHeap = retainedHeapReport(runs);
+    nodeReports[String(nodeCount)] = { runs, median, p50, p90, retainedHeap, budget: budgetReport(String(nodeCount), p90, retainedHeap) };
   }
 
   const passiveWithBootstrap = await measurePassivePage(browser);
