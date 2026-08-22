@@ -11,6 +11,7 @@ const Engine = require("../../../.build/packages/engine/src/engine.js");
 function createSessionStub(commands, options: { init?: () => Promise<void>; ready?: () => boolean } = {}) {
   let nextId = 1;
   const handles = new Map();
+  let lastHandle = null;
   const initialState = () => ({
     phase: "idle",
     mode: "rsvp",
@@ -65,6 +66,7 @@ function createSessionStub(commands, options: { init?: () => Promise<void>; read
     create() {
       const handle = { id: nextId++, state: initialState(), destroyed: false, flow: null };
       handles.set(handle.id, handle);
+      lastHandle = handle;
       return handle;
     },
     dispatch(handle, command) {
@@ -140,6 +142,13 @@ function createSessionStub(commands, options: { init?: () => Promise<void>; read
         effects = playback === "playing"
           ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }]
           : [{ type: "cancelTimer" }];
+      } else if (command.type === "rebuildUnits" && previous.phase === "reading") {
+        handle.flow = { ...handle.flow, units: command.units };
+        const playback = previous.playback;
+        state = { ...previous, generation: previous.generation + 1 };
+        effects = playback === "playing"
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.units[state.unitIndex]?.durationMs || 1 }]
+          : [{ type: "cancelTimer" }];
       } else if (command.type === "visibilityHidden" && previous.phase === "preparing" && !previous.preparationHidden) {
         state = { ...previous, preparationHidden: true, generation: previous.generation + 1 };
       } else if (command.type === "visibilityHidden" && previous.phase === "reading") {
@@ -152,6 +161,9 @@ function createSessionStub(commands, options: { init?: () => Promise<void>; read
     destroy(handle) {
       handles.delete(handle.id);
       handle.destroyed = true;
+    },
+    snapshot() {
+      return lastHandle?.state;
     },
   };
   return api;
@@ -306,6 +318,7 @@ function createSafariReaderHarness(
   const sessionCommands = [];
   const globalListeners = new Map();
   const animationFrames = [];
+  const session = createSessionStub(sessionCommands, sessionOptions);
   const context: any = {
     document,
     location: { href: "https://example.com/articles/first" },
@@ -322,7 +335,7 @@ function createSafariReaderHarness(
       },
     },
     ReaderIcons: { create: () => new FakeElement("svg") },
-    ReaderSession: createSessionStub(sessionCommands, options),
+    ReaderSession: session,
     Defuddle: class {},
     innerWidth: 390,
     innerHeight: 844,
@@ -404,6 +417,9 @@ function createSafariReaderHarness(
     },
     listenerCount(type) {
       return (documentListeners.get(type) || []).length;
+    },
+    sessionState() {
+      return session.snapshot();
     },
   };
 }
@@ -498,6 +514,94 @@ test("Safari uses heading transitions when scheduling the first unit", async () 
   const [firstTimer] = [...harness.timers.values()];
   assert.equal(firstTimer?.delay, 612);
 });
+
+function safariReaderCursor(state) {
+  return {
+    phase: state?.phase,
+    flowIndex: state?.flowIndex,
+    sourceOffset: state?.sourceOffset,
+    currentKind: state?.currentKind,
+  };
+}
+
+const safariLateTimerScenarios = [
+  {
+    name: "pause",
+    operate(harness) {
+      findElement(
+        harness.documentElement,
+        (element) => element.attributes["aria-label"] === "一時停止",
+      ).dispatchEvent({ type: "click" });
+    },
+  },
+  {
+    name: "mode switch",
+    operate(harness) {
+      findElement(harness.documentElement, (element) => element.textContent === "文章で読む")
+        .dispatchEvent({ type: "click" });
+    },
+  },
+  {
+    name: "figure",
+    capture(harness) {
+      let lateCallback = null;
+      while (harness.sessionState()?.currentKind !== "figure") {
+        const entry = [...harness.timers.entries()][0];
+        assert.ok(entry, "figure is reached before playback timers end");
+        harness.timers.delete(entry[0]);
+        lateCallback = entry[1].callback;
+        lateCallback();
+      }
+      assert.ok(lateCallback);
+      return lateCallback;
+    },
+    operate(harness) {
+      assert.equal(harness.sessionState()?.currentKind, "figure");
+    },
+  },
+  {
+    name: "resize",
+    operate(harness) {
+      harness.context.innerWidth = 180;
+      harness.context.dispatchEvent({ type: "resize" });
+    },
+  },
+  {
+    name: "close",
+    operate(harness) {
+      harness.context.MobileViewer.close();
+    },
+  },
+  {
+    name: "hidden",
+    operate(harness) {
+      harness.setVisibilityState("hidden");
+    },
+  },
+];
+
+for (const scenario of safariLateTimerScenarios) {
+  test(`Safari reader ignores a late callback after ${scenario.name}`, async () => {
+    const harness = createSafariReaderHarness();
+    await harness.context.MobileViewer.open();
+
+    let lateCallback = scenario.capture?.(harness);
+    if (!lateCallback) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      lateCallback = entry[1].callback;
+    }
+    scenario.operate(harness);
+    const stateAfterOperation = harness.sessionState();
+    const cursorAfterOperation = safariReaderCursor(stateAfterOperation);
+
+    lateCallback();
+
+    assert.deepEqual(safariReaderCursor(harness.sessionState()), cursorAfterOperation);
+    assert.deepEqual(harness.sessionState(), stateAfterOperation);
+  });
+}
 
 test("Safari reader shows extraction progress before opening", async () => {
   const harness = createSafariReaderHarness();

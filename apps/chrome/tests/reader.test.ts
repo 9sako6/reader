@@ -163,6 +163,7 @@ function revealLoading(timers) {
 
 function createSessionStub(commands, options: { initFails?: boolean } = {}) {
   let nextId = 1;
+  let lastHandle = null;
   const initialState = () => ({
     phase: "idle",
     mode: "rsvp",
@@ -209,7 +210,8 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
     },
     ready: () => !options.initFails,
     create() {
-      return { id: nextId++, state: initialState(), destroyed: false, flow: null };
+      lastHandle = { id: nextId++, state: initialState(), destroyed: false, flow: null };
+      return lastHandle;
     },
     dispatch(handle, command) {
       if (handle.destroyed) throw new Error("destroyed");
@@ -278,6 +280,13 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
         effects = playback === "playing"
           ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }]
           : [{ type: "cancelTimer" }];
+      } else if (command.type === "rebuildUnits" && previous.phase === "reading") {
+        handle.flow = { ...handle.flow, units: command.units };
+        const playback = previous.playback;
+        state = { ...previous, generation: previous.generation + 1 };
+        effects = playback === "playing"
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.units[state.unitIndex]?.durationMs || 1 }]
+          : [{ type: "cancelTimer" }];
       } else if (command.type === "visibilityHidden" && previous.phase === "preparing" && !previous.preparationHidden) {
         state = { ...previous, preparationHidden: true, generation: previous.generation + 1 };
       } else if (command.type === "visibilityHidden" && previous.phase === "reading") {
@@ -289,6 +298,9 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
     },
     destroy(handle) {
       handle.destroyed = true;
+    },
+    snapshot() {
+      return lastHandle?.state;
     },
   };
 }
@@ -367,6 +379,7 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
   let reduceMotion = false;
   const runtimeMessages = [];
   const sessionCommands = [];
+  const session = createSessionStub(sessionCommands, options);
   const context: any = {
     chrome: {
       runtime: {
@@ -404,7 +417,7 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
     Engine,
     Extractor,
     ReaderIcons,
-    ReaderSession: createSessionStub(sessionCommands, options),
+    ReaderSession: session,
     Intl,
     console,
     scrollTo(position) {
@@ -463,6 +476,9 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
     },
     listenerCount(type) {
       return (documentListeners.get(type) || []).length;
+    },
+    sessionState() {
+      return session.snapshot();
     },
     scrollPosition() {
       return { left: currentScrollX, top: currentScrollY };
@@ -624,6 +640,175 @@ test("reader attaches visibility lifecycle only while a session is active", () =
   document.dispatchEvent({ type: "visibilitychange" });
   assert.equal(sessionCommands.length, commandCountAfterClose);
 });
+
+function readerCursor(state) {
+  return {
+    phase: state?.phase,
+    flowIndex: state?.flowIndex,
+    sourceOffset: state?.sourceOffset,
+    currentKind: state?.currentKind,
+  };
+}
+
+const chromeLateTimerScenarios = [
+  {
+    name: "pause",
+    createHarness: () => createOutlineReaderHarness(),
+    start(harness) {
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-pause" });
+      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-pause" });
+    },
+    capture(harness) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      return entry[1].callback;
+    },
+    operate(harness) {
+      const overlay = harness.document.getElementById("__rsvp-reader-root");
+      findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止")
+        .dispatchEvent({ type: "click" });
+    },
+  },
+  {
+    name: "mode switch",
+    createHarness: () => createOutlineReaderHarness(),
+    start(harness) {
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-mode" });
+      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-mode" });
+    },
+    capture(harness) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      return entry[1].callback;
+    },
+    operate(harness) {
+      const overlay = harness.document.getElementById("__rsvp-reader-root");
+      findElement(overlay, (element) => element.textContent === "文章で読む")
+        .dispatchEvent({ type: "click" });
+    },
+  },
+  {
+    name: "figure",
+    createHarness: () => createFigureReaderHarness(),
+    start(harness) {
+      const text = "結果を図1に示します。\n図1\n次の説明です。";
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-figure" });
+      harness.messageListener({
+        type: "START_RSVP",
+        text,
+        requestId: "late-figure",
+        readingContext: {
+          blocks: [
+            { text: "結果を図1に示します。", kind: "paragraph", level: null, start: 0, end: 11 },
+            { text: "次の説明です。", kind: "paragraph", level: null, start: 15, end: text.length },
+          ],
+          headings: [],
+          sectionTransitions: [],
+          initialHeadingIndex: -1,
+          figures: [{
+            src: "https://example.com/late.png",
+            alt: "遅い画像",
+            caption: "図1",
+            sourceOffset: 12,
+            sourceEnd: 14,
+          }],
+        },
+      });
+    },
+    capture(harness) {
+      let lateCallback = null;
+      while (harness.sessionState()?.currentKind !== "figure") {
+        const entry = [...harness.timers.entries()][0];
+        assert.ok(entry, "figure is reached before playback timers end");
+        harness.timers.delete(entry[0]);
+        lateCallback = entry[1].callback;
+        lateCallback();
+      }
+      assert.ok(lateCallback);
+      return lateCallback;
+    },
+    operate(harness) {
+      assert.equal(harness.sessionState()?.currentKind, "figure");
+    },
+  },
+  {
+    name: "resize",
+    createHarness: () => createOutlineReaderHarness(),
+    start(harness) {
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-resize" });
+      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-resize" });
+    },
+    capture(harness) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      return entry[1].callback;
+    },
+    operate(harness) {
+      const overlay = harness.document.getElementById("__rsvp-reader-root");
+      const display = findElement(
+        overlay,
+        (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+      );
+      display.clientWidth = 300;
+      harness.resizeDisplay();
+    },
+  },
+  {
+    name: "close",
+    createHarness: () => createOutlineReaderHarness(),
+    start(harness) {
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-close" });
+      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-close" });
+    },
+    capture(harness) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      return entry[1].callback;
+    },
+    operate(harness) {
+      const overlay = harness.document.getElementById("__rsvp-reader-root");
+      findElement(overlay, (element) => element.attributes["aria-label"] === "readerを閉じる")
+        .dispatchEvent({ type: "click" });
+    },
+  },
+  {
+    name: "hidden",
+    createHarness: () => createOutlineReaderHarness(),
+    start(harness) {
+      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-hidden" });
+      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-hidden" });
+    },
+    capture(harness) {
+      const entry = [...harness.timers.entries()][0];
+      assert.ok(entry);
+      harness.timers.delete(entry[0]);
+      return entry[1].callback;
+    },
+    operate(harness) {
+      harness.setVisibilityState("hidden");
+    },
+  },
+];
+
+for (const scenario of chromeLateTimerScenarios) {
+  test(`reader ignores a late callback after ${scenario.name}`, () => {
+    const harness = scenario.createHarness();
+    scenario.start(harness);
+    const lateCallback = scenario.capture(harness);
+    scenario.operate(harness);
+    const stateAfterOperation = harness.sessionState();
+    const cursorAfterOperation = readerCursor(stateAfterOperation);
+
+    lateCallback();
+
+    assert.deepEqual(readerCursor(harness.sessionState()), cursorAfterOperation);
+    assert.deepEqual(harness.sessionState(), stateAfterOperation);
+  });
+}
 
 test("reader renders content-not-found errors with retry and return actions", () => {
   const harness = createOutlineReaderHarness();
@@ -1729,6 +1914,7 @@ function createFigureReaderHarness() {
   let messageListener = null;
   let nextTimerId = 1;
   const timers = new Map();
+  const session = createSessionStub([]);
   const context: any = {
     chrome: {
       runtime: {
@@ -1752,7 +1938,7 @@ function createFigureReaderHarness() {
     Engine,
     Extractor,
     ReaderIcons,
-    ReaderSession: createSessionStub([]),
+    ReaderSession: session,
     Intl,
     console,
     setTimeout(callback, delay) {
@@ -1769,7 +1955,15 @@ function createFigureReaderHarness() {
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   vm.runInNewContext(source, context);
 
-  return { document, documentElement, messageListener, timers };
+  return {
+    document,
+    documentElement,
+    messageListener,
+    timers,
+    sessionState() {
+      return session.snapshot();
+    },
+  };
 }
 
 test("reader pauses on an article image and exposes its context", () => {
