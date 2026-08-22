@@ -635,6 +635,66 @@ test("Safari reader uses shared text and figure position markers", async () => {
   assert.equal(figurePanel.dataset.sourceStart, "27");
 });
 
+test("Safari reader preserves the text marker when an earlier text image changes layout", async () => {
+  const { context, documentElement, timers } = createSafariReaderHarness();
+  await context.MobileViewer.open();
+  let figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
+  while (!figurePanel) {
+    fireNextTimer(timers);
+    figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
+  }
+  const figureImage = findElement(figurePanel, (element) => element.tagName === "IMG");
+  figureImage.dispatchEvent({ type: "error" });
+  findElement(documentElement, (element) => element.attributes["aria-label"] === "続きを読む").dispatchEvent({ type: "click" });
+  findElement(documentElement, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+
+  const scroller = findElement(documentElement, (element) => element.className === "text-view");
+  const afterImageMarker = findElement(
+    scroller,
+    (element) => element.dataset.readerPositionKind === "text"
+      && Number(element.dataset.sourceStart) > 27,
+  );
+  const textFigure = findElement(scroller, (element) => element.className === "article-figure");
+  const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
+  assert.ok(scroller && afterImageMarker && textImage);
+  const initialScrollTop = scroller.scrollTop;
+  let adjustedScrollTop = initialScrollTop;
+  Object.defineProperty(scroller, "scrollTop", {
+    configurable: true,
+    get: () => adjustedScrollTop,
+    set: (value) => {
+      const delta = value - adjustedScrollTop;
+      adjustedScrollTop = value;
+      afterImageMarker.rect = {
+        top: afterImageMarker.rect.top - delta,
+        bottom: afterImageMarker.rect.bottom - delta,
+        left: 0,
+        right: 390,
+        width: 390,
+        height: 100,
+      };
+    },
+  });
+  afterImageMarker.rect = { top: 100, bottom: 200, left: 0, right: 390, width: 390, height: 100 };
+  textImage.dispatchEvent({ type: "load" });
+
+  assert.equal(afterImageMarker.getBoundingClientRect().top, 0);
+  assert.equal(scroller.scrollTop, initialScrollTop + 100);
+});
+
+test("Safari reader leaves scroll position unchanged for a text image below the marker", async () => {
+  const { context, documentElement } = createSafariReaderHarness();
+  await context.MobileViewer.open();
+  findElement(documentElement, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const scroller = findElement(documentElement, (element) => element.className === "text-view");
+  const textFigure = findElement(scroller, (element) => element.className === "article-figure");
+  const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
+  assert.ok(scroller && textImage);
+  const initialScrollTop = scroller.scrollTop;
+  textImage.dispatchEvent({ type: "load" });
+  assert.equal(scroller.scrollTop, initialScrollTop);
+});
+
 test("Safari reader ignores a clipped figure even when its center is readable", async () => {
   const { context, documentElement } = createSafariReaderHarness();
   await context.MobileViewer.open();

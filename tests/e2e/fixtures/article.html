@@ -51,16 +51,24 @@
           ? ""
           : "最初の短い文です。次の文は注視位置が動かないことを確かめます。画像の直前にある文です。";
         const caption = options.figureFirst ? "先頭画像" : "読書フローの図";
+        const configuredCaption = typeof options.caption === "string" ? options.caption : caption;
         const trailing = options.figureFirst
           ? "画像の直後から本文を続けます。"
           : "画像の後に続く文章です。最後まで操作できます。";
         const figureOffset = leading.length + (leading ? 1 : 0);
-        const trailingOffset = figureOffset + caption.length + 1;
-        const text = leading ? `${leading}\n${caption}\n${trailing}` : `${caption}\n${trailing}`;
+        const trailingOffset = figureOffset + configuredCaption.length + 1;
+        const text = leading ? `${leading}\n${configuredCaption}\n${trailing}` : `${configuredCaption}\n${trailing}`;
         const configuredImage = typeof options.image === "string" ? options.image : imageFixture;
+        const configuredAlt = typeof options.alt === "string" ? options.alt : "本文の読書フロー図";
         const imagePath = configuredImage === "default"
           ? "/apps/ios/tests/fixtures/reading-flow.svg"
           : `/image/${configuredImage}.png`;
+        const imageDimensions = {
+          vertical: { width: 240, height: 1200 },
+          horizontal: { width: 1200, height: 240 },
+          transparent: { width: 640, height: 480 },
+          huge: { width: 4000, height: 3000 },
+        }[configuredImage];
         return {
           text,
           readingContext: {
@@ -76,10 +84,11 @@
             initialHeadingIndex: 0,
             figures: [{
               src: new URL(imagePath, location.href).href,
-              alt: "本文の読書フロー図",
-              caption,
+              ...(imageDimensions || {}),
+              alt: configuredAlt,
+              caption: configuredCaption,
               sourceOffset: figureOffset,
-              sourceEnd: figureOffset + caption.length,
+              sourceEnd: figureOffset + configuredCaption.length,
             }],
           },
         };
@@ -145,7 +154,12 @@
             : options.text;
           const { text, readingContext } = typeof customText === "string"
             ? customFixtureContent(customText)
-            : fixtureContent({ image: options.image || imageFixture, figureFirst: options.figureFirst || figureFirst });
+            : fixtureContent({
+              image: options.image || imageFixture,
+              figureFirst: options.figureFirst || figureFirst,
+              alt: options.alt,
+              caption: options.caption,
+            });
           const requestId = typeof options.requestId === "string"
             ? options.requestId
             : `e2e-${requestSequence += 1}`;
@@ -212,6 +226,7 @@
         const extractFromPage = globalThis.Extractor.fromPage;
         const extract = () => extractFromPage(document, globalThis.Defuddle);
         let mobileErrorOnce = null;
+        let mobileFixtureOptions = {};
         const delayedFixtureContent = () => {
           if (mobileErrorOnce) {
             const reason = mobileErrorOnce;
@@ -219,13 +234,14 @@
             return Promise.reject(new Error(reason));
           }
           return defaultDelay === 0
-            ? fixtureContent({ image: imageFixture, figureFirst })
-            : new Promise((resolve) => setTimeout(() => resolve(fixtureContent({ image: imageFixture, figureFirst })), defaultDelay));
+            ? fixtureContent({ image: mobileFixtureOptions.image || imageFixture, figureFirst: mobileFixtureOptions.figureFirst || figureFirst, alt: mobileFixtureOptions.alt, caption: mobileFixtureOptions.caption })
+            : new Promise((resolve) => setTimeout(() => resolve(fixtureContent({ image: mobileFixtureOptions.image || imageFixture, figureFirst: mobileFixtureOptions.figureFirst || figureFirst, alt: mobileFixtureOptions.alt, caption: mobileFixtureOptions.caption })), defaultDelay));
         };
         globalThis.Extractor.fromPage = delayedFixtureContent;
         globalThis.Extractor.fromPageAsync = delayedFixtureContent;
         return {
           open: (options = {}) => {
+            mobileFixtureOptions = options;
             if (options.error === true) mobileErrorOnce = options.reason || "extraction_failed";
             return globalThis.MobileViewer.open();
           },

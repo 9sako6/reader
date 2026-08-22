@@ -14,6 +14,10 @@ const immediateImage = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+const transparentImage = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAbitOmMAAAAASUVORK5CYII=",
+  "base64",
+);
 
 createServer(async (request, response) => {
   const requestUrl = new URL(request.url || "/", "http://localhost");
@@ -26,14 +30,23 @@ createServer(async (request, response) => {
     response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" }).end("not an image");
     return;
   }
-  if (pathname === "/image/immediate.png" || pathname === "/image/delayed.png") {
+  if ([
+    "/image/immediate.png",
+    "/image/delayed.png",
+    "/image/vertical.png",
+    "/image/horizontal.png",
+    "/image/transparent.png",
+    "/image/huge.png",
+  ].includes(pathname)) {
     const configuredDelayValue = requestUrl.searchParams.get("delay");
     const configuredDelay = configuredDelayValue === null ? Number.NaN : Number(configuredDelayValue);
     const delay = Number.isFinite(configuredDelay) && configuredDelay >= 0
       ? configuredDelay
       : pathname.endsWith("delayed.png") ? 500 : 0;
     if (delay > 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
-    response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" }).end(immediateImage);
+    response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" }).end(
+      pathname === "/image/transparent.png" ? transparentImage : immediateImage,
+    );
     return;
   }
   const filePath = resolve(repositoryRoot, `.${pathname}`);

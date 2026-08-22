@@ -1815,6 +1815,107 @@ test("reader keeps the article image and veil in text mode", () => {
   assert.ok(findElement(textFigure, (element) => element.textContent === "図1 処理時間"));
 });
 
+test("reader preserves the text marker when an earlier text image changes layout", () => {
+  const { document, messageListener, timers } = createFigureReaderHarness();
+  const text = "前の文です。\n図1\n後の文です。";
+  const readingContext = {
+    blocks: [
+      { text: "前の文です。", kind: "paragraph", level: null, start: 0, end: 6 },
+      { text: "後の文です。", kind: "paragraph", level: null, start: 9, end: text.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [{
+      src: "https://example.com/delayed-text.png",
+      alt: "遅延画像",
+      caption: "図1",
+      sourceOffset: 7,
+      sourceEnd: 9,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-correction-before" });
+  messageListener({ type: "START_RSVP", text, requestId: "text-correction-before", readingContext });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  let figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  while (!figurePanel) {
+    const entry = [...timers.entries()][0];
+    assert.ok(entry);
+    timers.delete(entry[0]);
+    entry[1].callback();
+    figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  }
+  const figureImage = findElement(figurePanel, (element) => element.tagName === "IMG");
+  figureImage.dispatchEvent({ type: "error" });
+  findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む").dispatchEvent({ type: "click" });
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+
+  const scroller = findElement(overlay, (element) => element.attributes["data-reader-text-scroller"] === "true");
+  const afterImageMarker = findElement(
+    scroller,
+    (element) => element.dataset.readerPositionKind === "text"
+      && Number(element.dataset.sourceStart) > 7,
+  );
+  const textFigure = findElement(scroller, (element) => element.attributes["data-reader-text-figure"] === "true");
+  const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
+  assert.ok(scroller && afterImageMarker && textImage);
+  const initialScrollTop = scroller.scrollTop;
+  let adjustedScrollTop = initialScrollTop;
+  Object.defineProperty(scroller, "scrollTop", {
+    configurable: true,
+    get: () => adjustedScrollTop,
+    set: (value) => {
+      const delta = value - adjustedScrollTop;
+      adjustedScrollTop = value;
+      afterImageMarker.rect = {
+        top: afterImageMarker.rect.top - delta,
+        bottom: afterImageMarker.rect.bottom - delta,
+        left: 0,
+        right: 390,
+        width: 390,
+        height: 100,
+      };
+    },
+  });
+  afterImageMarker.rect = { top: 100, bottom: 200, left: 0, right: 390, width: 390, height: 100 };
+  textImage.dispatchEvent({ type: "load" });
+
+  assert.equal(afterImageMarker.getBoundingClientRect().top, 0);
+  assert.equal(scroller.scrollTop, initialScrollTop + 100);
+});
+
+test("reader leaves scroll position unchanged for a text image below the marker", () => {
+  const { document, messageListener } = createFigureReaderHarness();
+  const text = "前の文です。\n図1\n後の文です。";
+  const readingContext = {
+    blocks: [
+      { text: "前の文です。", kind: "paragraph", level: null, start: 0, end: 6 },
+      { text: "後の文です。", kind: "paragraph", level: null, start: 9, end: text.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [{
+      src: "https://example.com/later-text.png",
+      alt: "後方画像",
+      caption: "図1",
+      sourceOffset: 7,
+      sourceEnd: 9,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-correction-after" });
+  messageListener({ type: "START_RSVP", text, requestId: "text-correction-after", readingContext });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const scroller = findElement(overlay, (element) => element.attributes["data-reader-text-scroller"] === "true");
+  const textFigure = findElement(scroller, (element) => element.attributes["data-reader-text-figure"] === "true");
+  const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
+  assert.ok(scroller && textImage);
+  const initialScrollTop = scroller.scrollTop;
+  textImage.dispatchEvent({ type: "load" });
+  assert.equal(scroller.scrollTop, initialScrollTop);
+});
+
 test("reader removes closed content, ignores a saved timer, and reopens fresh content", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers } = harness;

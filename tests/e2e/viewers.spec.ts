@@ -57,8 +57,10 @@ async function scrollTextToEnd(marker: ReturnType<Page["getByRole"]>): Promise<v
 type ChromeOpenOptions = {
   delay?: number;
   text?: string;
-  image?: "immediate" | "delayed" | "missing" | "broken" | "default";
+  image?: "immediate" | "delayed" | "missing" | "broken" | "vertical" | "horizontal" | "transparent" | "huge" | "default";
   figureFirst?: boolean;
+  alt?: string;
+  caption?: string;
   requestId?: string;
   paused?: boolean;
   error?: boolean;
@@ -66,6 +68,10 @@ type ChromeOpenOptions = {
 };
 
 type MobileOpenOptions = {
+  image?: "immediate" | "delayed" | "missing" | "broken" | "vertical" | "horizontal" | "transparent" | "huge" | "default";
+  figureFirst?: boolean;
+  alt?: string;
+  caption?: string;
   error?: boolean;
   reason?: "content_not_found" | "unsupported_page" | "extraction_failed";
 };
@@ -793,6 +799,29 @@ test("Chrome viewer toggles a ready image surface with touch and keyboard", asyn
   await expect(surface).toHaveAttribute("aria-pressed", "true");
 });
 
+test("mobile viewer toggles a ready image surface with touch and keyboard", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&image=immediate&figure=first");
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  await openMobile(page, { image: "immediate", figureFirst: true });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const figure = dialog.getByRole("figure", { name: "本文画像" });
+  await expect(figure).toBeVisible();
+  const surface = figure.locator('[data-reader-image-surface]');
+  await expect(surface).toHaveAccessibleName("画像を明るく表示");
+  await expect(surface).toHaveAttribute("aria-pressed", "false");
+
+  await surface.click();
+  await expect(surface).toHaveAttribute("aria-pressed", "true");
+  await expect(surface).toHaveAccessibleName("画像を暗く表示");
+  await surface.focus();
+  await page.keyboard.press("Space");
+  await expect(surface).toHaveAttribute("aria-pressed", "false");
+  await page.keyboard.press("Enter");
+  await expect(surface).toHaveAttribute("aria-pressed", "true");
+});
+
 test("Chrome viewer shows delayed figure loading and resumes after a 404", async ({ page }) => {
   await page.goto("/tests/e2e/fixtures/article.html?viewer=chrome&image=delayed&figure=first");
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
@@ -804,6 +833,8 @@ test("Chrome viewer shows delayed figure loading and resumes after a 404", async
   await expect(figure.locator("[data-reader-figure-status]")).toBeVisible();
   await expect(figure.locator("[data-reader-figure-status]")).toHaveText(/画像を準備しています/u);
   await expect(figure.locator("[data-reader-figure-indicator]")).toBeVisible();
+  await expect(figure.locator("[data-reader-figure-description]")).toBeVisible();
+  await expect(figure.locator("[data-reader-figure-description]")).toHaveText("本文の読書フロー図。先頭画像");
   await expect(figure.locator("[data-reader-figure-status]")).toBeHidden({ timeout: 5_000 });
   await dialog.getByRole("button", { name: "続きを読む" }).click();
   await expect(dialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
@@ -819,6 +850,9 @@ for (const image of ["missing", "broken"] as const) {
     const figure = dialog.getByRole("figure", { name: "本文画像" });
     await expect(figure.locator("[data-reader-figure-status]")).toBeVisible();
     await expect(figure.locator("[data-reader-figure-status]")).toHaveText("画像を読み込めませんでした");
+    await expect(figure.locator("[data-reader-image-surface]")).toHaveCount(0);
+    await expect(figure.locator("[data-reader-figure-description]")).toBeVisible();
+    await expect(figure.getByRole("button", { name: /画像を/u })).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: "続きを読む" })).toBeVisible();
     await dialog.getByRole("button", { name: "続きを読む" }).click();
     await expect(dialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
@@ -836,6 +870,8 @@ test("mobile viewer shows delayed figure loading and resumes after a 404", async
   await expect(figure.locator("[data-reader-figure-status]")).toBeVisible();
   await expect(figure.locator("[data-reader-figure-status]")).toHaveText(/画像を準備しています/u);
   await expect(figure.locator("[data-reader-figure-indicator]")).toBeVisible();
+  await expect(figure.locator("[data-reader-figure-description]")).toBeVisible();
+  await expect(figure.locator("[data-reader-figure-description]")).toHaveText("本文の読書フロー図。先頭画像");
   await expect(figure.locator("[data-reader-figure-status]")).toBeHidden({ timeout: 5_000 });
 
   await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&image=missing&figure=first");
@@ -844,9 +880,139 @@ test("mobile viewer shows delayed figure loading and resumes after a 404", async
   const failedDialog = page.getByRole("dialog", { name: "reader" });
   const failedFigure = failedDialog.getByRole("figure", { name: "本文画像" });
   await expect(failedFigure.locator("[data-reader-figure-status]")).toHaveText("画像を読み込めませんでした");
+  await expect(failedFigure.locator("[data-reader-image-surface]")).toHaveCount(0);
+  await expect(failedFigure.locator("[data-reader-figure-description]")).toBeVisible();
+  await expect(failedFigure.getByRole("button", { name: /画像を/u })).toHaveCount(0);
   await failedDialog.getByRole("button", { name: "続きを読む" }).click();
   await expect(failedDialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
 });
+
+async function openFigureViewer(
+  page: Page,
+  viewer: "chrome" | "mobile",
+  options: ChromeOpenOptions & MobileOpenOptions,
+): Promise<void> {
+  await page.goto(`/tests/e2e/fixtures/article.html?viewer=${viewer}&image=delayed&figure=first`);
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  if (viewer === "chrome") await openChrome(page, { ...options, paused: true, figureFirst: true, image: "delayed" });
+  else await openMobile(page, { ...options, figureFirst: true, image: "delayed" });
+}
+
+const FIGURE_DESCRIPTION_CASES = [
+  { name: "alt only", alt: "遅延画像のalt説明", caption: "", description: "遅延画像のalt説明", captionCount: 0 },
+  { name: "caption only", alt: "", caption: "遅延画像のcaption説明", description: "遅延画像のcaption説明", captionCount: 1 },
+  { name: "neither alt nor caption", alt: "", caption: "", description: "本文画像", captionCount: 0 },
+] as const;
+
+for (const viewer of ["chrome", "mobile"] as const) {
+  for (const figureCase of FIGURE_DESCRIPTION_CASES) {
+    test(`${viewer} viewer describes a delayed figure with ${figureCase.name}`, async ({ page }) => {
+      await openFigureViewer(page, viewer, figureCase);
+      const dialog = page.getByRole("dialog", { name: "reader" });
+      const figure = dialog.getByRole("figure", { name: "本文画像" });
+      const status = figure.locator("[data-reader-figure-status]");
+      const description = figure.locator("[data-reader-figure-description]");
+      await expect(status).toBeVisible();
+      await expect(figure.locator("[data-reader-figure-indicator]")).toBeVisible();
+      await expect(description).toBeVisible();
+      await expect(description).toHaveText(figureCase.description);
+      await expect(figure.locator("figcaption")).toHaveCount(figureCase.captionCount);
+
+      await expect(status).toBeHidden({ timeout: 5_000 });
+      await expect(description).toBeHidden();
+    });
+  }
+}
+
+for (const viewer of ["chrome", "mobile"] as const) {
+  test(`${viewer} viewer ignores a delayed figure completion after close`, async ({ page }) => {
+    await openFigureViewer(page, viewer, {});
+    const dialog = page.getByRole("dialog", { name: "reader" });
+    await expect(dialog.getByRole("figure", { name: "本文画像" })).toBeVisible();
+    await dialog.getByRole("button", { name: "readerを閉じる" }).click();
+    await expect(dialog).toBeHidden();
+    await page.waitForTimeout(750);
+    await expect(page.locator("[data-reader-figure-status]")).toHaveCount(0);
+  });
+}
+
+for (const viewer of ["chrome", "mobile"] as const) {
+  test(`${viewer} viewer treats a complete image as ready when decode rejects`, async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(HTMLImageElement.prototype, "decode", {
+        configurable: true,
+        value: () => Promise.reject(new Error("decode rejected")),
+      });
+    });
+    await page.goto(`/tests/e2e/fixtures/article.html?viewer=${viewer}&image=immediate&figure=first`);
+    await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+    if (viewer === "chrome") await openChrome(page, { paused: true, figureFirst: true, image: "immediate" });
+    else await openMobile(page, { figureFirst: true, image: "immediate" });
+
+    const figure = page.getByRole("dialog", { name: "reader" }).getByRole("figure", { name: "本文画像" });
+    await expect(figure.locator("[data-reader-image-surface]")).toBeVisible();
+    await expect(figure.locator("[data-reader-figure-status]")).toBeHidden();
+  });
+}
+
+for (const viewer of ["chrome", "mobile"] as const) {
+  test(`${viewer} viewer fails an invalid image when decode rejects`, async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(HTMLImageElement.prototype, "decode", {
+        configurable: true,
+        value: () => Promise.reject(new Error("decode rejected")),
+      });
+    });
+    await page.goto(`/tests/e2e/fixtures/article.html?viewer=${viewer}&image=broken&figure=first`);
+    await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+    if (viewer === "chrome") await openChrome(page, { paused: true, figureFirst: true, image: "broken" });
+    else await openMobile(page, { figureFirst: true, image: "broken" });
+
+    const figure = page.getByRole("dialog", { name: "reader" }).getByRole("figure", { name: "本文画像" });
+    await expect(figure.locator("[data-reader-figure-status]")).toHaveText("画像を読み込めませんでした");
+    await expect(figure.locator("[data-reader-image-surface]")).toHaveCount(0);
+  });
+}
+
+for (const viewer of ["chrome", "mobile"] as const) {
+  for (const image of ["vertical", "horizontal", "transparent", "huge"] as const) {
+    test(`${viewer} viewer keeps a ${image} figure within safe controls`, async ({ page }) => {
+      const viewport = viewer === "chrome" ? { width: 1280, height: 800 } : { width: 390, height: 844 };
+      await page.setViewportSize(viewport);
+      await page.goto(`/tests/e2e/fixtures/article.html?viewer=${viewer}&image=${image}&figure=first`);
+      await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+      if (viewer === "chrome") await openChrome(page, { paused: true, figureFirst: true, image });
+      else await openMobile(page, { figureFirst: true, image });
+
+      const dialog = page.getByRole("dialog", { name: "reader" });
+      const figure = dialog.getByRole("figure", { name: "本文画像" });
+      const surface = figure.locator("[data-reader-image-surface]");
+      await expect(surface).toBeVisible();
+      const geometry = await surface.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        return { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
+      });
+      const dialogBox = await dialog.boundingBox();
+      expect(dialogBox).not.toBeNull();
+      expect(geometry.left).toBeGreaterThanOrEqual(dialogBox!.x);
+      expect(geometry.right).toBeLessThanOrEqual(dialogBox!.x + dialogBox!.width);
+      expect(geometry.top).toBeGreaterThanOrEqual(dialogBox!.y);
+      expect(geometry.bottom).toBeLessThanOrEqual(dialogBox!.y + dialogBox!.height);
+      for (const control of [
+        dialog.getByRole("button", { name: "readerを閉じる" }),
+        dialog.getByRole("button", { name: /^(再生|一時停止)$/ }),
+      ]) {
+        if (await control.count() === 0) continue;
+        const controlBox = await control.first().boundingBox();
+        if (!controlBox) continue;
+        expect(geometry.right <= controlBox.x
+          || geometry.left >= controlBox.x + controlBox.width
+          || geometry.bottom <= controlBox.y
+          || geometry.top >= controlBox.y + controlBox.height).toBe(true);
+      }
+    });
+  }
+}
 
 test("Chrome viewer traps focus and restores the launch button after Escape", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
