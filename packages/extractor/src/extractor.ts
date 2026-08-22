@@ -19,6 +19,18 @@
     ranges: Map<Node, IndexedNodeRange>;
   }
 
+  interface ParsedPageResult {
+    content: string;
+    title?: string;
+  }
+
+  interface CanonicalPageData {
+    contentRoot: DocumentFragment | HTMLElement;
+    indexedSource: IndexedSource;
+    text: string;
+    leadingTrim: number;
+  }
+
   function fromText(text: string, readingContext: Partial<ReadingContext> | null = {}): ReaderContent | null {
     const value = typeof text === "string" ? text.trim() : "";
     if (!value) return null;
@@ -30,8 +42,60 @@
     DefuddleClass: typeof import("defuddle").default = globalThis.Defuddle,
   ): ReaderContent | null {
     if (typeof DefuddleClass !== "function" || typeof sourceDocument.createRange !== "function") return null;
+    const result = extractPageResult(sourceDocument, DefuddleClass);
+    if (!result) return null;
+    const canonical = createCanonicalPageData(sourceDocument, result);
+    return canonical ? buildReaderContent(sourceDocument, result, canonical) : null;
+  }
 
-    const result = extractDominantArticle(sourceDocument) || new DefuddleClass(sourceDocument, {
+  async function fromPageAsync(
+    sourceDocument: Document = document,
+    DefuddleClass: typeof import("defuddle").default = globalThis.Defuddle,
+    options: ReaderExtractionOptions = {},
+  ): Promise<ReaderContent | null> {
+    if (typeof DefuddleClass !== "function" || typeof sourceDocument.createRange !== "function") return null;
+
+    const dominantArticle = await runExtractionPhase(
+      "dominant_article",
+      options,
+      () => extractDominantArticle(sourceDocument),
+    );
+    const result = dominantArticle || await runExtractionPhase(
+      "defuddle_parse",
+      options,
+      () => parseWithDefuddle(sourceDocument, DefuddleClass),
+    );
+    if (dominantArticle) {
+      await runExtractionPhase("defuddle_parse", options, () => dominantArticle);
+    }
+    if (!result || typeof result.content !== "string" || !result.content.trim()) return null;
+
+    const canonical = await runExtractionPhase(
+      "canonical_text",
+      options,
+      () => createCanonicalPageData(sourceDocument, result),
+    );
+    if (!canonical) return null;
+    return runExtractionPhase(
+      "blocks_figures",
+      options,
+      () => buildReaderContent(sourceDocument, result, canonical),
+    );
+  }
+
+  function extractPageResult(
+    sourceDocument: Document,
+    DefuddleClass: typeof import("defuddle").default,
+  ): ParsedPageResult | null {
+    const dominantArticle = extractDominantArticle(sourceDocument);
+    return dominantArticle || parseWithDefuddle(sourceDocument, DefuddleClass);
+  }
+
+  function parseWithDefuddle(
+    sourceDocument: Document,
+    DefuddleClass: typeof import("defuddle").default,
+  ): ParsedPageResult | null {
+    const result = new DefuddleClass(sourceDocument, {
       markdown: false,
       useAsync: false,
       removeExactSelectors: true,
@@ -42,8 +106,14 @@
       standardize: true,
       includeReplies: false,
     }).parse();
-    if (typeof result?.content !== "string" || !result.content.trim()) return null;
+    return result && typeof result === "object" ? result as ParsedPageResult : null;
+  }
 
+  function createCanonicalPageData(
+    sourceDocument: Document,
+    result: ParsedPageResult,
+  ): CanonicalPageData | null {
+    if (typeof result.content !== "string" || !result.content.trim()) return null;
     const stagingRoot = sourceDocument.createElement("template");
     const usesTemplate = "content" in stagingRoot;
     const contentRoot = usesTemplate
@@ -65,7 +135,15 @@
     const trailingTrim = rawText.length - rawText.trimEnd().length;
     const text = rawText.slice(leadingTrim, rawText.length - trailingTrim);
     if (!text) return null;
+    return { contentRoot, indexedSource, text, leadingTrim };
+  }
 
+  function buildReaderContent(
+    sourceDocument: Document,
+    result: ParsedPageResult,
+    canonical: CanonicalPageData,
+  ): ReaderContent {
+    const { contentRoot, indexedSource, text, leadingTrim } = canonical;
     const headingEntries = [...contentRoot.querySelectorAll("h1, h2, h3, h4, h5, h6")]
       .map((element) => {
         const indexedRange = indexedSource.ranges.get(element);
@@ -110,6 +188,45 @@
         figures: extractFigures(sourceDocument, contentRoot, text, leadingTrim, indexedSource),
       }),
     };
+  }
+
+  async function runExtractionPhase<T>(
+    phase: ReaderExtractionPhase,
+    options: ReaderExtractionOptions,
+    work: () => T,
+  ): Promise<T> {
+    throwIfAborted(options.signal);
+    await yieldToAnimationFrame(options.signal);
+    const startedAt = phaseNow();
+    const result = work();
+    throwIfAborted(options.signal);
+    await yieldToAnimationFrame(options.signal);
+    options.onPhase?.(phase);
+    globalThis.console?.debug?.("reader preparation phase", {
+      phase,
+      durationMs: Math.max(0, Math.round(phaseNow() - startedAt)),
+    });
+    return result;
+  }
+
+  function throwIfAborted(signal?: AbortSignal): void {
+    if (!signal?.aborted) return;
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  function yieldToAnimationFrame(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    return new Promise<void>((resolve) => {
+      if (typeof globalThis.requestAnimationFrame === "function") {
+        globalThis.requestAnimationFrame(() => resolve());
+      } else Promise.resolve().then(resolve);
+    }).then(() => {
+      throwIfAborted(signal);
+    });
+  }
+
+  function phaseNow(): number {
+    return typeof globalThis.performance?.now === "function" ? globalThis.performance.now() : Date.now();
   }
 
   function extractDominantArticle(sourceDocument: Document): { content: string; title: string } | null {
@@ -349,5 +466,5 @@
     return Math.min(textLength, figureOffset + caption.length);
   }
 
-  return { fromPage, fromText };
+  return { fromPage, fromPageAsync, fromText };
 });

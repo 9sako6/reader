@@ -190,7 +190,10 @@ function createOutlineReaderHarness() {
   let nextTimerId = 1;
   const timers = new Map();
   let currentTime = 0;
+  let currentScrollX = 0;
+  let currentScrollY = 0;
   let reduceMotion = false;
+  const runtimeMessages = [];
   const context: any = {
     chrome: {
       runtime: {
@@ -198,6 +201,10 @@ function createOutlineReaderHarness() {
           addListener(listener) {
             messageListener = listener;
           },
+        },
+        sendMessage(message) {
+          runtimeMessages.push(message);
+          return Promise.resolve();
         },
       },
     },
@@ -226,6 +233,10 @@ function createOutlineReaderHarness() {
     ReaderIcons,
     Intl,
     console,
+    scrollTo(position) {
+      currentScrollX = position.left;
+      currentScrollY = position.top;
+    },
     ResizeObserver: class {
       constructor(callback) {
         resizeCallback = callback;
@@ -245,6 +256,10 @@ function createOutlineReaderHarness() {
       timers.delete(id);
     },
   };
+  Object.defineProperties(context, {
+    scrollX: { get: () => currentScrollX },
+    scrollY: { get: () => currentScrollY },
+  });
   context.globalThis = context;
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   vm.runInNewContext(source, context);
@@ -264,6 +279,14 @@ function createOutlineReaderHarness() {
     advanceTime(milliseconds) {
       currentTime += milliseconds;
     },
+    setScrollPosition(left, top) {
+      currentScrollX = left;
+      currentScrollY = top;
+    },
+    scrollPosition() {
+      return { left: currentScrollX, top: currentScrollY };
+    },
+    runtimeMessages,
   };
 }
 
@@ -322,7 +345,7 @@ test("reader reveals the bar and uses a cover transition when preparation finish
   const indicator = findElement(overlay, (element) => element.attributes["data-reader-loading-indicator"] === "true");
   const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
   assert.ok(bar);
-  assert.ok(indicator.animations.some(({ keyframes }) => keyframes.at(-1)?.transform === "translateX(0) scaleX(1)"));
+  assert.equal(indicator.animations.some(({ keyframes }) => keyframes.at(-1)?.transform === "translateX(0) scaleX(1)"), false);
   assert.equal(stage.animations.at(-1).options.duration, 220);
 });
 
@@ -338,6 +361,162 @@ test("reader reveals the bar and uses a cover transition when preparation finish
   assert.ok(findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true"));
   const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
   assert.equal(stage.animations.at(-1).options.duration, 220);
+});
+
+test("reader keeps the 100ms loading state to an indeterminate bar", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener, timers } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "bar-only-request" });
+  revealLoading(timers);
+  const overlay = document.getElementById("__rsvp-reader-root");
+
+  assert.ok(findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true"));
+  assert.equal(findElement(overlay, (element) => element.attributes["data-reader-loading-label"] === "true"), null);
+  assert.equal(findElement(overlay, (element) => element.textContent === "中止"), null);
+});
+
+test("reader adds slow preparation status and a cancel action at 400ms", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener, timers } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "slow-request" });
+  revealLoading(timers);
+  const slowTimer = [...timers.entries()].find(([, timer]) => timer.delay === 400);
+  assert.ok(slowTimer);
+  timers.delete(slowTimer[0]);
+  slowTimer[1].callback();
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  assert.equal(
+    findElement(overlay, (element) => element.attributes["data-reader-loading-label"] === "true").textContent,
+    "文章を準備しています",
+  );
+  assert.ok(findElement(overlay, (element) => element.textContent === "中止"));
+});
+
+test("reader cancel closes loading and sends the request id to the service worker", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener, timers, runtimeMessages } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "cancel-request" });
+  revealLoading(timers);
+  const slowTimer = [...timers.entries()].find(([, timer]) => timer.delay === 400);
+  timers.delete(slowTimer[0]);
+  slowTimer[1].callback();
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "中止").dispatchEvent({ type: "click" });
+
+  assert.equal(runtimeMessages.length, 1);
+  assert.equal(runtimeMessages[0].type, "CANCEL_RSVP");
+  assert.equal(runtimeMessages[0].requestId, "cancel-request");
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+});
+
+test("reader renders content-not-found errors with retry and return actions", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "error-request" });
+  messageListener({ type: "RSVP_ERROR", requestId: "error-request", reason: "content_not_found" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(findElement(overlay, (element) => element.textContent === "文章を読み取れませんでした"));
+  const retry = findElement(overlay, (element) => element.textContent === "やり直す");
+  const returnButton = findElement(overlay, (element) => element.textContent === "元に戻る");
+  assert.ok(retry);
+  assert.ok(returnButton);
+});
+
+test("reader renders unsupported-page errors with retry and return actions", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "unsupported-request" });
+  messageListener({ type: "RSVP_ERROR", requestId: "unsupported-request", reason: "unsupported_page" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(findElement(overlay, (element) => element.textContent === "このページはまだ開けません"));
+  assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
+  assert.ok(findElement(overlay, (element) => element.textContent === "元に戻る"));
+});
+
+test("reader renders extraction-failed errors with retry and return actions", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "extraction-request" });
+  messageListener({ type: "RSVP_ERROR", requestId: "extraction-request", reason: "extraction_failed" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(findElement(overlay, (element) => element.textContent === "文章を準備できませんでした"));
+  assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
+  assert.ok(findElement(overlay, (element) => element.textContent === "元に戻る"));
+});
+
+test("reader retries a classified error without replacing its launch focus", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener, runtimeMessages } = harness;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(launchButton);
+  launchButton.focus();
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "error-request" });
+  messageListener({ type: "RSVP_ERROR", requestId: "error-request", reason: "unsupported_page" });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "やり直す").dispatchEvent({ type: "click" });
+
+  assert.equal(runtimeMessages[0].type, "RETRY_RSVP");
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "retry-request" });
+  messageListener({ type: "START_RSVP", text: "再試行後の本文です。", requestId: "retry-request" });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+
+  assert.equal(document.activeElement, launchButton);
+});
+
+test("reader preserves launch focus and source scroll when request B replaces preparing request A", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener, timers } = harness;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(launchButton);
+  launchButton.focus();
+  harness.setScrollPosition(12, 320);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "preparing-request-a" });
+  revealLoading(timers);
+  const slowTimer = [...timers.entries()].find(([, timer]) => timer.delay === 400);
+  assert.ok(slowTimer);
+  timers.delete(slowTimer[0]);
+  slowTimer[1].callback();
+  assert.equal(document.activeElement.textContent, "中止");
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "preparing-request-b" });
+  messageListener({ type: "START_RSVP", text: "Bの本文です。", requestId: "preparing-request-b" });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+
+  assert.equal(document.activeElement, launchButton);
+  assert.deepEqual(harness.scrollPosition(), { left: 12, top: 320 });
+});
+
+test("reader preserves launch focus and source scroll when ready request A is reopened", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener } = harness;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(launchButton);
+  launchButton.focus();
+  harness.setScrollPosition(24, 640);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ready-request-a" });
+  messageListener({ type: "START_RSVP", text: "Aの本文です。", requestId: "ready-request-a" });
+  assert.equal(document.activeElement.attributes["aria-label"], "readerを閉じる");
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ready-request-b" });
+  messageListener({ type: "START_RSVP", text: "Bの本文です。", requestId: "ready-request-b" });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+
+  assert.equal(document.activeElement, launchButton);
+  assert.deepEqual(harness.scrollPosition(), { left: 24, top: 640 });
 });
 
 test("reader shows the article outline beside the focal point", () => {
@@ -538,7 +717,7 @@ test("reader keeps a fast error dialog focused and restores inert state after Es
   messageListener({ type: "RSVP_ERROR", requestId: "fast-error-request" });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  const closeButton = findElement(overlay, (element) => element.textContent === "閉じる");
+  const closeButton = findElement(overlay, (element) => element.textContent === "元に戻る");
   assert.equal(document.activeElement, closeButton);
   assert.equal(body.inert, true);
   assert.equal(head.inert, true);
@@ -553,7 +732,7 @@ test("reader keeps a fast error dialog focused and restores inert state after Es
       shiftTabPrevented = true;
     },
   });
-  assert.equal(shiftTabPrevented, true);
+  assert.equal(shiftTabPrevented, false);
   assert.equal(document.activeElement, closeButton);
 
   let tabPrevented = false;
@@ -566,7 +745,7 @@ test("reader keeps a fast error dialog focused and restores inert state after Es
     },
   });
   assert.equal(tabPrevented, true);
-  assert.equal(document.activeElement, closeButton);
+  assert.equal(document.activeElement.textContent, "やり直す");
 
   document.dispatchEvent({
     type: "keydown",

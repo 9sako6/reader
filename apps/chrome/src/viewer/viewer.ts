@@ -3,7 +3,7 @@
   type ReaderMessage =
     | { type: "SHOW_RSVP_LOADING"; requestId: string }
     | { type: "START_RSVP"; requestId: string; text: string; readingContext?: Partial<ReadingContext> | null }
-    | { type: "RSVP_ERROR"; requestId: string };
+    | { type: "RSVP_ERROR"; requestId: string; reason?: PreparationFailure };
 
   if (globalThis.__rsvpReaderInstalled) return;
   globalThis.__rsvpReaderInstalled = true;
@@ -11,6 +11,7 @@
   const ROOT_ID = "__rsvp-reader-root";
   const DISPLAY_FONT_SIZE = "clamp(36px, 4.5vw, 64px)";
   const LOADER_REVEAL_DELAY_MS = 100;
+  const SLOW_PREPARATION_DELAY_MS = 400;
   const LOADING_COVER_TRANSITION_MS = 220;
 
   let baseUnits: ReaderUnit[] = [];
@@ -25,10 +26,13 @@
   let rootStyle: HTMLStyleElement | null = null;
   let loadingLayer: HTMLDivElement | null = null;
   let loadingRevealTimerId: number | null = null;
+  let loadingSlowTimerId: number | null = null;
   let loadingRevealRequestId: string | null = null;
   let loadingStartedAt: number | null = null;
   let loadingIndicator: HTMLDivElement | null = null;
   let loadingIndicatorAnimation: Animation | null = null;
+  let loadingStatus: HTMLDivElement | null = null;
+  let loadingCancelButton: HTMLButtonElement | null = null;
   let previousContext: HTMLDivElement | null = null;
   let display: HTMLDivElement | null = null;
   let nextContext: HTMLDivElement | null = null;
@@ -55,9 +59,11 @@
   let textRestoreScrollTop: number | null = null;
   let textRestoring = false;
   let launchFocus: HTMLElement | null = null;
+  let sourceScrollPosition: { left: number; top: number } | null = null;
   let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
   let backgroundInert = false;
   let keydownListenerAttached = false;
+  let activePreparation: PreparationState = { kind: "idle" };
 
   function isReaderMessage(value: unknown): value is ReaderMessage {
     if (typeof value !== "object" || value === null || !("type" in value)) return false;
@@ -80,17 +86,26 @@
     }
 
     if (message?.type === "RSVP_ERROR") {
-      showError(message.requestId);
+      showError(message.requestId, message.reason);
     }
   });
 
   function showLoading(requestId: string): void {
-    const activeElement = document.activeElement;
-    close();
-    launchFocus = activeElement && typeof (activeElement as HTMLElement).focus === "function"
-      ? activeElement as HTMLElement
+    const existingLaunchFocus = launchFocus
+      && launchFocus.isConnected !== false
+      ? launchFocus
       : null;
+    const activeElement = document.activeElement;
+    sourceScrollPosition = {
+      left: globalThis.scrollX || 0,
+      top: globalThis.scrollY || 0,
+    };
+    close(false, true);
+    launchFocus = existingLaunchFocus || (activeElement && typeof (activeElement as HTMLElement).focus === "function"
+      ? activeElement as HTMLElement
+      : null);
     activeRequestId = requestId;
+    activePreparation = { kind: "preparing", requestId, startedAt: Date.now() };
     loadingStartedAt = Date.now();
     loadingRevealRequestId = requestId;
     loadingRevealTimerId = globalThis.setTimeout(() => {
@@ -99,6 +114,12 @@
       loadingRevealRequestId = null;
       createLoadingOverlay();
     }, LOADER_REVEAL_DELAY_MS);
+    loadingSlowTimerId = globalThis.setTimeout(() => {
+      loadingSlowTimerId = null;
+      if (requestId !== activeRequestId || activePreparation.kind !== "preparing") return;
+      if (!loadingLayer) createLoadingOverlay();
+      showSlowLoading();
+    }, SLOW_PREPARATION_DELAY_MS);
   }
 
   function start(
@@ -109,10 +130,14 @@
     if (requestId !== activeRequestId) return;
 
     const loadingWasVisible = loadingLayer !== null;
-    if (!loadingWasVisible && loadingStartedAt !== null && Date.now() - loadingStartedAt >= LOADER_REVEAL_DELAY_MS) {
+    const elapsed = loadingStartedAt === null ? 0 : Date.now() - loadingStartedAt;
+    if (!loadingWasVisible && elapsed >= LOADER_REVEAL_DELAY_MS) {
       cancelLoadingReveal();
       createLoadingOverlay();
-    } else cancelLoadingReveal();
+      if (elapsed >= SLOW_PREPARATION_DELAY_MS) showSlowLoading();
+    } else {
+      cancelLoadingReveal();
+    }
 
     stopTimer();
 
@@ -121,7 +146,7 @@
       suppliedReadingContext || collectReadingContext(text),
     );
     if (!content) {
-      close();
+      showError(requestId, "content_not_found");
       return;
     }
     const readingContext = content.readingContext;
@@ -148,7 +173,7 @@
         && unit.end <= figure.sourceEnd
       )));
     if (baseUnits.length === 0) {
-      close();
+      showError(requestId, "content_not_found");
       return;
     }
 
@@ -162,6 +187,7 @@
       : { kind: "text", sourceOffset: 0 };
     createOverlay();
     rebuildUnitsForViewport();
+    activePreparation = { kind: "ready", requestId };
     if (!renderCurrentFlowItem()) play();
   }
 
@@ -188,6 +214,7 @@
       borderRadius: "999px",
       overflow: "hidden",
       background: "rgba(255,255,255,0.18)",
+      pointerEvents: "none",
     });
 
     const indicator = document.createElement("div");
@@ -211,20 +238,45 @@
     } else indicator.style.transform = "translateX(0) scaleX(.35)";
     loadingIndicator = indicator;
     track.append(indicator);
+    loadingLayer.append(track);
+    root.append(loadingLayer);
+    if (rootHost) document.documentElement.append(rootHost);
+    attachKeydownListener();
+  }
 
-    const closeButton = createButton("閉じる", close);
-    Object.assign(closeButton.style, {
+  function showSlowLoading(): void {
+    if (!loadingLayer || loadingStatus || loadingCancelButton) return;
+    loadingLayer.style.pointerEvents = "auto";
+    loadingStatus = document.createElement("div");
+    loadingStatus.setAttribute("data-reader-loading-label", "true");
+    loadingStatus.setAttribute("role", "status");
+    loadingStatus.textContent = "文章を準備しています";
+    Object.assign(loadingStatus.style, {
+      position: "absolute",
+      left: "50%",
+      top: "calc(50% + 24px)",
+      transform: "translateX(-50%)",
+      color: "rgba(255,255,255,0.82)",
+      fontSize: "14px",
+      whiteSpace: "nowrap",
+    });
+
+    loadingCancelButton = createButton("中止", cancelLoading);
+    Object.assign(loadingCancelButton.style, {
       position: "absolute",
       left: "50%",
       bottom: "32px",
       transform: "translateX(-50%)",
     });
-
-    loadingLayer.append(track, closeButton);
-    root.append(loadingLayer);
-    if (rootHost) document.documentElement.append(rootHost);
-    attachKeydownListener();
-    focusAfterPaint(closeButton);
+    const closeButton = createButton("閉じる", close);
+    Object.assign(closeButton.style, {
+      position: "absolute",
+      right: "24px",
+      bottom: "24px",
+      pointerEvents: "auto",
+    });
+    loadingLayer.append(loadingStatus, loadingCancelButton, closeButton);
+    focusAfterPaint(loadingCancelButton);
   }
 
   function cancelLoadingReveal(): void {
@@ -233,15 +285,30 @@
       globalThis.clearTimeout(loadingRevealTimerId);
       loadingRevealTimerId = null;
     }
+    if (loadingSlowTimerId !== null) {
+      globalThis.clearTimeout(loadingSlowTimerId);
+      loadingSlowTimerId = null;
+    }
   }
 
-  function showError(requestId: string): void {
+  function cancelLoading(): void {
+    const requestId = activeRequestId;
+    if (!requestId) return;
+    sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
+    activePreparation = { kind: "cancelled", requestId };
+    close(false);
+  }
+
+  function showError(requestId: string, reason: PreparationFailure = "extraction_failed"): void {
     if (requestId !== activeRequestId) return;
     cancelLoadingReveal();
     loadingIndicatorAnimation?.cancel?.();
     loadingIndicatorAnimation = null;
     loadingIndicator = null;
+    loadingStatus = null;
+    loadingCancelButton = null;
     loadingLayer = null;
+    activePreparation = { kind: "failed", requestId, reason };
     if (!root) {
       root = createRoot();
       if (rootHost) document.documentElement.append(rootHost);
@@ -249,7 +316,7 @@
     root.replaceChildren(...(rootStyle ? [rootStyle] : []));
 
     const status = document.createElement("div");
-    status.textContent = "文章を読み込めませんでした";
+    status.textContent = preparationFailureLabel(reason);
     Object.assign(status.style, {
       position: "absolute",
       left: "50%",
@@ -259,16 +326,49 @@
       fontWeight: "600",
     });
 
-    const closeButton = createButton("閉じる", close);
+    const closeButton = createButton("元に戻る", close);
     Object.assign(closeButton.style, {
       position: "absolute",
       left: "50%",
       bottom: "32px",
       transform: "translateX(-50%)",
     });
-    root.append(status, closeButton);
+    const actions = document.createElement("div");
+    Object.assign(actions.style, {
+      position: "absolute",
+      left: "50%",
+      bottom: "32px",
+      transform: "translateX(-50%)",
+      display: "flex",
+      gap: "10px",
+    });
+    const retryButton = createButton("やり直す", retryPreparation);
+    actions.append(retryButton, closeButton);
+    root.append(status, actions);
     attachKeydownListener();
     focusAfterPaint(closeButton);
+  }
+
+  function preparationFailureLabel(reason: PreparationFailure): string {
+    if (reason === "content_not_found") return "文章を読み取れませんでした";
+    if (reason === "unsupported_page") return "このページはまだ開けません";
+    return "文章を準備できませんでした";
+  }
+
+  function retryPreparation(): void {
+    const requestId = activeRequestId;
+    if (!requestId) return;
+    sendPreparationMessage({ type: "RETRY_RSVP", requestId });
+  }
+
+  function sendPreparationMessage(message: { type: "CANCEL_RSVP" | "RETRY_RSVP"; requestId: string }): void {
+    const sendMessage = chrome.runtime.sendMessage;
+    if (typeof sendMessage !== "function") return;
+    try {
+      void sendMessage(message);
+    } catch {
+      return;
+    }
   }
 
   function collectReadingContext(sourceText: string): Partial<ReadingContext> {
@@ -702,9 +802,15 @@
     return find(root);
   }
 
-  function focusAfterPaint(element: HTMLElement | null): void {
+  function focusAfterPaint(
+    element: HTMLElement | null,
+    scrollPosition: { left: number; top: number } | null = null,
+  ): void {
     if (!element) return;
-    const focus = () => element.focus?.();
+    const focus = () => {
+      element.focus?.({ preventScroll: true });
+      if (scrollPosition) globalThis.scrollTo?.({ ...scrollPosition, behavior: "auto" });
+    };
     if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(focus);
     else focus();
   }
@@ -757,19 +863,8 @@
     loadingLayer = null;
     loadingIndicatorAnimation?.cancel?.();
     loadingIndicatorAnimation = null;
-    if (loadingIndicator) {
-      if (prefersReducedMotion()) {
-        loadingIndicator.style.transform = "translateX(0) scaleX(1)";
-      } else {
-        loadingIndicator.animate(
-          [
-            { transform: "translateX(-35%) scaleX(.35)" },
-            { transform: "translateX(0) scaleX(1)" },
-          ],
-          { duration: 90, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
-        );
-      }
-    }
+    loadingStatus = null;
+    loadingCancelButton = null;
     loadingIndicator = null;
     outgoing.style.pointerEvents = "none";
     root.replaceChildren(rootStyle, stage, outgoing);
@@ -1791,6 +1886,8 @@
       rootHost = null;
       rootStyle = null;
       loadingLayer = null;
+      loadingStatus = null;
+      loadingCancelButton = null;
       previousContext = null;
       display = null;
       nextContext = null;
@@ -1808,8 +1905,14 @@
     }
   }
 
-  function close() {
+  function close(notifyServiceWorker = true, preserveSourceScroll = false) {
+    const requestId = activeRequestId;
+    if (notifyServiceWorker && requestId) {
+      sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
+      if (activePreparation.kind !== "idle") activePreparation = { kind: "cancelled", requestId };
+    }
     const restoreFocus = launchFocus;
+    const restoreScroll = sourceScrollPosition;
     try {
       pause();
       removeOverlay();
@@ -1818,6 +1921,7 @@
         restoreBackgroundInert();
       } finally {
         activeRequestId = null;
+        activePreparation = { kind: "idle" };
         loadingStartedAt = null;
         units = [];
         currentUnitIndex = 0;
@@ -1835,8 +1939,11 @@
         segmentationLocale = "ja";
         currentGraphemeLimit = 12;
         launchFocus = null;
+        sourceScrollPosition = preserveSourceScroll ? restoreScroll : null;
         if (restoreFocus && restoreFocus.isConnected !== false && typeof restoreFocus.focus === "function") {
-          focusAfterPaint(restoreFocus);
+          focusAfterPaint(restoreFocus, restoreScroll);
+        } else if (restoreScroll) {
+          globalThis.scrollTo?.({ ...restoreScroll, behavior: "auto" });
         }
       }
     }

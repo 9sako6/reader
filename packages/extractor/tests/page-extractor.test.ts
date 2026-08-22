@@ -4,7 +4,11 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const { fromPage: extractPage, fromText } = require("../../../.build/packages/extractor/src/extractor.js");
+const {
+  fromPage: extractPage,
+  fromPageAsync: extractPageAsync,
+  fromText,
+} = require("../../../.build/packages/extractor/src/extractor.js");
 
 function createLanguagePageFixture(language) {
   const paragraphText = "ページ本文です。";
@@ -417,6 +421,40 @@ test("fromPage falls back to Japanese when html lang is malformed", () => {
   const result = extractPage(document, Defuddle);
 
   assert.equal(result.readingContext.language, "ja");
+});
+
+test("fromPageAsync reports preparation phases and keeps the page extraction contract", async () => {
+  const { document, Defuddle } = createLanguagePageFixture("en-US");
+  const phases = [];
+
+  const result = await extractPageAsync(document, Defuddle, {
+    onPhase(phase) {
+      phases.push(phase);
+    },
+  });
+
+  assert.equal(result.text, "ページ本文です。");
+  assert.deepEqual(phases, [
+    "dominant_article",
+    "defuddle_parse",
+    "canonical_text",
+    "blocks_figures",
+  ]);
+});
+
+test("fromPageAsync rejects with AbortError before committing a later phase", async () => {
+  const { document, Defuddle } = createLanguagePageFixture("en-US");
+  const controller = new AbortController();
+
+  await assert.rejects(
+    extractPageAsync(document, Defuddle, {
+      onPhase(phase) {
+        if (phase === "dominant_article") controller.abort();
+      },
+      signal: controller.signal,
+    }),
+    (error) => error?.name === "AbortError",
+  );
 });
 
 test("extractPage keeps every article image at its source offset", () => {

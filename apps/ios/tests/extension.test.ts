@@ -17,6 +17,13 @@ function fireNextTimer(timers) {
   timer.callback();
 }
 
+function fireTimerWithDelay(timers, delay) {
+  const entry = [...timers.entries()].find(([, timer]) => timer.delay === delay);
+  assert.ok(entry, `timer with ${delay}ms delay is scheduled`);
+  timers.delete(entry[0]);
+  entry[1].callback();
+}
+
 test("Safari extension loads reader resources in dependency order", () => {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   assert.equal(manifest.manifest_version, 3);
@@ -233,18 +240,20 @@ test("Safari reader shows extraction progress before opening", async () => {
   );
   assert.ok(progressTrack);
   assert.ok(progressIndicator);
-  assert.equal(launchLoader.style.animationDelay, "100ms");
+  assert.equal(launchLoader.style.display, "block");
   assert.equal(launchLoader.style.opacity, "1");
-  assert.equal(progressIndicator.animations.length, 2);
-  assert.equal(progressIndicator.animations[0].options.iterations, 1);
-  assert.equal(progressIndicator.animations[0].options.duration, 1200);
-  assert.equal(progressIndicator.animations[0].keyframes[0].transform, "scaleX(0)");
-  assert.equal(progressIndicator.animations[0].keyframes[1].transform, "scaleX(.94)");
-  const completionFrames = progressIndicator.animations[1].keyframes;
-  const completionStart = Number.parseFloat(completionFrames[0].transform.slice(7));
-  assert.ok(completionStart > 0.09 && completionStart < 0.1);
-  assert.equal(completionFrames[completionFrames.length - 1].transform, "scaleX(1)");
-  assert.ok(launchFeedbackDuringExtraction.animations.length > 0);
+  assert.equal(progressIndicator.animations.length, 1);
+  assert.equal(progressIndicator.animations[0].options.iterations, Infinity);
+  assert.equal(progressIndicator.animations[0].keyframes[0].transform, "translateX(-100%) scaleX(.35)");
+  assert.equal(progressIndicator.animations[0].keyframes[1].transform, "translateX(220%) scaleX(.35)");
+  assert.equal(findElement(
+    launchFeedbackDuringExtraction,
+    (element) => element.className === "launch-status",
+  ), null);
+  assert.equal(findElement(
+    launchFeedbackDuringExtraction,
+    (element) => element.textContent === "中止",
+  ), null);
 });
 
 test("Safari reader keeps RSVP controls visible and preserves the paused state", async () => {
@@ -789,4 +798,28 @@ test("Safari reader ignores extraction completion after close", async () => {
 
   assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
   assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
+});
+
+test("Safari reader exposes a cancel action only for slow preparation", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  let resolveExtraction: (value: unknown) => void = () => {};
+  context.Extractor.fromPage = () => new Promise((resolve) => {
+    resolveExtraction = resolve;
+  });
+
+  const opening = context.MobileViewer.open();
+  await Promise.resolve();
+  fireTimerWithDelay(timers, 100);
+  assert.equal(findElement(documentElement, (element) => element.textContent === "文章を準備しています"), null);
+  fireTimerWithDelay(timers, 400);
+  const cancelButton = findElement(documentElement, (element) => element.textContent === "中止");
+  assert.ok(cancelButton);
+  cancelButton.dispatchEvent({ type: "click" });
+  resolveExtraction(harness.activeContent());
+  await opening;
+
+  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
+  assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
+  assert.equal(context.document.documentElement.style.overflow, "");
 });
