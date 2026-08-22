@@ -122,7 +122,10 @@ async function verifySafariRuntime() {
       capabilities: { alwaysMatch: { browserName: "safari" } },
     });
   } catch (error) {
-    throw new SafariWebDriverUnavailableError(error.message);
+    if (/session not created|remote automation|not reachable|connection refused/i.test(error.message)) {
+      throw new SafariWebDriverUnavailableError(error.message);
+    }
+    throw error;
   }
   if (typeof created?.sessionId !== "string") {
     throw new Error(`Safari WebDriver returned an invalid session: ${JSON.stringify(created)}`);
@@ -151,18 +154,28 @@ async function verifySafariRuntime() {
       }
       return response;
     });
-    globalThis.MobileViewer.open().then(() => {
+    const unitDeadline = Date.now() + 5000;
+    function finishWhenUnitIsReady() {
       const host = document.getElementById("__reader-host");
       const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
-      done({
-        initialized: globalThis.ReaderSession.ready(),
-        initCount,
-        createCount,
-        wasmResponses,
-        host: Boolean(host),
-        unit: Boolean(unit),
-      });
-    }).catch((error) => done({ error: String(error) }));
+      if (unit) {
+        done({
+          initialized: globalThis.ReaderSession.ready(),
+          initCount,
+          createCount,
+          wasmResponses,
+          host: Boolean(host),
+          unit: true,
+        });
+        return;
+      }
+      if (Date.now() >= unitDeadline) {
+        done({ error: "first reader unit did not become ready" });
+        return;
+      }
+      setTimeout(finishWhenUnitIsReady, 16);
+    }
+    globalThis.MobileViewer.open().then(finishWhenUnitIsReady).catch((error) => done({ error: String(error) }));
   `);
   assert.equal(result.error, undefined, JSON.stringify(result));
   assert.equal(result.initialized, true);
@@ -200,15 +213,30 @@ async function verifyGeneratedRuntimeInWebKit() {
         return response;
       });
       await globalThis.MobileViewer.open();
+      await new Promise((resolve, reject) => {
+        const deadline = performance.now() + 3000;
+        const poll = () => {
+          const unit = document.getElementById("__reader-host")?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+          if (unit) {
+            resolve();
+            return;
+          }
+          if (performance.now() >= deadline) {
+            reject(new Error("first reader unit did not become ready"));
+            return;
+          }
+          requestAnimationFrame(poll);
+        };
+        poll();
+      });
       const host = document.getElementById("__reader-host");
-      const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
       return {
         initialized: globalThis.ReaderSession.ready(),
         initCount,
         createCount,
         wasmResponses,
         host: Boolean(host),
-        unit: Boolean(unit),
+        unit: Boolean(host?.shadowRoot?.querySelector('[data-reader-unit="true"]')),
       };
     });
     assert.equal(result.initialized, true);
