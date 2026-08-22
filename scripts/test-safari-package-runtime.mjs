@@ -25,6 +25,8 @@ let fixtureServer = null;
 let safariDriver = null;
 let sessionId = null;
 
+class SafariWebDriverUnavailableError extends Error {}
+
 async function waitFor(url, predicate = (response) => response.status === 200) {
   for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
@@ -96,10 +98,22 @@ async function verifySafariRuntime() {
   safariDriver = spawn("safaridriver", ["--port", String(driverPort)], {
     stdio: "ignore",
   });
-  await waitFor(`http://127.0.0.1:${driverPort}/status`, (response) => response.status === 200);
-  const created = await driverRequest("POST", "/session", {
-    capabilities: { alwaysMatch: { browserName: "safari" } },
-  });
+  try {
+    await waitFor(`http://127.0.0.1:${driverPort}/status`, (response) => response.status === 200);
+  } catch (error) {
+    throw new SafariWebDriverUnavailableError(error.message);
+  }
+  let created;
+  try {
+    created = await driverRequest("POST", "/session", {
+      capabilities: { alwaysMatch: { browserName: "safari" } },
+    });
+  } catch (error) {
+    throw new SafariWebDriverUnavailableError(error.message);
+  }
+  if (typeof created?.sessionId !== "string") {
+    throw new Error(`Safari WebDriver returned an invalid session: ${JSON.stringify(created)}`);
+  }
   sessionId = created.sessionId;
   await driverRequest("POST", `/session/${sessionId}/url`, { url: pageUrl });
   const result = await executeScript(`
@@ -210,7 +224,9 @@ try {
     await verifySafariRuntime();
     process.stdout.write("Safari WebDriver runtime smoke passed\n");
   } catch (error) {
-    if (process.env.READER_SAFARI_WEBDRIVER_REQUIRED === "1") throw error;
+    if (process.env.READER_SAFARI_WEBDRIVER_REQUIRED === "1" || !(error instanceof SafariWebDriverUnavailableError)) {
+      throw error;
+    }
     process.stdout.write(`Safari WebDriver runtime unavailable; package runtime verification passed: ${error.message}\n`);
   }
 } finally {
