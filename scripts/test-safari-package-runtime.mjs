@@ -91,11 +91,16 @@ async function verifyPackage() {
     ...new Set([
       ...manifest.content_scripts.flatMap((contentScript) => contentScript.js),
       ...manifest.web_accessible_resources.flatMap((resource) => resource.resources),
+      "reader-session-dependencies.txt",
     ]),
   ];
   const generatedBootstrap = await readFile(join(generatedRoot, "bootstrap.js"), "utf8");
   assert.equal(generatedBootstrap.includes("require("), false);
   assert.match(generatedBootstrap, /import\(runtimeURL\)/);
+  const generatedSession = await readFile(join(generatedRoot, "session.js"), "utf8");
+  assert.equal(generatedSession.includes("require("), false);
+  assert.match(generatedSession, /ReaderReactViewer/u);
+  assert.match(generatedSession, /createRoot/u);
   const generatedAssets = new Map();
   for (const asset of requiredAssets) {
     const bytes = await readFile(join(generatedRoot, asset));

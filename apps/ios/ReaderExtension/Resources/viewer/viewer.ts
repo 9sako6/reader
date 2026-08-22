@@ -8,34 +8,13 @@
     | { kind: "loading"; token: number; figureIndex: number }
     | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "failed"; token: number; figureIndex: number };
-  type MobileIconName = "previous" | "play" | "pause" | "close";
+  type ReactReaderBlock = ReaderBlock & { sentenceSpans: SentenceSpan[] };
   interface LaunchProgress {
-    element: HTMLElement;
-    loader: HTMLElement;
-    indicator: HTMLElement;
-    animation: Animation | null;
     startedAt: number;
     revealTimer: number | null;
     slowTimer: number | null;
-    status: HTMLElement | null;
-    cancelButton: HTMLButtonElement | null;
     revealed: boolean;
   }
-  interface MobileNodes {
-    content: HTMLElement;
-    controlbar: HTMLElement;
-    modeButton: HTMLButtonElement;
-    progress: HTMLElement;
-    previousUnit: HTMLElement | null;
-    unit: HTMLElement | null;
-    nextUnit: HTMLElement | null;
-    play: HTMLButtonElement | null;
-    transport: HTMLElement | null;
-    textScroller: HTMLElement | null;
-    textMarkers: HTMLElement[];
-    textRestoreScrollTop: number | null;
-  }
-
   const HOST_ID = "__reader-host";
   const LOADER_REVEAL_DELAY_MS = 100;
   const SLOW_PREPARATION_DELAY_MS = 400;
@@ -57,16 +36,15 @@
   let sourceOverflow: string | null = null;
   let sourceBodyOverflow: string | null = null;
   let content: ReaderContent | null = null;
+  let viewBlocks: ReactReaderBlock[] = [];
   let units: ReaderUnit[] = [];
   let flowItems: ReaderFlowItem[] = [];
   let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
-  let contextSentenceIndex: number | null = null;
   let playbackTimer: number | null = null;
-  let figurePanel: HTMLElement | null = null;
   let figureViewState: FigureViewState = { kind: "idle" };
+  let reactFigureBrightness: "dimmed" | "revealed" = "dimmed";
   let figureLoadToken = 0;
   let figureLoadRevealTimerId: number | null = null;
-  let nodes: MobileNodes | null = null;
   let opening = false;
   let pendingLeftTap: number | null = null;
   let lastLeftTapAt = 0;
@@ -87,10 +65,25 @@
   let sessionInitFailure = false;
   let sessionEnabled = false;
   let applyingSession = false;
+  let slowPreparationVisible = false;
   let sessionLifecycleAttached = false;
+  let reactViewMount: ReaderReactViewerMount | null = null;
+  let reactViewHost: HTMLDivElement | null = null;
+  let reactTextScroller: HTMLElement | null = null;
+  let reactTextMarkers: HTMLElement[] = [];
+  let reactTextRestoring = false;
+  let reactTextRestoreGeneration = 0;
+  let reactTextRestorePending = false;
+  let reactTextRestoreScrollTop: number | null = null;
+  let rewindFeedback: { left: number; top: number; id: number } | null = null;
+  let rewindFeedbackId = 0;
+  let rewindFeedbackClearTimer: number | null = null;
+  const reactTextFigureCorrections = new WeakMap<HTMLElement, { scroller: HTMLElement; positionMarkers: HTMLElement[] }>();
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
   let performanceUnitMarked = false;
+  let performanceReactInitStarted = false;
+  let performanceReactInitMarked = false;
 
   function readingSessionState(): ReaderSessionObservableState | null {
     return sessionState?.phase === "reading" ? sessionState : null;
@@ -119,9 +112,218 @@
     global.performance?.mark?.(name);
   }
 
-  function getNodes(): MobileNodes {
-    if (!nodes) throw new Error("reader shell is not available");
-    return nodes;
+  function prefersReducedMotion(): boolean {
+    return global.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  }
+
+  function animateLoadingIndicator(element: HTMLElement, reducedMotion: boolean): (() => void) | undefined {
+    if (reducedMotion || typeof element.animate !== "function") return undefined;
+    const animation = element.animate(
+      [
+        { transform: "translateX(-100%) scaleX(.35)" },
+        { transform: "translateX(220%) scaleX(.35)" },
+      ],
+      { duration: 1100, iterations: Infinity, easing: "linear" },
+    );
+    return () => animation.cancel?.();
+  }
+
+  function animateRewindFeedback(
+    elements: { firstRing: HTMLElement; secondRing: HTMLElement; icon: SVGElement },
+    reducedMotion: boolean,
+    onDone: () => void,
+  ): (() => void) | undefined {
+    const { firstRing, secondRing, icon } = elements;
+    if (typeof firstRing.animate !== "function" || typeof secondRing.animate !== "function" || typeof icon.animate !== "function") return undefined;
+    const ringFrames = reducedMotion
+      ? [{ opacity: 0.28 }, { opacity: 0 }]
+      : [
+        { opacity: 0.08, transform: "scale(.32)" },
+        { opacity: 0.26, transform: "scale(.9)" },
+        { opacity: 0, transform: "scale(2.15)" },
+      ];
+    const firstAnimation = firstRing.animate(ringFrames, { duration: reducedMotion ? 160 : 420, easing: "cubic-bezier(.22, 1, .36, 1)", fill: "forwards" });
+    const secondAnimation = secondRing.animate(ringFrames, { duration: reducedMotion ? 160 : 420, delay: reducedMotion ? 0 : 80, easing: "cubic-bezier(.22, 1, .36, 1)", fill: "forwards" });
+    const iconAnimation = icon.animate(
+      reducedMotion
+        ? [{ opacity: 0.72 }, { opacity: 0 }]
+        : [
+          { opacity: 0, transform: "translateX(8px) scale(.9)" },
+          { opacity: 0.72, transform: "translateX(0) scale(1)" },
+          { opacity: 0, transform: "translateX(-8px) scale(.96)" },
+        ],
+      { duration: reducedMotion ? 160 : 360, easing: "ease-out", fill: "forwards" },
+    );
+    let cancelled = false;
+    Promise.allSettled([firstAnimation.finished, secondAnimation.finished, iconAnimation.finished]).then(() => {
+      if (!cancelled) onDone();
+    });
+    return () => {
+      cancelled = true;
+      firstAnimation.cancel?.();
+      secondAnimation.cancel?.();
+      iconAnimation.cancel?.();
+    };
+  }
+
+  function mountReactViewer(shadowRoot: ShadowRoot | null): void {
+    if (!shadowRoot || reactViewMount) return;
+    if (!globalThis.ReaderReactViewer || typeof globalThis.ReaderReactViewer.mount !== "function") throw new Error("reader_view_unavailable");
+    const root = global.document.createElement("div");
+    root.setAttribute("data-reader-react-root", "true");
+    Object.assign(root.style, { position: "absolute", inset: "0", pointerEvents: "auto" });
+    shadowRoot.append(root);
+    performanceReactInitStarted = true;
+    markPerformance("reader:react-init-start");
+    try {
+      reactViewMount = globalThis.ReaderReactViewer.mount(root);
+      reactViewHost = root;
+    } catch (error) {
+      root.remove();
+      performanceReactInitStarted = false;
+      throw error;
+    }
+  }
+
+  function unmountReactViewer(): void {
+    const root = reactViewHost;
+    reactViewMount?.unmount();
+    root?.remove();
+    reactViewMount = null;
+    reactViewHost = null;
+    performanceReactInitStarted = false;
+    performanceReactInitMarked = false;
+  }
+
+  function reactViewModel(): unknown {
+    if (activePreparation.kind === "preparing") {
+      const elapsed = Date.now() - activePreparation.startedAt;
+      return { kind: "loading", slow: slowPreparationVisible || elapsed >= SLOW_PREPARATION_DELAY_MS, revealed: launchProgress?.revealed === true, reducedMotion: prefersReducedMotion(), mobile: true };
+    }
+    if (activePreparation.kind === "failed") {
+      return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: true, mobile: true };
+    }
+    const state = readingSessionState();
+    if (state?.mode === "text") {
+      return { kind: "text", language: content?.readingContext.language || "ja", blocks: viewBlocks, figures: content?.readingContext.figures || [], position: currentPosition, progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, title: content?.readingContext.title || global.document.title || "", mobile: true };
+    }
+    const item = state ? flowItems[state.flowIndex] : flowItems[0];
+    const unitIndex = state?.unitIndex ?? (item?.kind === "unit" ? item.unitIndex : 0);
+    const figureIndex = item?.kind === "figure" ? item.figureIndex : null;
+    const figure = figureIndex === null ? null : content?.readingContext.figures?.[figureIndex] || null;
+    const figureStatus = figure && figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.kind : figure ? "loading" : null;
+    const unit = item?.kind === "unit" ? units[unitIndex] || null : null;
+    const context = unit ? global.Engine.surroundingSentences(units, unitIndex) : { previous: "", next: "" };
+    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus, token: figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.token : undefined, loadingVisible: figureStatus === "loading" && figureLoadRevealTimerId === null, brightness: reactFigureBrightness } : null, playing: state?.playback === "playing", reducedMotion: prefersReducedMotion(), progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, rewindFeedback, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
+  }
+
+  function renderReactView(): void {
+    if (!reactViewMount) return;
+    const state = readingSessionState();
+    const item = state ? flowItems[state.flowIndex] : flowItems[0];
+    if (item?.kind === "figure") {
+      if (figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) {
+        invalidateFigureLoad();
+        const token = figureLoadToken;
+        figureViewState = { kind: "loading", token, figureIndex: item.figureIndex };
+        figureLoadRevealTimerId = global.setTimeout(() => {
+          figureLoadRevealTimerId = null;
+          if (figureViewState.kind === "loading" && figureViewState.token === token) renderReactView();
+        }, 100);
+      }
+    } else if (figureViewState.kind !== "idle") {
+      invalidateFigureLoad();
+    }
+    reactViewMount.render(reactViewModel(), {
+      close,
+      cancel: () => {
+        if (activePreparation.kind === "preparing") cancelOpening(Number(activePreparation.requestId));
+        else close();
+      },
+      retry,
+      switchToText: () => switchMode("text"),
+      switchToRsvp: () => switchMode("rsvp"),
+      previousSentence: goBackFromControl,
+      rsvpPointerUp: handleRsvpPointerUp,
+      togglePlayback,
+      resumeFigure: advanceFromFigure,
+      figureLoad: (figureIndex: number, token?: number) => settleReactFigure(figureIndex, true, token),
+      figureError: (figureIndex: number, token?: number) => settleReactFigure(figureIndex, false, token),
+      figureImage: (element: HTMLImageElement, figureIndex: number, token?: number) => {
+        if (typeof token !== "number" || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token || !element.complete) return;
+        const capturedToken = token;
+        void Promise.resolve().then(() => {
+          if (element.isConnected === false || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== capturedToken) return;
+          settleReactFigure(figureIndex, element.naturalWidth > 0, capturedToken);
+        });
+      },
+      toggleFigureBrightness: (figureIndex: number) => toggleReactFigureBrightness(figureIndex),
+      rewindFeedbackDone: clearRewindFeedback,
+      loadingAnimation: animateLoadingIndicator,
+      rewindAnimation: animateRewindFeedback,
+      textScroll: (element: HTMLElement | null) => {
+        if (!element) {
+          reactTextScroller = null;
+          reactTextMarkers = [];
+          return;
+        }
+        if (!content) return;
+        reactTextScroller = element;
+        reactTextMarkers = Array.from(element.querySelectorAll<HTMLElement>("[data-reader-position-kind=\"text\"], [data-reader-position-kind=\"figure\"]"));
+        reactTextRestoreScrollTop = element.scrollTop;
+        for (const figure of element.querySelectorAll<HTMLElement>("[data-reader-text-figure=\"true\"]")) {
+          attachTextFigureLoadCorrection(element, figure, reactTextMarkers);
+        }
+        if (reactTextRestorePending) {
+          scheduleReactTextRestore(element, reactTextMarkers);
+        }
+      },
+      textPosition: (element: HTMLElement) => {
+        if (reactTextRestoring) {
+          if (reactTextRestoreScrollTop === null || Math.abs(element.scrollTop - reactTextRestoreScrollTop) < 1) return;
+          if (reactTextRestorePending) {
+            reactTextRestorePending = false;
+            reactTextRestoreGeneration += 1;
+          }
+        }
+        updateTextPosition(element, reactTextMarkers);
+        reactTextRestoreScrollTop = element.scrollTop;
+      },
+    });
+    if (performanceReactInitStarted && !performanceReactInitMarked) {
+      performanceReactInitMarked = true;
+      markPerformance("reader:react-init-end");
+    }
+    const model = reactViewModel() as { kind: string; unit?: ReaderUnit | null };
+    if (model.kind === "rsvp") {
+      if (!performanceControlsMarked) {
+        performanceControlsMarked = true;
+        markPerformance("reader:controls-ready");
+      }
+      if (model.unit && !performanceUnitMarked) {
+        performanceUnitMarked = true;
+        markPerformance("reader:first-unit");
+      }
+    }
+  }
+
+  function settleReactFigure(figureIndex: number, loaded: boolean, token?: number): void {
+    if (typeof token !== "number" || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token) return;
+    if (figureLoadRevealTimerId !== null) {
+      global.clearTimeout(figureLoadRevealTimerId);
+      figureLoadRevealTimerId = null;
+    }
+    figureViewState = loaded
+      ? { kind: "ready", token: figureViewState.token, figureIndex, brightness: "dimmed" }
+      : { kind: "failed", token: figureViewState.token, figureIndex };
+    renderReactView();
+  }
+
+  function toggleReactFigureBrightness(figureIndex: number): void {
+    if (figureViewState.kind === "idle" || figureViewState.figureIndex !== figureIndex) return;
+    reactFigureBrightness = reactFigureBrightness === "revealed" ? "dimmed" : "revealed";
+    if (figureViewState.kind === "ready") figureViewState = { ...figureViewState, brightness: reactFigureBrightness };
+    renderReactView();
   }
 
   function install() {
@@ -230,39 +432,60 @@
   function destroyLaunchProgress(progress: LaunchProgress): void {
     if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
     if (progress.slowTimer !== null) global.clearTimeout(progress.slowTimer);
-    progress.animation?.cancel?.();
-    progress.element.remove();
     if (launchProgress === progress) launchProgress = null;
   }
 
   async function open() {
     if (overlay || opening || !handle || !shadow) return;
     markPerformance("reader:tap");
+    if (!reactViewMount) mountReactViewer(shadow);
+    if (!reactViewMount || !reactViewHost) throw new Error("reader_view_unavailable");
     performanceRenderMarked = false;
     performanceControlsMarked = false;
     performanceUnitMarked = false;
     sessionInitFailure = false;
+    slowPreparationVisible = false;
     const generation = ++sessionGeneration;
     preparationGeneration = generation;
     opening = true;
     activePreparation = { kind: "preparing", requestId: String(generation), startedAt: Date.now() };
     attachSessionLifecycle();
     beginReaderSession(String(generation));
+    renderReactView();
     launchFocus = handle;
     makeBackgroundInert(host);
     sourceScrollY = global.scrollY || 0;
     sourceOverflow = global.document.documentElement.style.overflow;
     sourceBodyOverflow = global.document.body?.style.overflow ?? null;
     handle.hidden = true;
-    const progress = createLaunchFeedback();
+    const progress: LaunchProgress = {
+      startedAt: Date.now(),
+      revealTimer: null,
+      slowTimer: null,
+      revealed: false,
+    };
     launchProgress = progress;
-    progress.revealTimer = global.setTimeout(() => revealLaunchProgress(progress, generation), LOADER_REVEAL_DELAY_MS);
-    progress.slowTimer = global.setTimeout(() => showSlowLaunchProgress(progress, generation), SLOW_PREPARATION_DELAY_MS);
+    progress.revealTimer = global.setTimeout(() => {
+      if (!isCurrentSession(generation) || progress.revealed) return;
+      progress.revealed = true;
+      progress.revealTimer = null;
+      renderReactView();
+    }, LOADER_REVEAL_DELAY_MS);
+    progress.slowTimer = global.setTimeout(() => {
+      if (!isCurrentSession(generation)) return;
+      if (!progress.revealed) {
+        progress.revealed = true;
+        if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
+        progress.revealTimer = null;
+      }
+      progress.slowTimer = null;
+      slowPreparationVisible = true;
+      renderReactView();
+    }, SLOW_PREPARATION_DELAY_MS);
     if (!isCurrentSession(generation)) {
       destroyLaunchProgress(progress);
       return;
     }
-    shadow.append(progress.element);
     markPerformance("reader:first-feedback");
     await nextPaint();
     if (!isCurrentSession(generation)) {
@@ -301,6 +524,9 @@
       }
       content = extractedContent;
       if (!content?.text) throw new Error("content_not_found");
+      const locale = content.readingContext?.language || "ja";
+      const sourceBlocks = content.readingContext?.blocks?.length ? content.readingContext.blocks : fallbackBlocks(content.text);
+      viewBlocks = sourceBlocks.map((block) => ({ ...block, sentenceSpans: global.Engine.splitSentenceSpans(block.text, locale) }));
       rebuildUnits();
       markPerformance("reader:segmentation-end");
       if (units.length === 0) throw new Error("units_not_found");
@@ -323,21 +549,32 @@
       return;
     }
     const elapsed = Date.now() - progress.startedAt;
-    if (elapsed >= LOADER_REVEAL_DELAY_MS) revealLaunchProgress(progress, generation);
-    if (elapsed >= SLOW_PREPARATION_DELAY_MS) showSlowLaunchProgress(progress, generation);
-    if (progress.revealed) await finishLaunchProgress(progress, generation);
+    let launchProgressChanged = false;
+    if (elapsed >= LOADER_REVEAL_DELAY_MS) {
+      progress.revealed = true;
+      if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
+      progress.revealTimer = null;
+      launchProgressChanged = true;
+    }
+    if (elapsed >= SLOW_PREPARATION_DELAY_MS) {
+      progress.revealed = true;
+      if (progress.slowTimer !== null) global.clearTimeout(progress.slowTimer);
+      progress.slowTimer = null;
+      slowPreparationVisible = true;
+      launchProgressChanged = true;
+    }
+    if (launchProgressChanged) renderReactView();
     if (!isCurrentSession(generation)) {
       destroyLaunchProgress(progress);
       return;
     }
-    const reader = buildShell();
+    const reader = reactViewHost;
     if (!isCurrentSession(generation)) {
       reader.remove();
       destroyLaunchProgress(progress);
       return;
     }
     overlay = reader;
-    shadow.append(reader);
     global.addEventListener("keydown", handleKeyDown);
     destroyLaunchProgress(progress);
     lockSourcePage();
@@ -364,106 +601,6 @@
       findCloseButton()?.focus();
     });
     if (isCurrentSession(generation)) opening = false;
-  }
-
-  function createLaunchFeedback(): LaunchProgress {
-    const feedback = global.document.createElement("div");
-    feedback.className = "launch-feedback";
-    feedback.setAttribute("aria-hidden", "true");
-    const loader = global.document.createElement("div");
-    loader.className = "launch-loader";
-    loader.style.display = "none";
-    const track = global.document.createElement("div");
-    track.className = "launch-progress-track";
-    const indicator = global.document.createElement("div");
-    indicator.className = "launch-progress-indicator";
-    track.append(indicator);
-    loader.append(track);
-    feedback.append(loader);
-    return {
-      element: feedback,
-      loader,
-      indicator,
-      animation: null,
-      startedAt: Date.now(),
-      revealTimer: null,
-      slowTimer: null,
-      status: null,
-      cancelButton: null,
-      revealed: false,
-    };
-  }
-
-  function revealLaunchProgress(progress: LaunchProgress, generation: number): void {
-    if (!isCurrentSession(generation) || progress.revealed) return;
-    progress.revealed = true;
-    if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
-    progress.revealTimer = null;
-    progress.loader.style.display = "block";
-    progress.loader.style.opacity = "1";
-    const reducedMotion = global.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    progress.indicator.style.transform = "translateX(0) scaleX(.35)";
-    progress.animation = reducedMotion ? null : progress.indicator.animate(
-      [
-        { transform: "translateX(-100%) scaleX(.35)" },
-        { transform: "translateX(220%) scaleX(.35)" },
-      ],
-      { duration: 1100, iterations: Infinity, easing: "linear" },
-    );
-  }
-
-  function showSlowLaunchProgress(progress: LaunchProgress, generation: number): void {
-    if (!isCurrentSession(generation)) return;
-    if (!progress.revealed) revealLaunchProgress(progress, generation);
-    if (progress.slowTimer !== null) global.clearTimeout(progress.slowTimer);
-    progress.slowTimer = null;
-    if (progress.status || progress.cancelButton) return;
-    progress.element.setAttribute("aria-hidden", "false");
-    const status = global.document.createElement("div");
-    status.className = "launch-status";
-    status.setAttribute("role", "status");
-    status.textContent = "文章を準備しています";
-    Object.assign(status.style, {
-      position: "fixed",
-      left: "50%",
-      top: "calc(50% + 24px)",
-      transform: "translateX(-50%)",
-      color: "var(--reader-text)",
-      fontSize: "14px",
-      whiteSpace: "nowrap",
-    });
-    const cancelButton = transportButton("中止", () => cancelOpening(generation));
-    cancelButton.className = "launch-cancel";
-    Object.assign(cancelButton.style, {
-      position: "fixed",
-      left: "50%",
-      bottom: "32px",
-      transform: "translateX(-50%)",
-      pointerEvents: "auto",
-    });
-    progress.status = status;
-    progress.cancelButton = cancelButton;
-    progress.element.append(status, cancelButton);
-    cancelButton.focus?.();
-  }
-
-  async function finishLaunchProgress(progress: LaunchProgress, generation: number): Promise<void> {
-    progress.animation?.cancel?.();
-    progress.animation = null;
-    if (!progress.revealed || !isCurrentSession(generation)) return;
-    if (global.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      progress.element.style.opacity = "0";
-      return;
-    }
-    const fade = progress.element.animate(
-      [{ opacity: 1 }, { opacity: 0 }],
-      { duration: 90, easing: "ease-out", fill: "forwards" },
-    );
-    try {
-      await fade.finished;
-    } catch {
-      return;
-    }
   }
 
   function createAbortController(): AbortController {
@@ -502,53 +639,6 @@
     close();
   }
 
-  function buildShell() {
-    const reader = global.document.createElement("section");
-    reader.className = "reader";
-    reader.setAttribute("role", "dialog");
-    reader.setAttribute("aria-label", "reader");
-    reader.setAttribute("aria-modal", "true");
-    const topbar = global.document.createElement("header");
-    topbar.className = "topbar";
-    const modeButton = transportButton("", toggleMode);
-    modeButton.className = "mode-button";
-    const closeButton = iconButton("close", "readerを閉じる", close);
-    topbar.append(closeButton);
-    const controlbar = global.document.createElement("footer");
-    controlbar.className = "controlbar";
-    const progress = global.document.createElement("div");
-    progress.className = "progress";
-    controlbar.append(modeButton, progress);
-    const content = global.document.createElement("main");
-    content.className = "content";
-    reader.append(topbar, controlbar, content);
-    nodes = {
-      content,
-      controlbar,
-      modeButton,
-      progress,
-      previousUnit: null,
-      unit: null,
-      nextUnit: null,
-      play: null,
-      transport: null,
-      textScroller: null,
-      textMarkers: [],
-      textRestoreScrollTop: null,
-    };
-    return reader;
-  }
-
-  function iconButton(icon: MobileIconName, accessibilityLabel: string, action: () => void): HTMLButtonElement {
-    const button = global.document.createElement("button");
-    button.className = "icon-button";
-    button.type = "button";
-    button.append(global.ReaderIcons.create(global.document, icon, 24));
-    button.setAttribute("aria-label", accessibilityLabel);
-    button.addEventListener("click", action);
-    return button;
-  }
-
   function showError(reason: PreparationFailure) {
     if (reason !== "session_unavailable" && activePreparation.kind !== "idle") {
       dispatchSession({
@@ -557,21 +647,7 @@
         reason,
       });
     }
-    getNodes().transport?.remove();
-    getNodes().transport = null;
-    getNodes().modeButton.hidden = true;
-    getNodes().progress.textContent = "";
-    const error = global.document.createElement("div");
-    error.className = "error";
-    const label = global.document.createElement("div");
-    label.textContent = preparationFailureLabel(reason);
-    const actions = global.document.createElement("div");
-    actions.className = "error-actions";
-    const retryButton = transportButton("やり直す", retry);
-    const closeButton = transportButton("元に戻る", close);
-    actions.append(retryButton, closeButton);
-    error.append(label, actions);
-    getNodes().content.replaceChildren(error);
+    renderReactView();
   }
 
   function preparationFailureLabel(reason: PreparationFailure): string {
@@ -586,9 +662,7 @@
   }
 
   function renderReader(): void {
-    updateModeButton();
-    if (sessionMode() === "rsvp") renderRsvpView();
-    else renderTextView();
+    renderReactView();
     if (!performanceRenderMarked) {
       performanceRenderMarked = true;
       markPerformance("reader:first-render");
@@ -651,9 +725,11 @@
     }
     if (!sessionInitPromise) {
       markPerformance("reader:session-init-start");
+      markPerformance("reader:wasm-init-start");
       sessionInitPromise = global.ReaderSession.init()
         .then(() => {
           markPerformance("reader:session-init-end");
+          markPerformance("reader:wasm-init-end");
           if (activePreparation.kind === "idle" || activePreparation.kind === "cancelled") return;
           if (sessionHandle) {
             if (!applyingSession) dispatchSession({ type: "close" });
@@ -688,12 +764,6 @@
     const state = sessionState;
     if (!state) return;
     if (state.phase === "reading" && state.position) currentPosition = state.position;
-    updateModeButtonIfReady();
-    updatePlayButton();
-  }
-
-  function updateModeButtonIfReady(): void {
-    if (nodes) updateModeButton();
   }
 
   function dispatchSession(command: ReaderSessionCommand, render = true): void {
@@ -730,68 +800,14 @@
           playbackTimer = scheduledTimerId;
         }
       }
-      if (render && command.type !== "prepareSucceeded") renderSessionState();
+      if (render) renderSessionState();
     } finally {
       applyingSession = false;
     }
   }
 
   function renderSessionState(): void {
-    const state = sessionState;
-    if (!state || state.phase !== "reading" || state.mode !== "rsvp") return;
-    renderFlowItem();
-  }
-
-  function renderTextView() {
-    if (!content) return;
-    const scroller = global.document.createElement("div");
-    scroller.className = "text-view";
-    const articleNode = global.document.createElement("article");
-    articleNode.className = "article";
-    const blocks = content.readingContext?.blocks || [];
-    const title = content.readingContext?.title || global.document.title || "";
-    if (title && blocks[0]?.text !== title) {
-      const heading = global.document.createElement("h1");
-      heading.className = "article-title";
-      heading.textContent = title;
-      articleNode.append(heading);
-    }
-    const readableBlocks = blocks.length > 0 ? blocks : fallbackBlocks(content.text);
-    const blockElements: HTMLElement[] = [];
-    const anchorElements: HTMLElement[] = [];
-    const figureElements: HTMLElement[] = [];
-    for (const block of readableBlocks) {
-      const element = createArticleBlock(block, anchorElements);
-      blockElements.push(element);
-    }
-    appendArticleContent(articleNode, readableBlocks, blockElements, content.readingContext?.figures || [], figureElements);
-    const positionMarkers = [...anchorElements, ...figureElements].sort((left, right) => (
-      Number(left.dataset.sourceStart) - Number(right.dataset.sourceStart)
-      || (left.dataset.readerPositionKind === right.dataset.readerPositionKind
-        ? Number(left.dataset.figureIndex || 0) - Number(right.dataset.figureIndex || 0)
-        : left.dataset.readerPositionKind === "figure" ? -1 : 1)
-    ));
-    scroller.append(articleNode);
-    getNodes().content.replaceChildren(scroller);
-    renderTextControls();
-    getNodes().textRestoreScrollTop = null;
-    const generation = sessionGeneration;
-    const updatePosition = () => {
-      if (!isCurrentSession(generation) || !nodes || !content) return;
-      captureTextPosition(scroller, positionMarkers, getNodes().progress);
-    };
-    scroller.addEventListener("scroll", updatePosition, { passive: true });
-    getNodes().textScroller = scroller;
-    getNodes().textMarkers = positionMarkers;
-    const initializeTextView = () => {
-      if (!isCurrentSession(generation) || !nodes || !content) return;
-      if (scroller.scrollTop > 0) captureTextPosition(scroller, positionMarkers, getNodes().progress, true);
-      else restoreTextPosition(scroller, positionMarkers);
-      getNodes().textRestoreScrollTop = scroller.scrollTop;
-      figureElements.forEach((figureElement) => attachTextFigureLoadCorrection(scroller, figureElement, positionMarkers));
-    };
-    if (typeof global.requestAnimationFrame === "function") global.requestAnimationFrame(initializeTextView);
-    else initializeTextView();
+    renderReactView();
   }
 
   function fallbackBlocks(text: string): ReaderBlock[] {
@@ -807,172 +823,19 @@
     return blocks;
   }
 
-  function createArticleBlock(block: ReaderBlock, anchorElements: HTMLElement[]): HTMLElement {
-    let tagName = "p";
-    if (block.kind === "heading") tagName = `h${Math.min(6, Math.max(1, block.level || 2))}`;
-    if (block.kind === "quote") tagName = "blockquote";
-    if (block.kind === "preformatted") tagName = "pre";
-    const element = global.document.createElement(tagName);
-    if (tagName === "p") element.className = "paragraph";
-    if (tagName === "h1") element.className = "article-title";
-    element.dataset.sourceStart = String(block.start ?? 0);
-    element.dataset.sourceEnd = String(block.end ?? (block.start ?? 0) + block.text.length);
-    const sentences = global.Engine.splitSentenceSpans(
-      block.text,
-      content?.readingContext?.language || "ja",
-    );
-    if (sentences.length === 0) {
-      element.textContent = block.text;
-      element.setAttribute("data-reader-text-anchor", "true");
-      element.dataset.readerTextAnchor = "true";
-      element.dataset.readerPositionKind = "text";
-      anchorElements.push(element);
-      return element;
-    }
-    for (const sentence of sentences) {
-      const anchor = global.document.createElement("span");
-      anchor.className = "text-sentence";
-      anchor.setAttribute("data-reader-text-anchor", "true");
-      anchor.dataset.readerTextAnchor = "true";
-      anchor.dataset.readerPositionKind = "text";
-      anchor.dataset.sourceStart = String((block.start ?? 0) + sentence.start);
-      anchor.dataset.sourceEnd = String((block.start ?? 0) + sentence.end);
-      anchor.textContent = block.text.slice(sentence.start, sentence.end);
-      element.append(anchor);
-      anchorElements.push(anchor);
-    }
-    return element;
-  }
-
-  function appendArticleContent(
-    article: HTMLElement,
-    readableBlocks: ReaderBlock[],
-    blockElements: HTMLElement[],
-    articleFigures: ReaderFigure[],
-    figureElements: HTMLElement[],
-  ): void {
-    const orderedFigures = articleFigures
-      .map((figure, figureIndex) => ({ figure, figureIndex }))
-      .sort((left, right) => (
-        left.figure.sourceOffset - right.figure.sourceOffset
-        || left.figureIndex - right.figureIndex
-      ));
-    let figureIndex = 0;
-    readableBlocks.forEach((block, blockIndex) => {
-      let currentFigure = orderedFigures[figureIndex];
-      while (currentFigure && currentFigure.figure.sourceOffset <= block.start) {
-        const figureElement = createArticleFigure(currentFigure.figure, currentFigure.figureIndex);
-        article.append(figureElement);
-        figureElements.push(figureElement);
-        figureIndex += 1;
-        currentFigure = orderedFigures[figureIndex];
-      }
-      const blockElement = blockElements[blockIndex];
-      if (blockElement) article.append(blockElement);
-      currentFigure = orderedFigures[figureIndex];
-      while (currentFigure && currentFigure.figure.sourceOffset <= block.end) {
-        const figureElement = createArticleFigure(currentFigure.figure, currentFigure.figureIndex);
-        article.append(figureElement);
-        figureElements.push(figureElement);
-        figureIndex += 1;
-        currentFigure = orderedFigures[figureIndex];
-      }
-    });
-    let currentFigure = orderedFigures[figureIndex];
-    while (currentFigure) {
-      const figureElement = createArticleFigure(currentFigure.figure, currentFigure.figureIndex);
-      article.append(figureElement);
-      figureElements.push(figureElement);
-      figureIndex += 1;
-      currentFigure = orderedFigures[figureIndex];
-    }
-  }
-
-  function createArticleFigure(figure: ReaderFigure, figureIndex: number): HTMLElement {
-    const container = global.document.createElement("figure");
-    container.className = "article-figure";
-    container.dataset.sourceStart = String(figure.sourceOffset);
-    container.dataset.sourceEnd = String(figure.sourceEnd);
-    container.dataset.readerPositionKind = "figure";
-    container.dataset.figureIndex = String(figureIndex);
-    const image = global.document.createElement("img");
-    configureFigureImage(image, figure, true, true);
-    image.dataset.readerSource = figure.src;
-    container.append(createVeiledImageSurface(image));
-    if (figure.caption) {
-      const caption = global.document.createElement("figcaption");
-      caption.textContent = figure.caption;
-      container.append(caption);
-    }
-    return container;
-  }
-
-  function configureFigureImage(
-    image: HTMLImageElement,
-    figure: ReaderFigure,
-    lazy: boolean,
-    deferSource = false,
-  ): void {
-    if (deferSource) {
-      if (figure.srcset !== undefined) image.dataset.readerSrcset = figure.srcset;
-      if (figure.sizes !== undefined) image.dataset.readerSizes = figure.sizes;
-    } else {
-      if (figure.srcset !== undefined) image.srcset = figure.srcset;
-      if (figure.sizes !== undefined) image.sizes = figure.sizes;
-    }
-    if (figure.width !== undefined) image.width = figure.width;
-    if (figure.height !== undefined) image.height = figure.height;
-    image.alt = figure.alt || figure.caption || "本文画像";
-    image.decoding = "async";
-    if (lazy) image.loading = "lazy";
-  }
-
-  function createVeiledImageSurface(image: HTMLImageElement): HTMLButtonElement {
-    const surface = global.document.createElement("button");
-    surface.type = "button";
-    surface.className = "reader-image-surface";
-    surface.setAttribute("data-reader-image-surface", "true");
-    surface.setAttribute("data-reader-ignore-gesture", "true");
-    surface.setAttribute("aria-pressed", "false");
-    surface.setAttribute("aria-label", "画像を明るく表示");
-    surface.title = "画像を明るく表示";
-    Object.assign(surface.style, {
-      appearance: "none",
-      border: "0",
-      padding: "0",
-      background: "transparent",
-      color: "inherit",
-    });
-    const veil = global.document.createElement("div");
-    veil.className = "reader-image-veil";
-    veil.setAttribute("data-reader-image-veil", "true");
-    let revealed = false;
-    const updateBrightness = () => {
-      surface.setAttribute("aria-pressed", String(revealed));
-      const label = revealed ? "画像を暗く表示" : "画像を明るく表示";
-      surface.setAttribute("aria-label", label);
-      surface.title = label;
-      veil.style.opacity = revealed ? "0" : "1";
-      if (figureViewState.kind === "ready") {
-        figureViewState = {
-          ...figureViewState,
-          brightness: revealed ? "revealed" : "dimmed",
-        };
-      }
-    };
-    surface.addEventListener("click", () => {
-      revealed = !revealed;
-      updateBrightness();
-    });
-    surface.append(image, veil);
-    return surface;
-  }
-
   function attachTextFigureLoadCorrection(
     scroller: HTMLElement,
     figureElement: HTMLElement,
     positionMarkers: HTMLElement[],
   ): void {
+    const existing = reactTextFigureCorrections.get(figureElement);
+    if (existing) {
+      existing.scroller = scroller;
+      existing.positionMarkers = positionMarkers;
+      return;
+    }
+    const correction = { scroller, positionMarkers };
+    reactTextFigureCorrections.set(figureElement, correction);
     const surface = Array.from(figureElement.children).find((child) => child.tagName === "BUTTON");
     const image = surface && Array.from(surface.children).find((child) => child.tagName === "IMG") as HTMLImageElement | undefined;
     if (!image) return;
@@ -983,7 +846,7 @@
     delete image.dataset.readerSource;
     delete image.dataset.readerSrcset;
     delete image.dataset.readerSizes;
-    const currentMarker = currentTextPositionMarker(positionMarkers);
+    const currentMarker = currentTextPositionMarker(correction.positionMarkers);
     const figureOffset = Number(figureElement.dataset.sourceStart);
     const markerOffset = Number(currentMarker?.dataset.sourceStart);
     const shouldCorrect = Boolean(
@@ -999,19 +862,21 @@
     const adjustAfterDecode = async () => {
       if (settled) return;
       settled = true;
-      if (!shouldCorrect || nodes?.textScroller !== scroller) return;
+      if (!shouldCorrect || reactTextScroller !== correction.scroller) return;
       try {
         if (typeof image.decode === "function") await image.decode();
       } catch {
       }
-      if (nodes?.textScroller !== scroller) return;
+      if (reactTextScroller !== correction.scroller) return;
       const applyCorrection = () => {
-        if (getNodes().textScroller !== scroller) return;
+        if (reactTextScroller !== correction.scroller) return;
         const afterTop = (currentMarker as HTMLElement).getBoundingClientRect().top;
         const delta = afterTop - beforeTop;
         if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
-          scroller.scrollTop += delta;
-          getNodes().textRestoreScrollTop = scroller.scrollTop;
+          reactTextRestoring = true;
+          correction.scroller.scrollTop += delta;
+          reactTextRestoreScrollTop = correction.scroller.scrollTop;
+          scheduleReactTextRestoreRelease(false);
         }
       };
       if (typeof global.requestAnimationFrame === "function") global.requestAnimationFrame(applyCorrection);
@@ -1045,7 +910,6 @@
   function updateTextPosition(
     scroller: HTMLElement,
     positionMarkers: HTMLElement[],
-    progress: HTMLElement,
     preferVisualTop = false,
     syncSession = true,
   ): void {
@@ -1125,22 +989,18 @@
         });
       }
     }
-    progress.textContent = `${global.Engine.calculateReadingProgress(
-      currentPosition.sourceOffset,
-      content.text.length,
-    )}%`;
   }
 
   function captureTextPosition(
     scroller: HTMLElement,
     positionMarkers: HTMLElement[],
-    progress: HTMLElement,
     force = false,
     syncSession = true,
   ): void {
-    const restoredScrollTop = getNodes().textRestoreScrollTop;
+    const restoredScrollTop = reactTextRestoreScrollTop;
     if (!force && (restoredScrollTop === null || Math.abs(scroller.scrollTop - restoredScrollTop) < 1)) return;
-    updateTextPosition(scroller, positionMarkers, progress, force, syncSession);
+    updateTextPosition(scroller, positionMarkers, force, syncSession);
+    reactTextRestoreScrollTop = scroller.scrollTop;
   }
 
   function restoreTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[]): void {
@@ -1172,133 +1032,39 @@
     scroller.scrollTop = Math.max(0, targetY - 72);
   }
 
-  function renderRsvpView() {
-    getNodes().textScroller = null;
-    getNodes().textMarkers = [];
-    getNodes().textRestoreScrollTop = null;
-    const view = global.document.createElement("div");
-    view.className = "rsvp-view";
-    const focusArea = global.document.createElement("div");
-    focusArea.className = "focus-area";
-    const previousUnit = global.document.createElement("div");
-    previousUnit.className = "context-unit previous";
-    previousUnit.setAttribute("aria-hidden", "true");
-    const unit = global.document.createElement("div");
-    unit.className = "rsvp-unit";
-    unit.setAttribute("data-reader-unit", "true");
-    unit.setAttribute("aria-live", "off");
-    unit.setAttribute("aria-atomic", "false");
-    const nextUnit = global.document.createElement("div");
-    nextUnit.className = "context-unit next";
-    nextUnit.setAttribute("aria-hidden", "true");
-    focusArea.append(previousUnit, unit, nextUnit);
-    view.append(focusArea);
-    view.addEventListener("pointerup", handleRsvpPointerUp);
-    getNodes().content.replaceChildren(view);
-    Object.assign(getNodes(), { previousUnit, unit, nextUnit });
-    renderRsvpControls();
-    contextSentenceIndex = null;
-    renderFlowItem();
-  }
-
-  function transportButton(label: string, action: () => void): HTMLButtonElement {
-    const button = global.document.createElement("button");
-    button.type = "button";
-    button.textContent = label;
-    button.addEventListener("click", action);
-    return button;
-  }
-
-  function renderRsvpControls() {
-    getNodes().transport?.remove();
-    const dock = global.document.createElement("div");
-    dock.className = "control-dock";
-    const previous = transportButton("", goBackFromControl);
-    previous.className = "dock-button previous";
-    previous.setAttribute("aria-label", "1文戻る");
-    previous.setAttribute("aria-keyshortcuts", "ArrowLeft");
-    previous.append(global.ReaderIcons.create(global.document, "previous", 34));
-    const playButton = transportButton("", togglePlayback);
-    playButton.className = "dock-button play";
-    playButton.setAttribute("aria-label", "再生");
-    playButton.setAttribute("aria-keyshortcuts", "Space");
-    playButton.append(global.ReaderIcons.create(global.document, "play", 34));
-    dock.append(previous, playButton);
-    getNodes().controlbar.append(dock);
-    getNodes().play = playButton;
-    getNodes().transport = dock;
-    if (!performanceControlsMarked) {
-      performanceControlsMarked = true;
-      markPerformance("reader:controls-ready");
+  function scheduleReactTextRestoreRelease(invalidate = true): void {
+    const generation = invalidate ? ++reactTextRestoreGeneration : reactTextRestoreGeneration;
+    const release = () => {
+      if (generation === reactTextRestoreGeneration && !reactTextRestorePending) reactTextRestoring = false;
+    };
+    if (typeof global.requestAnimationFrame === "function") {
+      global.requestAnimationFrame(() => global.requestAnimationFrame(release));
+    } else {
+      release();
     }
   }
 
-  function renderTextControls() {
-    getNodes().transport?.remove();
-    getNodes().play = null;
-    getNodes().transport = null;
-  }
-
-  function toggleMode() {
-    switchMode(sessionMode() === "rsvp" ? "text" : "rsvp");
-  }
-
-  function updateModeButton() {
-    getNodes().modeButton.hidden = false;
-    getNodes().modeButton.textContent = sessionMode() === "rsvp" ? "文章で読む" : "RSVPで読む";
-  }
-
-  function renderFlowItem(): boolean {
-    const item = flowItems[sessionFlowIndex()];
-    if (!item) return true;
-    if (item.kind === "figure") {
-      const figure = content?.readingContext?.figures?.[item.figureIndex];
-      if (figure) {
-        showFigure(figure, item.figureIndex);
-        return true;
+  function scheduleReactTextRestore(element: HTMLElement, positionMarkers: HTMLElement[]): void {
+    const generation = ++reactTextRestoreGeneration;
+    const apply = () => {
+      if (generation !== reactTextRestoreGeneration || reactTextScroller !== element) return;
+      restoreTextPosition(element, positionMarkers);
+      reactTextRestoreScrollTop = element.scrollTop;
+      reactTextRestorePending = false;
+      const release = () => {
+        if (generation === reactTextRestoreGeneration && reactTextScroller === element) reactTextRestoring = false;
+      };
+      if (typeof global.requestAnimationFrame === "function") {
+        global.requestAnimationFrame(() => global.requestAnimationFrame(release));
+      } else {
+        release();
       }
+    };
+    if (typeof global.requestAnimationFrame === "function") {
+      global.requestAnimationFrame(() => global.requestAnimationFrame(apply));
+    } else {
+      apply();
     }
-    figurePanel?.remove();
-    figurePanel = null;
-    invalidateFigureLoad();
-    renderUnit();
-    return false;
-  }
-
-  function renderUnit() {
-    if (!content) return;
-    const unitIndex = sessionUnitIndex();
-    const value = units[unitIndex];
-    const { unit, previousUnit, nextUnit, progress } = getNodes();
-    if (!value || !unit || !previousUnit || !nextUnit) return;
-    if (!performanceUnitMarked) {
-      performanceUnitMarked = true;
-      markPerformance("reader:first-unit");
-    }
-    unit.textContent = value.text;
-    unit.className = `rsvp-unit ${value.kind}`;
-    unit.dataset.readerPositionKind = "text";
-    unit.dataset.sourceStart = String(value.start);
-    unit.dataset.sourceEnd = String(value.end);
-    if (contextSentenceIndex !== value.sentenceIndex) {
-      const context = global.Engine.surroundingSentences(units, unitIndex);
-      previousUnit.textContent = context.previous;
-      nextUnit.textContent = context.next;
-      contextSentenceIndex = value.sentenceIndex;
-      fadeContext(previousUnit);
-      fadeContext(nextUnit);
-    }
-    currentPosition = { kind: "text", sourceOffset: value.start };
-    progress.textContent = `${global.Engine.calculateReadingProgress(
-      currentPosition.sourceOffset,
-      content.text.length,
-    )}%`;
-    updatePlayButton();
-  }
-
-  function fadeContext(element: HTMLElement): void {
-    if (!element.textContent || global.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-    element.animate?.([{ opacity: 0.12 }, { opacity: 0.26 }], { duration: 120, easing: "ease-out" });
   }
 
   function switchMode(nextMode: ReadingMode): void {
@@ -1306,23 +1072,32 @@
     if (nextMode === currentMode) return;
     const previousFocus = readerActiveElement();
     clearPendingLeftTap();
+    const modeRestorePending = reactTextRestorePending;
+    reactTextRestorePending = nextMode === "text";
+    let capturedPosition = currentPosition;
     if (nextMode === "rsvp" && currentMode === "text") {
-      const { textScroller, textMarkers, progress } = getNodes();
-      if (textScroller) captureTextPosition(textScroller, textMarkers, progress, true, false);
+      const textScroller = reactTextScroller;
+      const textMarkers = reactTextMarkers;
+      const scrollChanged = textScroller && (reactTextRestoreScrollTop === null || Math.abs(textScroller.scrollTop - reactTextRestoreScrollTop) >= 1);
+      if (!modeRestorePending || scrollChanged) {
+        reactTextRestoring = true;
+        if (textScroller) captureTextPosition(textScroller, textMarkers, true, false);
+      }
+      capturedPosition = currentPosition;
     } else if (currentMode === "rsvp") {
+      reactTextRestoring = true;
       const currentFlow = flowItems[sessionFlowIndex()];
       if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
     }
-    figurePanel?.remove();
-    figurePanel = null;
     invalidateFigureLoad();
     if (!applyingSession) {
       dispatchSession({
         type: nextMode === "text" ? "switchToText" : "switchToRsvp",
-        position: currentPosition,
+        position: capturedPosition,
       }, false);
     }
-    renderReader();
+    renderSessionState();
+    if (nextMode === "rsvp") scheduleReactTextRestoreRelease();
     if (!containsReaderElement(previousFocus)) {
       global.requestAnimationFrame(() => findCloseButton()?.focus());
     }
@@ -1370,7 +1145,7 @@
   function handleViewportChange() {
     if (!overlay || !content) return;
     rebuildUnits();
-    if (sessionMode() === "rsvp") renderFlowItem();
+    renderSessionState();
   }
 
   function togglePlayback() {
@@ -1378,7 +1153,7 @@
       clearPendingLeftTap();
       lastLeftTapAt = 0;
     }
-    if (figurePanel) advanceFromFigure();
+    if (readingSessionState()?.currentKind === "figure") advanceFromFigure();
     else if (sessionIsPlaying()) pause();
     else play();
   }
@@ -1404,7 +1179,7 @@
     if (lastLeftTapAt > 0 && closeToPreviousTap) {
       clearPendingLeftTap();
       lastLeftTapAt = 0;
-      showRewindFeedback(clientX, clientY);
+      setRewindFeedback(clientX, clientY);
       previousSentence();
       return;
     }
@@ -1435,52 +1210,23 @@
     pendingLeftTap = null;
   }
 
-  function showRewindFeedback(clientX: number, clientY: number): void {
-    const surface = getNodes().content;
+  function setRewindFeedback(clientX: number, clientY: number): void {
+    const surface = reactViewHost?.querySelector<HTMLElement>(".content") || reactViewHost || overlay;
+    if (!surface) return;
     const rect = surface.getBoundingClientRect();
-    const feedback = global.document.createElement("div");
-    feedback.className = "rewind-feedback";
-    feedback.setAttribute("aria-hidden", "true");
-    feedback.style.left = `${clientX - rect.left}px`;
-    feedback.style.top = `${clientY - rect.top}px`;
-    const firstRing = global.document.createElement("span");
-    firstRing.className = "rewind-ring";
-    const secondRing = global.document.createElement("span");
-    secondRing.className = "rewind-ring";
-    const icon = global.ReaderIcons.create(global.document, "previous", 30);
-    feedback.append(firstRing, secondRing, icon);
-    surface.append(feedback);
+    rewindFeedbackId += 1;
+    rewindFeedback = { left: clientX - rect.left, top: clientY - rect.top, id: rewindFeedbackId };
+    renderReactView();
+  }
 
-    const reducedMotion = global.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const ringFrames = reducedMotion
-      ? [{ opacity: 0.28 }, { opacity: 0 }]
-      : [
-          { opacity: 0.08, transform: "scale(.32)" },
-          { opacity: 0.26, transform: "scale(.9)" },
-          { opacity: 0, transform: "scale(2.15)" },
-        ];
-    const firstAnimation = firstRing.animate(ringFrames, {
-      duration: reducedMotion ? 160 : 420,
-      easing: "cubic-bezier(.22, 1, .36, 1)",
-      fill: "forwards",
-    });
-    const secondAnimation = secondRing.animate(ringFrames, {
-      duration: reducedMotion ? 160 : 420,
-      delay: reducedMotion ? 0 : 80,
-      easing: "cubic-bezier(.22, 1, .36, 1)",
-      fill: "forwards",
-    });
-    icon.animate(
-      reducedMotion
-        ? [{ opacity: 0.72 }, { opacity: 0 }]
-        : [
-            { opacity: 0, transform: "translateX(8px) scale(.9)" },
-            { opacity: 0.72, transform: "translateX(0) scale(1)" },
-            { opacity: 0, transform: "translateX(-8px) scale(.96)" },
-          ],
-      { duration: reducedMotion ? 160 : 360, easing: "ease-out", fill: "forwards" },
-    );
-    Promise.allSettled([firstAnimation.finished, secondAnimation.finished]).then(() => feedback.remove());
+  function clearRewindFeedback(id: number): void {
+    if (!rewindFeedback || rewindFeedback.id !== id) return;
+    rewindFeedback = null;
+    if (rewindFeedbackClearTimer !== null) global.clearTimeout(rewindFeedbackClearTimer);
+    rewindFeedbackClearTimer = global.setTimeout(() => {
+      rewindFeedbackClearTimer = null;
+      renderReactView();
+    }, 0);
   }
 
   function play() {
@@ -1515,235 +1261,10 @@
     sessionLifecycleAttached = false;
   }
 
-  function updatePlayButton() {
-    const playButton = nodes?.play;
-    if (!playButton) return;
-    if (figurePanel) {
-      playButton.replaceChildren(global.ReaderIcons.create(global.document, "play", 34));
-      playButton.dataset.state = "play";
-      playButton.setAttribute("aria-label", "続きを読む");
-      playButton.setAttribute("aria-pressed", "false");
-      return;
-    }
-    const state = sessionIsPlaying() ? "pause" : "play";
-    if (playButton.dataset.state !== state) {
-      playButton.replaceChildren(global.ReaderIcons.create(global.document, state, state === "pause" ? 30 : 34));
-      playButton.dataset.state = state;
-    }
-    playButton.setAttribute("aria-label", sessionIsPlaying() ? "一時停止" : "再生");
-    playButton.setAttribute("aria-pressed", sessionIsPlaying() ? "true" : "false");
-  }
-
-  function showFigure(figure: ReaderFigure, figureIndex: number): void {
-    if (
-      figurePanel?.isConnected
-      && figurePanel.dataset.figureIndex === String(figureIndex)
-      && figureViewState.kind !== "idle"
-    ) {
-      updatePlayButton();
-      return;
-    }
-    invalidateFigureLoad();
-    const token = ++figureLoadToken;
-    figureViewState = { kind: "loading", token, figureIndex };
-    figurePanel?.remove();
-    currentPosition = {
-      kind: "figure",
-      sourceOffset: figure.sourceOffset,
-      figureIndex,
-    };
-    getNodes().progress.textContent = `${global.Engine.calculateReadingProgress(
-      currentPosition.sourceOffset,
-      content?.text.length || 0,
-    )}%`;
-    const panel = global.document.createElement("figure");
-    panel.className = "rsvp-figure";
-    panel.setAttribute("aria-label", "本文画像");
-    panel.dataset.sourceStart = String(figure.sourceOffset);
-    panel.dataset.sourceEnd = String(figure.sourceEnd);
-    panel.dataset.readerPositionKind = "figure";
-    panel.dataset.figureIndex = String(figureIndex);
-    panel.addEventListener("pointerup", handleRsvpPointerUp);
-    const image = global.document.createElement("img");
-    configureFigureImage(image, figure, false, true);
-    const imageSurface = createVeiledImageSurface(image);
-    imageSurface.hidden = true;
-    imageSurface.disabled = true;
-    imageSurface.setAttribute("aria-hidden", "true");
-    const status = createFigureStatus();
-    const description = global.document.createElement("div");
-    description.setAttribute("data-reader-figure-description", "true");
-    description.textContent = figureDescription(figure);
-    description.hidden = true;
-    Object.assign(description.style, {
-      color: "var(--reader-secondary)",
-      fontSize: "14px",
-      lineHeight: "1.45",
-      textAlign: "center",
-    });
-    let caption: HTMLElement | null = null;
-    if (figure.caption) {
-      caption = global.document.createElement("figcaption");
-      caption.textContent = figure.caption;
-    }
-    image.addEventListener("load", () => {
-      void settleFigureImage(token, image, panel, status, description, imageSurface, caption);
-    });
-    image.addEventListener("error", () => {
-      failFigureImage(token, figureIndex, panel, status, description, imageSurface, caption);
-    });
-    panel.append(imageSurface, status, description);
-    if (caption) panel.append(caption);
-    getNodes().content.append(panel);
-    figurePanel = panel;
-    updatePlayButton();
-    scheduleFigureLoadingIndicator(token, panel, status, description, caption);
-    if (figure.srcset !== undefined) image.srcset = figure.srcset;
-    if (figure.sizes !== undefined) image.sizes = figure.sizes;
-    image.src = figure.src;
-    if (image.complete && image.naturalWidth > 0) {
-      void settleFigureImage(token, image, panel, status, description, imageSurface, caption);
-    }
-  }
-
-  function createFigureStatus(): HTMLDivElement {
-    const status = global.document.createElement("div");
-    status.setAttribute("data-reader-figure-status", "true");
-    status.setAttribute("role", "status");
-    status.setAttribute("aria-live", "polite");
-    status.textContent = "画像を準備しています";
-    status.hidden = true;
-    Object.assign(status.style, {
-      display: "none",
-      alignItems: "center",
-      gap: "8px",
-      color: "var(--reader-secondary)",
-      fontSize: "14px",
-      lineHeight: "1.4",
-    });
-    return status;
-  }
-
-  function figureDescription(figure: ReaderFigure): string {
-    const alt = figure.alt.trim();
-    const caption = figure.caption.trim();
-    if (alt && caption && alt !== caption) return `${alt}。${caption}`;
-    return alt || caption || "本文画像";
-  }
-
-  function scheduleFigureLoadingIndicator(
-    token: number,
-    panel: HTMLElement,
-    status: HTMLElement,
-    description: HTMLElement,
-    caption: HTMLElement | null,
-  ): void {
-    if (figureLoadRevealTimerId !== null) global.clearTimeout(figureLoadRevealTimerId);
-    figureLoadRevealTimerId = global.setTimeout(() => {
-      figureLoadRevealTimerId = null;
-      if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
-      status.hidden = false;
-      status.style.display = "flex";
-      description.hidden = false;
-      if (caption) caption.hidden = true;
-      const indicator = global.document.createElement("span");
-      indicator.setAttribute("data-reader-figure-indicator", "true");
-      indicator.setAttribute("aria-hidden", "true");
-      Object.assign(indicator.style, {
-        width: "28px",
-        height: "2px",
-        borderRadius: "999px",
-        background: "rgba(238,238,239,.24)",
-        display: "inline-block",
-        overflow: "hidden",
-      });
-      const bar = global.document.createElement("span");
-      Object.assign(bar.style, {
-        display: "block",
-        width: "100%",
-        height: "100%",
-        background: "var(--reader-text)",
-        transform: "translateX(-100%) scaleX(.35)",
-        transformOrigin: "left center",
-      });
-      indicator.append(bar);
-      if (!global.matchMedia?.("(prefers-reduced-motion: reduce)").matches) bar.animate(
-        [
-          { transform: "translateX(-100%) scaleX(.35)" },
-          { transform: "translateX(220%) scaleX(.35)" },
-        ],
-        { duration: 900, iterations: Infinity, easing: "linear" },
-      );
-      status.append(indicator);
-    }, 100);
-  }
-
-  async function settleFigureImage(
-    token: number,
-    image: HTMLImageElement,
-    panel: HTMLElement,
-    status: HTMLElement,
-    description: HTMLElement,
-    imageSurface: HTMLButtonElement,
-    caption: HTMLElement | null,
-  ): Promise<void> {
-    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
-    try {
-      if (typeof image.decode === "function") await image.decode();
-    } catch {
-      if (!(image.complete && image.naturalWidth > 0)) {
-        failFigureImage(token, figureViewState.figureIndex, panel, status, description, imageSurface, caption);
-        return;
-      }
-    }
-    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
-    if (figureLoadRevealTimerId !== null) {
-      global.clearTimeout(figureLoadRevealTimerId);
-      figureLoadRevealTimerId = null;
-    }
-    status.hidden = true;
-    status.style.display = "none";
-    description.hidden = true;
-    if (caption) caption.hidden = false;
-    figureViewState = { kind: "ready", token, figureIndex: figureViewState.figureIndex, brightness: "dimmed" };
-    imageSurface.setAttribute("aria-pressed", "false");
-    imageSurface.setAttribute("aria-label", "画像を明るく表示");
-    imageSurface.title = "画像を明るく表示";
-    imageSurface.hidden = false;
-    imageSurface.disabled = false;
-    imageSurface.removeAttribute("aria-hidden");
-    const veil = Array.from(imageSurface.children).find((child) => child.getAttribute?.("data-reader-image-veil") === "true");
-    if (veil) (veil as HTMLElement).style.opacity = "1";
-    updatePlayButton();
-  }
-
-  function failFigureImage(
-    token: number,
-    figureIndex: number,
-    panel: HTMLElement,
-    status: HTMLElement,
-    description: HTMLElement,
-    imageSurface: HTMLElement,
-    caption: HTMLElement | null,
-  ): void {
-    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
-    if (figureLoadRevealTimerId !== null) {
-      global.clearTimeout(figureLoadRevealTimerId);
-      figureLoadRevealTimerId = null;
-    }
-    status.hidden = false;
-    status.style.display = "block";
-    status.textContent = "画像を読み込めませんでした";
-    description.hidden = false;
-    if (caption) caption.hidden = true;
-    imageSurface.remove();
-    figureViewState = { kind: "failed", token, figureIndex };
-    updatePlayButton();
-  }
-
   function invalidateFigureLoad(): void {
     figureLoadToken += 1;
     figureViewState = { kind: "idle" };
+    reactFigureBrightness = "dimmed";
     if (figureLoadRevealTimerId !== null) {
       global.clearTimeout(figureLoadRevealTimerId);
       figureLoadRevealTimerId = null;
@@ -1917,18 +1438,18 @@
   }
 
   function destroySessionState(): void {
+    unmountReactViewer();
     if (playbackTimer !== null) global.clearTimeout(playbackTimer);
     playbackTimer = null;
     clearPendingLeftTap();
+    if (rewindFeedbackClearTimer !== null) global.clearTimeout(rewindFeedbackClearTimer);
+    rewindFeedbackClearTimer = null;
     content = null;
+    viewBlocks = [];
     units = [];
     flowItems = [];
-    contextSentenceIndex = null;
     invalidateFigureLoad();
-    figurePanel?.remove();
-    figurePanel = null;
     currentPosition = { kind: "text", sourceOffset: 0 };
-    nodes = null;
     opening = false;
     lastLeftTapAt = 0;
     lastLeftTapX = 0;
@@ -1943,6 +1464,14 @@
     pendingSessionCommands = [];
     sessionInitFailure = false;
     applyingSession = false;
+    slowPreparationVisible = false;
+    reactTextScroller = null;
+    reactTextMarkers = [];
+    reactTextRestoreGeneration += 1;
+    reactTextRestoring = false;
+    reactTextRestorePending = false;
+    reactTextRestoreScrollTop = null;
+    rewindFeedback = null;
   }
 
   function destroyLaunchProgressIfPresent(): void {

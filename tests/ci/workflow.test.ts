@@ -26,6 +26,9 @@ test("CI uploads the performance baseline before Chromium E2E can clear test-res
   assert.ok(baselineBuild >= 0 && baselineBuild < measure);
   assert.match(chromiumJob.slice(baselineBuild, measure), /READER_PERFORMANCE_BASELINE_ROOT=/);
   assert.match(chromiumJob.slice(baselineBuild, measure), /READER_PERFORMANCE_BASE_COMMIT=/);
+  assert.match(chromiumJob.slice(baselineBuild, measure), /cd \"\$baseline_dir\" && pnpm install --frozen-lockfile --ignore-scripts/);
+  assert.doesNotMatch(chromiumJob.slice(baselineBuild, measure), /ln -s \"\$GITHUB_WORKSPACE\/node_modules\"/);
+  assert.match(chromiumJob.slice(baselineBuild, measure), /mise run build(?:\)|\r?\n|$)/);
   assert.match(chromiumJob.slice(baselineBuild, measure), /rustfmt,clippy --target wasm32-unknown-unknown/);
   assert.match(chromiumJob.slice(baselineBuild, measure), /rustup override set 1\.97\.1/);
   assert.ok(measure >= 0 && measure < upload);

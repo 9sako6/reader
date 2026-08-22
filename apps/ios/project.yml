@@ -41,7 +41,7 @@ targets:
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/defuddle.js
         buildPhase: resources
-      - path: ReaderExtension/Resources/generated/session-wasm.js
+      - path: ReaderExtension/Resources/generated/session-wasm-module.js
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/session.js
         buildPhase: resources
