@@ -30,6 +30,11 @@ class FakeElement {
     this.ownerDocument = null;
     this.listeners = new Map();
     this.animations = [];
+    this.shadowRoot = null;
+    this.mode = null;
+    this.open = false;
+    this.showModalCalls = 0;
+    this.closeCalls = 0;
   }
 
   append(...children) {
@@ -56,6 +61,13 @@ class FakeElement {
     const listeners = this.listeners.get(type) || [];
     listeners.push(listener);
     this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type, listener) {
+    this.listeners.set(
+      type,
+      (this.listeners.get(type) || []).filter((candidate) => candidate !== listener),
+    );
   }
 
   dispatchEvent(event) {
@@ -96,11 +108,37 @@ class FakeElement {
   focus() {
     if (this.ownerDocument) this.ownerDocument.activeElement = this;
   }
+
+  attachShadow({ mode }) {
+    const shadowRoot = new FakeElement("#shadow-root");
+    shadowRoot.mode = mode;
+    shadowRoot.host = this;
+    shadowRoot.ownerDocument = this.ownerDocument;
+    shadowRoot.activeElement = null;
+    this.shadowRoot = shadowRoot;
+    return shadowRoot;
+  }
+
+  showModal() {
+    this.showModalCalls += 1;
+    this.open = true;
+    this.setAttribute("open", "");
+  }
+
+  close() {
+    this.closeCalls += 1;
+    this.open = false;
+    delete this.attributes.open;
+  }
 }
 
 function findElement(root, predicate) {
   if (!root) return null;
   if (predicate(root)) return root;
+  if (root.shadowRoot) {
+    const shadowMatch = findElement(root.shadowRoot, predicate);
+    if (shadowMatch) return shadowMatch;
+  }
   for (const child of root.children) {
     const match = findElement(child, predicate);
     if (match) return match;
@@ -111,6 +149,7 @@ function findElement(root, predicate) {
 function findElements(root, predicate) {
   if (!root) return [];
   const matches = predicate(root) ? [root] : [];
+  if (root.shadowRoot) matches.push(...findElements(root.shadowRoot, predicate));
   for (const child of root.children) matches.push(...findElements(child, predicate));
   return matches;
 }
@@ -642,6 +681,89 @@ test("reader marks the dialog and RSVP unit for assistive technology", () => {
   assert.equal(unit.attributes["aria-live"], "off");
   assert.equal(unit.attributes["aria-atomic"], "false");
   assert.equal(previous.attributes["aria-hidden"], "true");
+});
+
+test("reader owns an open shadow root and presents its internal dialog in the top layer", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "shadow-dialog-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "Shadow DOM内の本文です。",
+    requestId: "shadow-dialog-request",
+  });
+
+  const host = document.getElementById("__rsvp-reader-root");
+  assert.ok(host);
+  assert.equal(host.dataset.readerOwned, "true");
+  assert.ok(host.shadowRoot);
+  assert.equal(host.shadowRoot.mode, "open");
+
+  const dialog = findElement(host, (element) => element.tagName === "DIALOG");
+  assert.ok(dialog);
+  assert.notEqual(dialog, host);
+  assert.equal(dialog.attributes["aria-label"], "reader");
+  assert.equal(dialog.attributes["aria-modal"], "true");
+  assert.equal(dialog.showModalCalls, 1);
+  assert.equal(dialog.open, true);
+  assert.equal(host.style.pointerEvents, "none");
+  assert.equal(dialog.style.pointerEvents, "auto");
+});
+
+test("reader cleanup removes only its owned host when the page already uses the root id", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener } = harness;
+  const pageElement = new FakeElement("div");
+  pageElement.ownerDocument = document;
+  pageElement.id = "__rsvp-reader-root";
+  pageElement.textContent = "元ページの要素";
+  documentElement.append(pageElement);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "same-id-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "同名IDがあってもReaderを閉じられます。",
+    requestId: "same-id-request",
+  });
+
+  const host = documentElement.children.find((element) => element.dataset.readerOwned === "true");
+  assert.ok(host);
+  const closeButton = findElement(host, (element) => element.attributes["aria-label"] === "readerを閉じる");
+  closeButton.dispatchEvent({ type: "click" });
+
+  assert.equal(pageElement.parent, documentElement);
+  assert.equal(pageElement.textContent, "元ページの要素");
+  assert.equal(host.parent, null);
+});
+
+test("reader cancel closes the dialog once and remains safe when Escape follows", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "cancel-dialog-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "cancelイベントの本文です。",
+    requestId: "cancel-dialog-request",
+  });
+
+  const host = document.getElementById("__rsvp-reader-root");
+  const dialog = findElement(host, (element) => element.tagName === "DIALOG");
+  let prevented = false;
+  dialog.dispatchEvent({
+    type: "cancel",
+    preventDefault() {
+      prevented = true;
+    },
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(dialog.closeCalls, 1);
+  assert.equal(host.parent, null);
+
+  document.dispatchEvent({ type: "keydown", key: "Escape", preventDefault() {} });
+  assert.equal(dialog.closeCalls, 1);
 });
 
 test("reader does not scale controls when reduced motion is enabled", () => {
