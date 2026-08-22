@@ -640,7 +640,7 @@
       right: "0",
       pointerEvents: "auto",
     });
-    topbar.append(closeButton, modeButton);
+    topbar.append(modeButton, closeButton);
     return topbar;
   }
 
@@ -2148,6 +2148,19 @@
     if (focusable.length === 0) return;
     const active = readerActiveElement();
     const currentIndex = focusable.indexOf(active as HTMLElement);
+    const textShell = root.querySelector?.("[data-reader-text-shell]");
+    const activeTopbar = active?.parentElement?.getAttribute?.("data-reader-topbar") === "true";
+    if (textShell && activeTopbar) {
+      const isCloseButton = active?.getAttribute?.("aria-label") === "readerを閉じる";
+      const closeButton = findCloseButton();
+      const modeButton = active?.parentElement?.querySelector?.("button:not([aria-label='readerを閉じる'])") as HTMLButtonElement | null;
+      const nextTopbarButton = event.shiftKey && !isCloseButton ? closeButton : !event.shiftKey && isCloseButton ? modeButton : null;
+      if (nextTopbarButton) {
+        event.preventDefault();
+        nextTopbarButton.focus?.({ preventScroll: true });
+        return;
+      }
+    }
     const nextIndex = event.shiftKey
       ? currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1
       : currentIndex < 0 || currentIndex >= focusable.length - 1 ? 0 : currentIndex + 1;
