@@ -88,7 +88,7 @@
   let sessionEnabled = false;
   let applyingSession = false;
   let sessionLifecycleAttached = false;
-  let reactSpikeMount: ReaderReactMount | null = null;
+  let reactViewMount: ReaderReactViewerMount | null = null;
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
   let performanceUnitMarked = false;
@@ -120,18 +120,18 @@
     global.performance?.mark?.(name);
   }
 
-  function mountReactSpike(shadowRoot: ShadowRoot | null): void {
-    if (!shadowRoot || !globalThis.ReaderReactSpike || reactSpikeMount) return;
+  function mountReactViewer(shadowRoot: ShadowRoot | null): void {
+    if (!shadowRoot || !globalThis.ReaderReactViewer || reactViewMount) return;
     const root = global.document.createElement("div");
-    root.hidden = true;
     root.setAttribute("data-reader-react-root", "true");
     shadowRoot.append(root);
-    reactSpikeMount = globalThis.ReaderReactSpike.mount(root);
+    reactViewMount = globalThis.ReaderReactViewer.mount(root);
+    reactViewMount.render({ kind: "closed" }, {});
   }
 
-  function unmountReactSpike(): void {
-    reactSpikeMount?.unmount();
-    reactSpikeMount = null;
+  function unmountReactViewer(): void {
+    reactViewMount?.unmount();
+    reactViewMount = null;
   }
 
   function getNodes(): MobileNodes {
@@ -149,6 +149,7 @@
     root.append(createStyles());
     handle = createHandle();
     root.append(handle);
+    mountReactViewer(root);
     global.document.documentElement.append(host);
     global.addEventListener("scroll", fadeHandleDuringScroll, { passive: true });
     global.addEventListener("resize", handleViewportChange, { passive: true });
@@ -263,7 +264,7 @@
     activePreparation = { kind: "preparing", requestId: String(generation), startedAt: Date.now() };
     attachSessionLifecycle();
     beginReaderSession(String(generation));
-    mountReactSpike(shadow);
+    if (reactViewMount) reactViewMount.render({ kind: "closed" }, {});
     launchFocus = handle;
     makeBackgroundInert(host);
     sourceScrollY = global.scrollY || 0;
@@ -1933,7 +1934,7 @@
   }
 
   function destroySessionState(): void {
-    unmountReactSpike();
+    unmountReactViewer();
     if (playbackTimer !== null) global.clearTimeout(playbackTimer);
     playbackTimer = null;
     clearPendingLeftTap();

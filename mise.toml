@@ -58,13 +58,13 @@ run = [
   "pnpm exec tsc -p tsconfig.tests.json",
 ]
 
-[tasks."build:react-spike"]
-description = "Bundle the React compatibility spike"
-run = "node scripts/build-react-spike.mjs"
+[tasks."build:reader-view"]
+description = "Bundle the React viewer"
+run = "node scripts/build-reader-view.mjs"
 
 [tasks."build:chrome"]
 description = "Build the Chrome extension"
-depends = ["compile", "build:react-spike", "build:session-wasm", "build:session-licenses"]
+depends = ["compile", "build:reader-view", "build:session-wasm", "build:session-licenses"]
 run = '''
 rm -rf apps/chrome/dist
 install -d apps/chrome/dist/vendor/defuddle apps/chrome/dist/LICENSES
@@ -111,7 +111,7 @@ test -f artifacts/chrome/SHA256SUMS
 
 [tasks."build:ios"]
 description = "Build the Safari extension resources"
-depends = ["compile", "build:react-spike", "build:session-wasm", "build:session-licenses"]
+depends = ["compile", "build:reader-view", "build:session-wasm", "build:session-licenses"]
 run = '''
 rm -rf apps/ios/ReaderExtension/Resources/generated
 install -d apps/ios/ReaderExtension/Resources/generated

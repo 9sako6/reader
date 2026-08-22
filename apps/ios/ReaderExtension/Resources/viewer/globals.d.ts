@@ -4,15 +4,16 @@ declare global {
   var __READER_PERFORMANCE_ENABLED: boolean | undefined;
   var __READER_PERFORMANCE_LAST_METRICS: ReaderExtractionMetrics | undefined;
 
-  interface ReaderReactMount {
+  interface ReaderReactViewerMount {
+    render(model: unknown, handlers: unknown): void;
     unmount(): void;
   }
 
-  interface ReaderReactSpikeApi {
-    mount(host: Element): ReaderReactMount;
+  interface ReaderReactViewerApi {
+    mount(host: Element): ReaderReactViewerMount;
   }
 
-  var ReaderReactSpike: ReaderReactSpikeApi | undefined;
+  var ReaderReactViewer: ReaderReactViewerApi | undefined;
 
   interface ReaderMobileViewer {
     install(): void;

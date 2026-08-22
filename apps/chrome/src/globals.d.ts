@@ -3,13 +3,14 @@ export {};
 declare global {
   var __rsvpReaderInstalled: boolean;
 
-  interface ReaderReactMount {
+  interface ReaderReactViewerMount {
+    render(model: unknown, handlers: unknown): void;
     unmount(): void;
   }
 
-  interface ReaderReactSpikeApi {
-    mount(host: Element): ReaderReactMount;
+  interface ReaderReactViewerApi {
+    mount(host: Element): ReaderReactViewerMount;
   }
 
-  var ReaderReactSpike: ReaderReactSpikeApi | undefined;
+  var ReaderReactViewer: ReaderReactViewerApi | undefined;
 }

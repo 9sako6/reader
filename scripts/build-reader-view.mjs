@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 
 await build({
-  entryPoints: ["packages/react-spike/src/react-spike.ts"],
+  entryPoints: ["packages/reader-view/src/reader-view-entry.ts"],
   bundle: true,
   format: "iife",
   platform: "browser",
@@ -10,6 +10,6 @@ await build({
     "process.env.NODE_ENV": '"production"',
   },
   minify: true,
-  outfile: ".build/react-spike/react-spike.js",
+  outfile: ".build/reader-view/reader-view.js",
   legalComments: "none",
 });

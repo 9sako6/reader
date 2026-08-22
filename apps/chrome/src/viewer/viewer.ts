@@ -84,20 +84,117 @@
   let sessionEnabled = false;
   let applyingSession = false;
   let sessionLifecycleAttached = false;
-  let reactSpikeMount: ReaderReactMount | null = null;
+  let reactViewMount: ReaderReactViewerMount | null = null;
 
-  function mountReactSpike(shadowRoot: ShadowRoot | null): void {
-    if (!shadowRoot || !globalThis.ReaderReactSpike || reactSpikeMount) return;
-    const host = document.createElement("div");
-    host.hidden = true;
-    host.setAttribute("data-reader-react-root", "true");
-    shadowRoot.append(host);
-    reactSpikeMount = globalThis.ReaderReactSpike.mount(host);
+  type ReactReaderViewModel = {
+    kind: "closed" | "loading" | "error" | "rsvp" | "text";
+    slow?: boolean;
+    reducedMotion?: boolean;
+    message?: string;
+    canRetry?: boolean;
+    previous?: string;
+    next?: string;
+    unit?: ReaderUnit | null;
+    figure?: { figure: ReaderFigure; figureIndex: number; status: "loading" | "ready" | "failed" } | null;
+    playing?: boolean;
+    progress?: number;
+    headings?: ReaderHeading[];
+    activeHeadingIndex?: number;
+    blocks?: ReaderBlock[];
+    figures?: ReaderFigure[];
+    position?: ReaderPosition;
+    title?: string;
+  };
+
+  function reactViewerAvailable(): boolean {
+    return typeof globalThis.ReaderReactViewer?.mount === "function";
   }
 
-  function unmountReactSpike(): void {
-    reactSpikeMount?.unmount();
-    reactSpikeMount = null;
+  function mountReactViewer(dialog: HTMLDialogElement): void {
+    if (!reactViewerAvailable() || reactViewMount) return;
+    const host = document.createElement("div");
+    host.setAttribute("data-reader-react-root", "true");
+    Object.assign(host.style, { position: "absolute", inset: "0", pointerEvents: "auto" });
+    dialog.append(host);
+    reactViewMount = globalThis.ReaderReactViewer?.mount(host) || null;
+  }
+
+  function unmountReactViewer(): void {
+    reactViewMount?.unmount();
+    reactViewMount = null;
+  }
+
+  function renderReactView(model: ReactReaderViewModel): void {
+    if (!reactViewMount) return;
+    reactViewMount.render(model, {
+      close,
+      cancel: cancelLoading,
+      retry: retryPreparation,
+      switchToText: showTextView,
+      switchToRsvp: showRsvpView,
+      previousSentence: goBackOneSentence,
+      togglePlayback: togglePlayPause,
+      resumeFigure: advanceFromFigure,
+      figureLoad: (figureIndex: number) => settleReactFigure(figureIndex, true),
+      figureError: (figureIndex: number) => settleReactFigure(figureIndex, false),
+      textScroll: (element: HTMLElement) => {
+        textScroller = element;
+        updateTextPosition(element, textPositionMarkers);
+      },
+      textPosition: (element: HTMLElement) => updateTextPosition(element, textPositionMarkers),
+    });
+  }
+
+  function reactViewModel(): ReactReaderViewModel {
+    if (activePreparation.kind === "preparing") {
+      const elapsed = loadingStartedAt === null ? 0 : Date.now() - loadingStartedAt;
+      return { kind: "loading", slow: elapsed >= SLOW_PREPARATION_DELAY_MS, reducedMotion: prefersReducedMotion() };
+    }
+    if (activePreparation.kind === "failed") {
+      return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: activePreparation.reason !== "session_unavailable" };
+    }
+    const state = readingSessionState();
+    if (state?.mode === "text") {
+      return {
+        kind: "text",
+        blocks: blocks.length > 0 ? blocks : fallbackBlocks(sourceText),
+        figures,
+        position: currentPosition,
+        progress: sourceText ? globalThis.Engine.calculateReadingProgress(currentPosition.sourceOffset, sourceText.length) : 0,
+        title: "",
+      };
+    }
+    const item = state ? flowItems[state.flowIndex] : flowItems[0];
+    const unitIndex = state?.unitIndex ?? (item?.kind === "unit" ? item.unitIndex : 0);
+    const unit = item?.kind === "unit" ? units[unitIndex] || null : null;
+    const figureIndex = item?.kind === "figure" ? item.figureIndex : null;
+    const figure = figureIndex === null ? null : figures[figureIndex] || null;
+    const figureState = figure && figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex
+      ? figureViewState.kind
+      : figure ? "loading" : null;
+    const figureView = figureIndex !== null && figure && figureState
+      ? { figure, figureIndex, status: figureState }
+      : null;
+    const position = state?.position || currentPosition;
+    return {
+      kind: "rsvp",
+      previous: unit ? globalThis.Engine.surroundingSentences(units, unitIndex).previous : "",
+      next: unit ? globalThis.Engine.surroundingSentences(units, unitIndex).next : "",
+      unit,
+      figure: figureView,
+      playing: state?.playback === "playing",
+      progress: sourceText ? globalThis.Engine.calculateReadingProgress(position.sourceOffset, sourceText.length) : 0,
+      headings,
+      activeHeadingIndex: activeHeadingAt(position.sourceOffset),
+    };
+  }
+
+  function settleReactFigure(figureIndex: number, loaded: boolean): void {
+    if (figureViewState.kind === "idle" || figureViewState.figureIndex !== figureIndex) return;
+    figureViewState = loaded
+      ? { kind: "ready", token: figureViewState.token, figureIndex, brightness: "revealed" }
+      : { kind: "failed", token: figureViewState.token, figureIndex };
+    renderReactView(reactViewModel());
   }
 
   function readingSessionState(): ReaderSessionObservableState | null {
@@ -411,6 +508,10 @@
 
   function renderSessionState(): void {
     const state = sessionState;
+    if (reactViewMount) {
+      renderReactView(reactViewModel());
+      return;
+    }
     if (!state || state.phase !== "reading" || state.mode !== "rsvp") return;
     renderCurrentFlowItem();
   }
@@ -418,6 +519,11 @@
   function createLoadingOverlay() {
     if (loadingLayer) return;
     root = createRoot();
+    if (reactViewMount) {
+      renderReactView(reactViewModel());
+      attachKeydownListener();
+      return;
+    }
     loadingLayer = document.createElement("div");
     loadingLayer.setAttribute("data-reader-loading", "true");
     Object.assign(loadingLayer.style, {
@@ -468,6 +574,11 @@
   }
 
   function showSlowLoading(): void {
+    if (reactViewMount) {
+      renderReactView(reactViewModel());
+      focusAfterPaint(findCloseButton());
+      return;
+    }
     if (!loadingLayer || loadingStatus || loadingCancelButton) return;
     loadingLayer.style.pointerEvents = "auto";
     loadingStatus = document.createElement("div");
@@ -536,6 +647,11 @@
     loadingCancelButton = null;
     loadingLayer = null;
     activePreparation = { kind: "failed", requestId, reason };
+    if (reactViewMount) {
+      renderReactView(reactViewModel());
+      attachKeydownListener();
+      return;
+    }
     if (!root) {
       root = createRoot();
     }
@@ -677,6 +793,18 @@
   function createOverlay() {
     if (!root) {
       root = createRoot();
+    }
+    if (reactViewMount) {
+      renderReactView(reactViewModel());
+      attachKeydownListener();
+      focusAfterPaint(findCloseButton());
+      if (typeof globalThis.ResizeObserver === "function" && !displayResizeObserver) {
+        displayResizeObserver = new globalThis.ResizeObserver(() => {
+          if (rebuildUnitsForViewport()) renderCurrentFlowItem();
+        });
+        displayResizeObserver.observe(root);
+      }
+      return;
     }
 
     const stage = document.createElement("div");
@@ -1059,9 +1187,9 @@
     }
     if (readerShadow) readerShadow.append(style, dialog);
     else host.append(style, dialog);
-    mountReactSpike(readerShadow);
 
     root = dialog;
+    mountReactViewer(dialog);
     root.addEventListener("focusin", rememberReaderFocus, true);
     dialogCancelListener = (event: Event) => {
       event.preventDefault();
@@ -1395,6 +1523,13 @@
     if (!applyingSession) {
       dispatchSession({ type: "switchToText", position: currentPosition });
     }
+    pause();
+    if (reactViewMount) {
+      renderReactView(reactViewModel());
+      attachKeydownListener();
+      focusCloseIfNeeded(activeElement);
+      return;
+    }
     clearRenderedView();
 
     const shell = document.createElement("div");
@@ -1502,6 +1637,12 @@
     const previousFocus = readerActiveElement();
     const restoreModeFocus = previousFocus?.getAttribute?.("data-reader-mode-button") === "true";
     dispatchSession({ type: "switchToRsvp", position: currentPosition });
+    if (reactViewMount) {
+      renderReactView(reactViewModel());
+      attachKeydownListener();
+      if (restoreModeFocus) focusAfterPaint(findModeButton());
+      return;
+    }
     clearRenderedView();
     createOverlay();
     renderCurrentFlowItem();
@@ -1950,6 +2091,23 @@
   function renderCurrentFlowItem(): boolean {
     const item = flowItems[sessionFlowIndex()];
     if (!item) return true;
+    if (reactViewMount) {
+      if (item.kind === "figure") {
+        const figure = figures[item.figureIndex];
+        if (figure) {
+          if (figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) {
+            figureViewState = { kind: "loading", token: ++figureLoadToken, figureIndex: item.figureIndex };
+          }
+          currentPosition = { kind: "figure", sourceOffset: figure.sourceOffset, figureIndex: item.figureIndex };
+        }
+      } else {
+        figureViewState = { kind: "idle" };
+        const unit = units[item.unitIndex];
+        if (unit) currentPosition = { kind: "text", sourceOffset: unit.start };
+      }
+      renderReactView(reactViewModel());
+      return item.kind === "figure";
+    }
     if (item.kind === "figure") {
       const figure = figures[item.figureIndex];
       if (figure) {
@@ -1964,6 +2122,10 @@
   }
 
   function renderCurrentUnit() {
+    if (reactViewMount) {
+      renderReactView(reactViewModel());
+      return;
+    }
     if (!display || units.length === 0) return;
 
     const unitIndex = sessionUnitIndex();
@@ -2362,7 +2524,7 @@
   }
 
   function togglePlayPause() {
-    if (figurePanel) {
+    if (figurePanel || (reactViewMount && readingSessionState()?.currentKind === "figure")) {
       advanceFromFigure();
       return;
     }
@@ -2571,7 +2733,7 @@
     }
     const host = rootHost;
     try {
-      unmountReactSpike();
+      unmountReactViewer();
       host?.remove();
     } finally {
       root = null;
