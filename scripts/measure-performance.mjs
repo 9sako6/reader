@@ -368,7 +368,11 @@ async function setupPerformancePage(browser, fixture, variant = "candidate") {
   return { page, cdp };
 }
 
-async function measurePerformanceCycle(page, cdp, settleMs = 0, { clearEntries = false, priorWasmFetchedBeforeTap = false } = {}) {
+async function measurePerformanceCycle(page, cdp, settleMs = 0, {
+  clearEntries = false,
+  collectTimingSample = true,
+  priorWasmFetchedBeforeTap = false,
+} = {}) {
   if (clearEntries) {
     await page.evaluate(() => {
       performance.clearMarks();
@@ -408,7 +412,9 @@ async function measurePerformanceCycle(page, cdp, settleMs = 0, { clearEntries =
       };
     }, priorWasmFetchedBeforeTap);
   });
-  const result = buildPerformanceSample(rawResult);
+  const result = collectTimingSample
+    ? buildPerformanceSample(rawResult)
+    : { wasmFetchedBeforeTap: rawResult.wasmFetchedBeforeTap };
   await page.evaluate(() => globalThis.MobileViewer.close());
   if (settleMs > 0) await page.waitForTimeout(settleMs);
   await page.evaluate(() => {
@@ -436,6 +442,7 @@ async function measurePage(browser, fixture, variant = "candidate", { withCleanu
     if (!withCleanup) return first;
     const second = await measurePerformanceCycle(page, cdp, 500, {
       clearEntries: true,
+      collectTimingSample: false,
       priorWasmFetchedBeforeTap: first.wasmFetchedBeforeTap,
     });
     return {
@@ -463,6 +470,7 @@ async function measureCleanupCycles(browser, fixture, variant, cycles = 8) {
     for (let cycle = 0; cycle < cycles; cycle += 1) {
       runs.push(await measurePerformanceCycle(page, cdp, 500, {
         clearEntries: cycle > 0,
+        collectTimingSample: cycle === 0,
         priorWasmFetchedBeforeTap: runs[0]?.wasmFetchedBeforeTap ?? false,
       }));
     }
