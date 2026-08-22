@@ -90,19 +90,20 @@ async function verifyPackage() {
     : resolve(repositoryRoot, "DerivedData/Build/Products/Debug-iphonesimulator/reader-extension.appex");
   try {
     await stat(bundleRoot);
-    const sourceManifestBytes = await readFile(manifestPath);
-    const packagedManifestBytes = await readFile(join(bundleRoot, "manifest.json"));
-    assert.equal(sha256(packagedManifestBytes), sha256(sourceManifestBytes));
-    const packagedManifest = JSON.parse(packagedManifestBytes.toString("utf8"));
-    assert.deepEqual(packagedManifest.web_accessible_resources, manifest.web_accessible_resources);
-    for (const asset of requiredAssets) {
-      const packagedBytes = await readFile(join(bundleRoot, asset));
-      const generatedBytes = generatedAssets.get(asset);
-      assert.equal(sha256(packagedBytes), sha256(generatedBytes), `${asset} package hash differs from generated asset`);
-      assert.equal(Buffer.compare(packagedBytes, generatedBytes), 0, `${asset} package bytes differ from generated asset`);
-    }
   } catch (error) {
     if (process.env.READER_REQUIRE_IOS_EXTENSION_BUNDLE === "1") throw error;
+    return;
+  }
+  const sourceManifestBytes = await readFile(manifestPath);
+  const packagedManifestBytes = await readFile(join(bundleRoot, "manifest.json"));
+  assert.equal(sha256(packagedManifestBytes), sha256(sourceManifestBytes));
+  const packagedManifest = JSON.parse(packagedManifestBytes.toString("utf8"));
+  assert.deepEqual(packagedManifest.web_accessible_resources, manifest.web_accessible_resources);
+  for (const asset of requiredAssets) {
+    const packagedBytes = await readFile(join(bundleRoot, asset));
+    const generatedBytes = generatedAssets.get(asset);
+    assert.equal(sha256(packagedBytes), sha256(generatedBytes), `${asset} package hash differs from generated asset`);
+    assert.equal(Buffer.compare(packagedBytes, generatedBytes), 0, `${asset} package bytes differ from generated asset`);
   }
 }
 
