@@ -40,6 +40,12 @@ targets:
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/defuddle.js
         buildPhase: resources
+      - path: ReaderExtension/Resources/generated/session-wasm.js
+        buildPhase: resources
+      - path: ReaderExtension/Resources/generated/session.js
+        buildPhase: resources
+      - path: ReaderExtension/Resources/generated/reader_session_bg.wasm
+        buildPhase: resources
       - path: ReaderExtension/Resources/generated/engine.js
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/extractor.js

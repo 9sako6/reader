@@ -9,6 +9,8 @@
       "matches": ["<all_urls>"],
       "js": [
         "defuddle.js",
+        "session-wasm.js",
+        "session.js",
         "engine.js",
         "extractor.js",
         "icons.js",

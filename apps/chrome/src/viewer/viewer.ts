@@ -64,6 +64,9 @@
   let backgroundInert = false;
   let keydownListenerAttached = false;
   let activePreparation: PreparationState = { kind: "idle" };
+  let sessionState: ReaderSessionState | null = null;
+  let sessionEnabled = false;
+  let applyingSession = false;
 
   function isReaderMessage(value: unknown): value is ReaderMessage {
     if (typeof value !== "object" || value === null || !("type" in value)) return false;
@@ -88,6 +91,10 @@
     if (message?.type === "RSVP_ERROR") {
       showError(message.requestId, message.reason);
     }
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") dispatchSession({ type: "VISIBILITY_HIDDEN" });
   });
 
   function showLoading(requestId: string): void {
@@ -188,7 +195,110 @@
     createOverlay();
     rebuildUnitsForViewport();
     activePreparation = { kind: "ready", requestId };
-    if (!renderCurrentFlowItem()) play();
+    if (readerSessionAvailable()) {
+      playbackState = "paused";
+      renderCurrentFlowItem();
+      void initializeReaderSession(requestId);
+    } else if (!renderCurrentFlowItem()) play();
+  }
+
+  function readerSessionAvailable(): boolean {
+    const candidate = globalThis.ReaderSession;
+    return typeof candidate?.init === "function"
+      && typeof candidate.create === "function"
+      && typeof candidate.reduce === "function";
+  }
+
+  async function initializeReaderSession(requestId: string): Promise<void> {
+    if (!readerSessionAvailable()) return;
+    try {
+      await globalThis.ReaderSession.init();
+      if (requestId !== activeRequestId) return;
+      const sessionUnits = units.map((unit, index) => ({
+        ...unit,
+        durationMs: globalThis.Engine.displayDuration(unit, units[index + 1]),
+      }));
+      sessionState = globalThis.ReaderSession.create({
+        requestId,
+        textLength: sourceText.length,
+        units: sessionUnits,
+        figures,
+        flow: flowItems,
+        timingProfile: {},
+      });
+      sessionEnabled = true;
+      syncReaderSessionState();
+      applyingSession = true;
+      try {
+        renderCurrentFlowItem();
+      } finally {
+        applyingSession = false;
+      }
+      if (sessionState.phase === "reading" && sessionState.position?.kind === "text") {
+        dispatchSession({ type: "PAUSE" });
+        dispatchSession({ type: "PLAY" });
+      }
+    } catch {
+      sessionState = null;
+      sessionEnabled = false;
+      if (requestId === activeRequestId && !renderCurrentFlowItem()) play();
+    }
+  }
+
+  function syncReaderSessionState(): void {
+    const state = sessionState;
+    if (!state) return;
+    if (state.phase === "reading") {
+      if (state.units) units = state.units;
+      if (state.figures) figures = state.figures;
+      if (state.flow) flowItems = state.flow;
+      if (typeof state.flowIndex === "number") flowIndex = state.flowIndex;
+      if (state.position) currentPosition = state.position;
+      const item = flowItems[flowIndex];
+      if (item?.kind === "unit") currentUnitIndex = item.unitIndex;
+      playbackState = state.playback || "paused";
+    } else if (state.phase === "ended") {
+      playbackState = "idle";
+    } else if (state.phase !== "idle") {
+      playbackState = "paused";
+    }
+    updatePlayPauseButton();
+  }
+
+  function dispatchSession(command: ReaderSessionCommand): void {
+    if (!sessionEnabled || !sessionState || applyingSession) return;
+    const api = globalThis.ReaderSession;
+    const transition = api.reduce(sessionState, command);
+    sessionState = transition.state;
+    syncReaderSessionState();
+    applyingSession = true;
+    try {
+      for (const effect of transition.effects) {
+        if (effect.type === "CANCEL_TICK") {
+          stopTimer();
+        } else if (effect.type === "SCHEDULE_TICK") {
+          stopTimer();
+          timerId = globalThis.setTimeout(() => {
+            timerId = null;
+            dispatchSession({ type: "TICK", generation: effect.generation });
+          }, effect.delayMs);
+        } else if (effect.type === "RENDER_UNIT") {
+          flowIndex = sessionState.flowIndex ?? flowIndex;
+          currentUnitIndex = effect.unitIndex;
+          dismissFigurePanel();
+          renderCurrentUnit();
+        } else if (effect.type === "RENDER_FIGURE") {
+          flowIndex = sessionState.flowIndex ?? flowIndex;
+          const figure = figures[effect.figureIndex];
+          if (figure) showFigure(figure, effect.figureIndex);
+        } else if (effect.type === "DESTROY_CONTENT") {
+          stopTimer();
+          dismissFigurePanel();
+        }
+      }
+    } finally {
+      applyingSession = false;
+    }
   }
 
   function createLoadingOverlay() {
@@ -559,7 +669,7 @@
 
     if (typeof globalThis.ResizeObserver === "function") {
       displayResizeObserver = new globalThis.ResizeObserver(() => {
-        if (rebuildUnitsForViewport()) renderCurrentFlowItem();
+        if (rebuildUnitsForViewport() && !sessionEnabled) renderCurrentFlowItem();
       });
       displayResizeObserver.observe(main);
     }
@@ -1017,6 +1127,9 @@
   function showTextView() {
     if (!root || !sourceText) return;
     const activeElement = readerActiveElement();
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "SWITCH_MODE", mode: "text", position: currentPosition });
+    }
     pause();
     clearRenderedView();
 
@@ -1115,6 +1228,9 @@
 
   function showRsvpView() {
     if (!root || units.length === 0) return;
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "SWITCH_MODE", mode: "rsvp", position: currentPosition });
+    }
     if (currentPosition.kind === "figure") {
       flowIndex = globalThis.Engine.findFlowIndexForPosition(flowItems, units, currentPosition);
     } else {
@@ -1364,6 +1480,7 @@
         figureIndex: Number(selected.dataset.figureIndex),
       }
       : { kind: "text", sourceOffset };
+    if (sessionEnabled && !applyingSession) dispatchSession({ type: "SEEK", position: currentPosition });
     currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
     if (progressLabel && sourceText) {
       progressLabel.textContent = `${globalThis.Engine.calculateReadingProgress(
@@ -1492,6 +1609,9 @@
       ? globalThis.Engine.positionForFlowItem(item, units)
       : { kind: "text", sourceOffset: position.sourceOffset };
     currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "REBUILD_UNITS", units, position: currentPosition });
+    }
     return true;
   }
 
@@ -1546,6 +1666,7 @@
   }
 
   function scheduleNext() {
+    if (sessionEnabled && !applyingSession) return;
     stopTimer();
     if (playbackState !== "playing") return;
 
@@ -1585,7 +1706,7 @@
 
   function showFigure(figure: ReaderFigure, figureIndex: number): void {
     if (!readerMain || !display) return;
-    pause();
+    if (!applyingSession) pause();
 
     currentPosition = {
       kind: "figure",
@@ -1643,6 +1764,10 @@
   }
 
   function advanceFromFigure() {
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "RESUME_FROM_FIGURE" });
+      return;
+    }
     if (!figurePanel) return;
     dismissFigurePanel();
     if (flowIndex >= flowItems.length - 1) {
@@ -1667,6 +1792,10 @@
   }
 
   function play() {
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "PLAY" });
+      return;
+    }
     const currentItem = flowItems[flowIndex];
     if (!currentItem || currentItem.kind === "figure") return;
     playbackState = "playing";
@@ -1675,6 +1804,10 @@
   }
 
   function pause() {
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "PAUSE" });
+      return;
+    }
     if (playbackState !== "idle") playbackState = "paused";
     stopTimer();
     updatePlayPauseButton();
@@ -1693,6 +1826,10 @@
   }
 
   function goBackOneSentence() {
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "PREVIOUS_SENTENCE" });
+      return;
+    }
     if (units.length === 0) return;
     if (figurePanel) {
       const figureOffset = Number(figurePanel.dataset.sourceStart);
@@ -1725,6 +1862,13 @@
     const transition = sectionTransitions.find((entry) => entry.headingIndex === headingIndex);
     const targetOffset = transition?.offset ?? 0;
     const targetIndex = units.findIndex((unit) => unit.end > targetOffset);
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({
+        type: "SEEK",
+        position: { kind: "text", sourceOffset: units[targetIndex < 0 ? units.length - 1 : targetIndex]?.start ?? targetOffset },
+      });
+      return;
+    }
     stopTimer();
     currentUnitIndex = targetIndex < 0 ? units.length - 1 : targetIndex;
     flowIndex = globalThis.Engine.findFlowIndexForPosition(
@@ -1907,6 +2051,9 @@
 
   function close(notifyServiceWorker = true, preserveSourceScroll = false) {
     const requestId = activeRequestId;
+    if (sessionEnabled && !applyingSession) dispatchSession({ type: "CLOSE" });
+    sessionEnabled = false;
+    sessionState = null;
     if (notifyServiceWorker && requestId) {
       sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
       if (activePreparation.kind !== "idle") activePreparation = { kind: "cancelled", requestId };

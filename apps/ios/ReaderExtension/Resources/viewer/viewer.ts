@@ -70,6 +70,9 @@
   let preparationGeneration = 0;
   let preparationController: AbortController | null = null;
   let activePreparation: PreparationState = { kind: "idle" };
+  let sessionState: ReaderSessionState | null = null;
+  let sessionEnabled = false;
+  let applyingSession = false;
 
   function getNodes(): MobileNodes {
     if (!nodes) throw new Error("reader shell is not available");
@@ -273,6 +276,8 @@
       showError(reason);
     } else {
       activePreparation = { kind: "ready", requestId: String(generation) };
+      if (readerSessionAvailable()) await initializeReaderSession(String(generation));
+      if (!isCurrentSession(generation)) return;
       renderReader();
     }
     global.requestAnimationFrame(() => {
@@ -499,6 +504,101 @@
     else renderTextView();
   }
 
+  function readerSessionAvailable(): boolean {
+    const candidate = global.ReaderSession;
+    return typeof candidate?.init === "function"
+      && typeof candidate.create === "function"
+      && typeof candidate.reduce === "function";
+  }
+
+  async function initializeReaderSession(requestId: string): Promise<void> {
+    if (!readerSessionAvailable()) return;
+    try {
+      await global.ReaderSession.init();
+      if (activePreparation.kind !== "ready" || activePreparation.requestId !== requestId || !content) return;
+      const sessionUnits = units.map((unit, index) => ({
+        ...unit,
+        durationMs: global.Engine.displayDuration(unit, units[index + 1]),
+      }));
+      sessionState = global.ReaderSession.create({
+        requestId,
+        textLength: content.text.length,
+        units: sessionUnits,
+        figures: content.readingContext?.figures || [],
+        flow: flowItems,
+        timingProfile: {},
+      });
+      sessionEnabled = true;
+      syncReaderSessionState();
+      dispatchSession({ type: "PAUSE" });
+    } catch {
+      sessionState = null;
+      sessionEnabled = false;
+    }
+  }
+
+  function syncReaderSessionState(): void {
+    const state = sessionState;
+    if (!state) return;
+    if (state.phase === "reading") {
+      if (state.units) units = state.units;
+      if (state.flow) flowItems = state.flow;
+      if (typeof state.flowIndex === "number") flowIndex = state.flowIndex;
+      if (state.position) currentPosition = state.position;
+      const item = flowItems[flowIndex];
+      if (item?.kind === "unit") unitIndex = item.unitIndex;
+      mode = state.mode || mode;
+      playing = state.playback === "playing";
+    } else if (state.phase === "ended") {
+      playing = false;
+    } else if (state.phase !== "idle") {
+      playing = false;
+    }
+    updateModeButtonIfReady();
+    updatePlayButton();
+  }
+
+  function updateModeButtonIfReady(): void {
+    if (nodes) updateModeButton();
+  }
+
+  function dispatchSession(command: ReaderSessionCommand): void {
+    if (!sessionEnabled || !sessionState || applyingSession) return;
+    const transition = global.ReaderSession.reduce(sessionState, command);
+    sessionState = transition.state;
+    syncReaderSessionState();
+    applyingSession = true;
+    try {
+      for (const effect of transition.effects) {
+        if (effect.type === "CANCEL_TICK") {
+          if (playbackTimer !== null) global.clearTimeout(playbackTimer);
+          playbackTimer = null;
+        } else if (effect.type === "SCHEDULE_TICK") {
+          if (playbackTimer !== null) global.clearTimeout(playbackTimer);
+          playbackTimer = global.setTimeout(() => {
+            playbackTimer = null;
+            dispatchSession({ type: "TICK", generation: effect.generation });
+          }, effect.delayMs);
+        } else if (effect.type === "RENDER_UNIT") {
+          flowIndex = sessionState.flowIndex ?? flowIndex;
+          unitIndex = effect.unitIndex;
+          if (mode === "rsvp") renderUnit();
+        } else if (effect.type === "RENDER_FIGURE") {
+          flowIndex = sessionState.flowIndex ?? flowIndex;
+          const figure = content?.readingContext?.figures?.[effect.figureIndex];
+          if (figure && mode === "rsvp") showFigure(figure, effect.figureIndex);
+        } else if (effect.type === "DESTROY_CONTENT") {
+          if (playbackTimer !== null) global.clearTimeout(playbackTimer);
+          playbackTimer = null;
+          figurePanel?.remove();
+          figurePanel = null;
+        }
+      }
+    } finally {
+      applyingSession = false;
+    }
+  }
+
   function renderTextView() {
     if (!content) return;
     pause();
@@ -721,6 +821,7 @@
         }
         : { kind: "text", sourceOffset };
       unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
+      if (sessionEnabled && !applyingSession) dispatchSession({ type: "SEEK", position: currentPosition });
     }
     progress.textContent = `${global.Engine.calculateReadingProgress(
       currentPosition.sourceOffset,
@@ -898,6 +999,9 @@
     clearPendingLeftTap();
     const currentFlow = flowItems[flowIndex];
     if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "SWITCH_MODE", mode: nextMode, position: currentPosition });
+    }
     figurePanel?.remove();
     figurePanel = null;
     if (nextMode === "rsvp") {
@@ -954,6 +1058,9 @@
       ? global.Engine.positionForFlowItem(item, units)
       : { kind: "text", sourceOffset: previousPosition.sourceOffset };
     unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "REBUILD_UNITS", units, position: currentPosition });
+    }
   }
 
   function rebuildFlowItems(): void {
@@ -1084,6 +1191,10 @@
   }
 
   function play() {
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "PLAY" });
+      return;
+    }
     pause();
     playing = true;
     updatePlayButton();
@@ -1091,6 +1202,10 @@
   }
 
   function pause() {
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "PAUSE" });
+      return;
+    }
     playing = false;
     if (playbackTimer !== null) global.clearTimeout(playbackTimer);
     playbackTimer = null;
@@ -1098,7 +1213,10 @@
   }
 
   function handleVisibilityChange(): void {
-    if (global.document.visibilityState === "hidden") pause();
+    if (global.document.visibilityState === "hidden") {
+      if (sessionEnabled && !applyingSession) dispatchSession({ type: "VISIBILITY_HIDDEN" });
+      else pause();
+    }
   }
 
   function updatePlayButton() {
@@ -1114,6 +1232,7 @@
   }
 
   function scheduleNext() {
+    if (sessionEnabled && !applyingSession) return;
     if (!playing) return;
     const currentUnit = units[unitIndex];
     if (!currentUnit) {
@@ -1142,7 +1261,7 @@
   }
 
   function showFigure(figure: ReaderFigure, figureIndex: number): void {
-    pause();
+    if (!applyingSession) pause();
     figurePanel?.remove();
     currentPosition = {
       kind: "figure",
@@ -1175,6 +1294,10 @@
   }
 
   function advanceFromFigure(): void {
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "RESUME_FROM_FIGURE" });
+      return;
+    }
     figurePanel?.remove();
     figurePanel = null;
     if (flowIndex >= flowItems.length - 1) {
@@ -1202,6 +1325,10 @@
   }
 
   function previousSentence() {
+    if (sessionEnabled && !applyingSession) {
+      dispatchSession({ type: "PREVIOUS_SENTENCE" });
+      return;
+    }
     clearPendingLeftTap();
     lastLeftTapAt = 0;
     const resumePlayback = playing;
@@ -1389,6 +1516,9 @@
     preparationController = null;
     activePreparation = { kind: "idle" };
     launchFocus = null;
+    sessionState = null;
+    sessionEnabled = false;
+    applyingSession = false;
   }
 
   function destroyLaunchProgressIfPresent(): void {
@@ -1418,6 +1548,9 @@
     try {
       clearPendingLeftTap();
       lastLeftTapAt = 0;
+      if (sessionEnabled && !applyingSession) dispatchSession({ type: "CLOSE" });
+      sessionEnabled = false;
+      sessionState = null;
       pause();
       currentOverlay?.remove();
       global.removeEventListener?.("keydown", handleKeyDown);
