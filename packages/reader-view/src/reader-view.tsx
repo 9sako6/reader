@@ -611,7 +611,7 @@ function MobileRsvpView({ model, handlers }: { model: Extract<ReaderViewModel, {
           {current}
           <div className="context-unit next" aria-hidden="true">{model.next}</div>
         </div>
-        {model.rewindFeedback ? <RewindFeedback feedback={model.rewindFeedback} reducedMotion={model.reducedMotion === true} animate={handlers.rewindAnimation} onDone={handlers.rewindFeedbackDone} /> : null}
+        {model.rewindFeedback ? <RewindFeedback key={`rewind-${model.rewindFeedback.id}`} feedback={model.rewindFeedback} reducedMotion={model.reducedMotion === true} animate={handlers.rewindAnimation} onDone={handlers.rewindFeedbackDone} /> : null}
       </main>
     </section>
   );
