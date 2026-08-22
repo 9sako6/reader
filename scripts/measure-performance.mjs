@@ -14,32 +14,37 @@ const nodeCounts = [1000, 10_000, 50_000, 100_000];
 const runsPerCase = Number(process.env.READER_PERFORMANCE_RUNS) || 10;
 const budgetMargin = 0.25;
 const baseline = {
-  source: "origin/main@8739934e58fb3bf865ffbd27b0b62488504c098f",
+  source: "github-actions/macos-15 run 32590877670 artifact reader-performance-baseline",
   runs: 10,
   margin: budgetMargin,
-  conditions: "Chromium headless, 390x844 viewport, same fixture and toolchain for baseline/candidate; retained-heap baseline uses unchanged origin/main production artifacts",
+  conditions: "Chromium headless, 390x844 viewport, 10 runs/case, main-equivalent product artifacts on GitHub Actions macos-15",
   fixtures: {
-    "short-article": { tapToFirstUnitMs: 289.5, tapToFirstRenderMs: 289.9, tapToFirstFeedbackMs: 7.4, sessionInitMs: 9.8 },
-    "long-article": { tapToFirstUnitMs: 834.2, tapToFirstRenderMs: 856.5, tapToFirstFeedbackMs: 27.1, sessionInitMs: 31.9 },
-    "dominant-article": { tapToFirstUnitMs: 831.9, tapToFirstRenderMs: 855.2, tapToFirstFeedbackMs: 26.9, sessionInitMs: 32.6 },
-    "defuddle-fallback": { tapToFirstUnitMs: 872.7, tapToFirstRenderMs: 888.9, tapToFirstFeedbackMs: 27.7, sessionInitMs: 32.9 },
+    "short-article": { tapToFirstUnitMs: 412.6, tapToFirstRenderMs: 413.1, tapToFirstFeedbackMs: 1.5, sessionInitMs: 0 },
+    "long-article": { tapToFirstUnitMs: 1089.5, tapToFirstRenderMs: 1090.9, tapToFirstFeedbackMs: 5.9, sessionInitMs: 0 },
+    "dominant-article": { tapToFirstUnitMs: 1068.4, tapToFirstRenderMs: 1069.8, tapToFirstFeedbackMs: 5.6, sessionInitMs: 0 },
+    "defuddle-fallback": { tapToFirstUnitMs: 1101, tapToFirstRenderMs: 1102.4, tapToFirstFeedbackMs: 5.1, sessionInitMs: 0 },
   },
   nodeBenchmarks: {
-    "1000": { tapToFirstUnitMs: 292.7, tapToFirstRenderMs: 293.1, tapToFirstFeedbackMs: 6.8, extractionMs: 100, sessionInitMs: 9.0 },
-    "10000": { tapToFirstUnitMs: 817.6, tapToFirstRenderMs: 837.7, tapToFirstFeedbackMs: 26.4, extractionMs: 92.3, sessionInitMs: 31.1 },
-    "50000": { tapToFirstUnitMs: 3415.7, tapToFirstRenderMs: 3419.4, tapToFirstFeedbackMs: 119.2, extractionMs: 130.5, sessionInitMs: 138.5 },
-    "100000": { tapToFirstUnitMs: 6649.4, tapToFirstRenderMs: 6715.5, tapToFirstFeedbackMs: 237.3, extractionMs: 189.9, sessionInitMs: 267.9 },
+    "1000": { tapToFirstUnitMs: 406.6, tapToFirstRenderMs: 407.2, tapToFirstFeedbackMs: 8.5, extractionMs: 152, sessionInitMs: 0 },
+    "10000": { tapToFirstUnitMs: 1081.4, tapToFirstRenderMs: 1082.9, tapToFirstFeedbackMs: 5.9, extractionMs: 153.2, sessionInitMs: 0 },
+    "50000": { tapToFirstUnitMs: 4313.3, tapToFirstRenderMs: 4318.9, tapToFirstFeedbackMs: 178, extractionMs: 178.1, sessionInitMs: 0 },
+    "100000": { tapToFirstUnitMs: 11881.5, tapToFirstRenderMs: 11898.4, tapToFirstFeedbackMs: 53.1, extractionMs: 378.9, sessionInitMs: 0 },
   },
   passive: { bootstrapDecodedBytes: 10210, longTaskCount: 0 },
   retainedHeap: {
     floorBytes: 65_536,
     fixtures: {
-      "short-article": 412_072,
-      "long-article": 577_352,
-      "dominant-article": 577_292,
-      "defuddle-fallback": -46_028,
+      "short-article": 412_068,
+      "long-article": 574_960,
+      "dominant-article": 574_660,
+      "defuddle-fallback": -49_460,
     },
-    nodeBenchmarks: { "1000": 412_072, "10000": 577_208, "50000": 1_219_132, "100000": 2_019_216 },
+    nodeBenchmarks: { "1000": 412_068, "10000": 577_192, "50000": 1_219_940, "100000": 2_019_188 },
+  },
+  localSameHostComparison: {
+    source: "origin/main product artifacts, local same-host 10-run measurement",
+    fixtures: { "short-article": 289.5, "long-article": 834.2, "dominant-article": 831.9, "defuddle-fallback": 872.7 },
+    nodeBenchmarks: { "1000": 292.7, "10000": 817.6, "50000": 3415.7, "100000": 6649.4 },
   },
 };
 const fixtures = [
