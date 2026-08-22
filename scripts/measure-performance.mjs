@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { chromium } from "@playwright/test";
 import { evaluateFeedbackBudget } from "./performance-budget.mjs";
+import { buildPerformanceSample } from "./performance-sample.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const outputPath = resolve(repositoryRoot, "test-results/performance/reader.json");
@@ -319,37 +320,32 @@ async function measurePage(browser, fixture, variant = "candidate") {
     await cdp.send("HeapProfiler.enable");
     await cdp.send("HeapProfiler.collectGarbage");
     const beforeOpenMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
-    const result = await page.evaluate(() => {
+    const rawResult = await page.evaluate(() => {
       const openPromise = globalThis.MobileViewer.open();
       return openPromise.then(() => {
         const mark = (name) => performance.getEntriesByName(name, "mark").at(-1)?.startTime;
-        const tap = mark("reader:tap");
-        const firstFeedback = mark("reader:first-feedback");
-        const extractionStart = mark("reader:extraction-start");
-        const extractionEnd = mark("reader:extraction-end");
-        const firstRender = mark("reader:first-render");
-        const firstUnit = mark("reader:first-unit");
-        const sessionInitStart = mark("reader:session-init-start");
-        const sessionInitEnd = mark("reader:session-init-end");
-        const metrics = globalThis.__READER_PERFORMANCE_LAST_METRICS || {};
+        const marks = {
+          tap: mark("reader:tap"),
+          firstFeedback: mark("reader:first-feedback"),
+          extractionStart: mark("reader:extraction-start"),
+          extractionEnd: mark("reader:extraction-end"),
+          firstRender: mark("reader:first-render"),
+          firstUnit: mark("reader:first-unit"),
+          sessionInitStart: mark("reader:session-init-start"),
+          sessionInitEnd: mark("reader:session-init-end"),
+        };
+        const metrics = globalThis.__READER_PERFORMANCE_LAST_METRICS;
         const wasmRequestsBeforeTap = performance.getEntriesByType("resource")
           .filter((entry) => entry.name.endsWith("reader_session_bg.wasm"));
         return {
-          bootstrapMs: 0,
-          tapToFirstFeedbackMs: Math.max(0, (firstFeedback || tap || 0) - (tap || 0)),
-          tapToFirstUnitMs: Math.max(0, (firstUnit || tap || 0) - (tap || 0)),
-          sessionInitMs: Math.max(0, (sessionInitEnd || sessionInitStart || 0) - (sessionInitStart || 0)),
-          wasmFetchedBeforeTap: wasmRequestsBeforeTap.some((entry) => entry.startTime < (tap || 0)),
-          extractionMs: Math.max(0, (extractionEnd || extractionStart || 0) - (extractionStart || 0)),
-          tapToFirstRenderMs: Math.max(0, (firstRender || tap || 0) - (tap || 0)),
+          marks,
+          metrics,
+          wasmFetchedBeforeTap: wasmRequestsBeforeTap.some((entry) => entry.startTime < marks.tap),
           nodeCount: document.querySelectorAll("*").length,
-          dominantArticleMs: metrics.dominantArticleMs || 0,
-          defuddleMs: metrics.defuddleMs || 0,
-          indexMs: metrics.indexMs || 0,
-          contextMs: metrics.contextMs || 0,
         };
       });
-      });
+    });
+    const result = buildPerformanceSample(rawResult);
     await page.evaluate(() => globalThis.MobileViewer.close());
     await cdp.send("HeapProfiler.enable");
     await cdp.send("HeapProfiler.collectGarbage");
@@ -385,9 +381,20 @@ try {
     const runs = [];
     for (let run = 0; run < runsPerCase; run += 1) {
       const baselineFirst = run % 2 === 0;
-      if (baselineRoot && baselineFirst) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
-      runs.push(await measurePage(browser, fixture));
-      if (baselineRoot && !baselineFirst) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
+      const executionOrder = baselineFirst ? "baseline-candidate" : "candidate-baseline";
+      if (baselineRoot && baselineFirst) {
+        const baselineRun = await measurePage(browser, fixture, "baseline");
+        baselineRun.executionOrder = executionOrder;
+        baselineRuns.push(baselineRun);
+      }
+      const candidateRun = await measurePage(browser, fixture);
+      candidateRun.executionOrder = executionOrder;
+      runs.push(candidateRun);
+      if (baselineRoot && !baselineFirst) {
+        const baselineRun = await measurePage(browser, fixture, "baseline");
+        baselineRun.executionOrder = executionOrder;
+        baselineRuns.push(baselineRun);
+      }
     }
     const median = medianReport(runs);
     const p50 = percentileReport(runs, 0.5);
@@ -422,9 +429,20 @@ try {
     const runs = [];
     for (let run = 0; run < runsPerCase; run += 1) {
       const baselineFirst = run % 2 === 0;
-      if (baselineRoot && baselineFirst) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
-      runs.push(await measurePage(browser, fixture));
-      if (baselineRoot && !baselineFirst) baselineRuns.push(await measurePage(browser, fixture, "baseline"));
+      const executionOrder = baselineFirst ? "baseline-candidate" : "candidate-baseline";
+      if (baselineRoot && baselineFirst) {
+        const baselineRun = await measurePage(browser, fixture, "baseline");
+        baselineRun.executionOrder = executionOrder;
+        baselineRuns.push(baselineRun);
+      }
+      const candidateRun = await measurePage(browser, fixture);
+      candidateRun.executionOrder = executionOrder;
+      runs.push(candidateRun);
+      if (baselineRoot && !baselineFirst) {
+        const baselineRun = await measurePage(browser, fixture, "baseline");
+        baselineRun.executionOrder = executionOrder;
+        baselineRuns.push(baselineRun);
+      }
     }
     const median = medianReport(runs);
     const p50 = percentileReport(runs, 0.5);
