@@ -11,6 +11,10 @@ test("feedback budget accepts a p90 outlier when paired median remains stable", 
   assert.equal(result.regression, false);
 });
 
+test("feedback budget accepts a paired speedup", () => {
+  assert.equal(evaluateFeedbackBudget({ observedP90: 99, pairedP50DeltaMs: -100 }).regression, false);
+});
+
 test("feedback budget rejects a UX-boundary breach or systematic paired slowdown", () => {
   assert.equal(evaluateFeedbackBudget({ observedP90: 101, pairedP50DeltaMs: 0.3 }).regression, true);
   assert.equal(evaluateFeedbackBudget({ observedP90: 99, pairedP50DeltaMs: 16.1 }).regression, true);
