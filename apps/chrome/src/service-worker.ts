@@ -14,6 +14,28 @@ const activeRequestByTab = new Map<number, string>();
 const retryOperationByTab = new Map<number, RetryOperation>();
 let activePreparation: PreparationState = { kind: "idle" };
 
+function registerAndExtractPage(requestId: string): Promise<ReaderContent | null> {
+  const scope = globalThis as typeof globalThis & {
+    __rsvpPreparationControllers?: Map<string, AbortController>;
+  };
+  const controllers = scope.__rsvpPreparationControllers || new Map<string, AbortController>();
+  scope.__rsvpPreparationControllers = controllers;
+  const controller = new AbortController();
+  controllers.set(requestId, controller);
+  return globalThis.Extractor.fromPageAsync(undefined, undefined, { signal: controller.signal }).finally(() => {
+    if (controllers.get(requestId) === controller) controllers.delete(requestId);
+  });
+}
+
+function abortPreparationController(requestId: string): void {
+  const scope = globalThis as typeof globalThis & {
+    __rsvpPreparationControllers?: Map<string, AbortController>;
+  };
+  const controller = scope.__rsvpPreparationControllers?.get(requestId);
+  controller?.abort();
+  scope.__rsvpPreparationControllers?.delete(requestId);
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
@@ -68,7 +90,9 @@ async function retryPreparation(tabId: number, requestId: string): Promise<void>
 }
 
 async function startPreparation(tabId: number, operation: PreparationOperation): Promise<void> {
+  const previousRequestId = activeRequestByTab.get(tabId);
   const requestId = beginPreparation(tabId, operation);
+  if (previousRequestId) await abortInjectedPreparation(tabId, previousRequestId);
   try {
     await openReader(tabId, requestId);
     if (operation.kind === "selection") {
@@ -82,7 +106,9 @@ async function startPreparation(tabId: number, operation: PreparationOperation):
     });
     const extraction = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => globalThis.Extractor.fromPageAsync(),
+      world: "ISOLATED",
+      args: [requestId],
+      func: registerAndExtractPage,
     });
     if (!isActiveRequest(tabId, requestId)) return;
     const result = extraction[0]?.result;
@@ -135,6 +161,7 @@ async function sendReaderContent(
   });
   if (isActiveRequest(tabId, requestId)) {
     activePreparation = { kind: "ready", requestId };
+    retryOperationByTab.delete(tabId);
   }
 }
 
@@ -153,11 +180,21 @@ async function showReaderError(
 
 function cancelPreparation(tabId: number, requestId: string): void {
   if (!isActiveRequest(tabId, requestId)) return;
+  void abortInjectedPreparation(tabId, requestId);
   activeRequestByTab.delete(tabId);
   if (retryOperationByTab.get(tabId)?.requestId === requestId) retryOperationByTab.delete(tabId);
   if (activePreparation.kind !== "idle" && activePreparation.requestId === requestId) {
     activePreparation = { kind: "cancelled", requestId };
   }
+}
+
+async function abortInjectedPreparation(tabId: number, requestId: string): Promise<void> {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "ISOLATED",
+    args: [requestId],
+    func: abortPreparationController,
+  }).catch(() => {});
 }
 
 function isActiveRequest(tabId: number, requestId: string): boolean {

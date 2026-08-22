@@ -9,6 +9,12 @@ type ChromeOpenOptions = {
   delay?: number;
   text?: string;
   requestId?: string;
+  paused?: boolean;
+  error?: boolean;
+  reason?: "content_not_found" | "unsupported_page" | "extraction_failed";
+};
+
+type MobileOpenOptions = {
   error?: boolean;
   reason?: "content_not_found" | "unsupported_page" | "extraction_failed";
 };
@@ -17,6 +23,14 @@ async function openChrome(page: Page, options: ChromeOpenOptions): Promise<void>
   await page.evaluate((openOptions) => {
     (globalThis as typeof globalThis & {
       ReaderE2E: { open(options: ChromeOpenOptions): string };
+    }).ReaderE2E.open(openOptions);
+  }, options);
+}
+
+async function openMobile(page: Page, options: MobileOpenOptions = {}): Promise<void> {
+  await page.evaluate((openOptions) => {
+    (globalThis as typeof globalThis & {
+      ReaderE2E: { open(options: MobileOpenOptions): Promise<void> };
     }).ReaderE2E.open(openOptions);
   }, options);
 }
@@ -57,16 +71,12 @@ for (const viewportWidth of RSVP_WIDTHS) {
   test(`Chrome viewer caps RSVP units at ${viewportWidth}px without changing font size`, async ({ page }) => {
     await page.setViewportSize({ width: viewportWidth, height: 800 });
     await loadViewer(page, "chrome");
-    await page.evaluate((text) => {
-      (globalThis as typeof globalThis & {
-        ReaderE2E: { open(customText: string): void };
-      }).ReaderE2E.open(text);
-    }, RSVP_WIDTH_SOURCE);
+    await openChrome(page, { text: RSVP_WIDTH_SOURCE, paused: true });
 
     const dialog = page.getByRole("dialog", { name: "reader" });
     await expect(dialog).toBeVisible();
     const display = dialog.locator("[data-reader-unit]");
-    await dialog.getByRole("button", { name: "一時停止" }).click();
+    await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
 
     const inspectDisplay = () => display.evaluate((element) => {
       const style = getComputedStyle(element);
@@ -82,6 +92,7 @@ for (const viewportWidth of RSVP_WIDTHS) {
     });
 
     const snapshots = [];
+    await expect(display).toHaveText(RSVP_SHORT_TEXT);
     await expect.poll(async () => (await inspectDisplay()).sourceStart).toBe(0);
     snapshots.push(await inspectDisplay());
 
@@ -182,6 +193,28 @@ test("Chrome reader lets users retry a classified preparation error", async ({ p
     .toBe("再試行成功。");
 });
 
+test("Chrome reader restores launch focus and source scroll after error retry", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  const launchButton = page.getByRole("button", { name: "Chrome readerを開く" });
+  await launchButton.focus();
+  await page.evaluate(() => {
+    document.body.style.minHeight = "2400px";
+    window.scrollTo(0, 480);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(480);
+
+  await openChrome(page, { delay: 0, error: true, reason: "unsupported_page" });
+  await expect(page.getByText("このページはまだ開けません")).toBeVisible();
+  await page.getByRole("button", { name: "やり直す" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "readerを閉じる" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(launchButton).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(480);
+});
+
 test("mobile reader keeps the launch indicator hidden for a 99ms preparation", async ({ page }) => {
   await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&delay=99");
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
@@ -203,6 +236,28 @@ test("mobile reader shows a bar and then slow preparation cancel feedback", asyn
   await expect(page.locator(".reader")).toHaveCount(0);
   await page.waitForTimeout(900);
   await expect(page.locator(".reader")).toHaveCount(0);
+});
+
+test("mobile reader restores launch focus and source scroll after error retry", async ({ page }) => {
+  await loadViewer(page, "mobile");
+  const launchButton = page.getByRole("button", { name: "readerで読む" });
+  await launchButton.focus();
+  await page.evaluate(() => {
+    document.body.style.minHeight = "2400px";
+    window.scrollTo(0, 480);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(480);
+
+  await openMobile(page, { error: true, reason: "content_not_found" });
+  await expect(page.getByText("文章を読み取れませんでした")).toBeVisible();
+  await page.getByRole("button", { name: "やり直す" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "readerを閉じる" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(launchButton).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(480);
 });
 
 test("Chrome reader shows the bar for 1200ms preparation and removes it after the reader opens", async ({ page }) => {

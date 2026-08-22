@@ -54,6 +54,7 @@
   let blocks: ReaderBlock[] = [];
   let currentOffset = 0;
   let launchFocus: HTMLElement | null = null;
+  let sourceScrollPosition: { left: number; top: number } | null = null;
   let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
   let backgroundInert = false;
   let keydownListenerAttached = false;
@@ -85,11 +86,20 @@
   });
 
   function showLoading(requestId: string): void {
-    const activeElement = document.activeElement;
-    close(false);
-    launchFocus = activeElement && typeof (activeElement as HTMLElement).focus === "function"
-      ? activeElement as HTMLElement
+    const retryLaunchFocus = activePreparation.kind === "failed"
+      && launchFocus
+      && launchFocus.isConnected !== false
+      ? launchFocus
       : null;
+    const activeElement = document.activeElement;
+    sourceScrollPosition = {
+      left: globalThis.scrollX || 0,
+      top: globalThis.scrollY || 0,
+    };
+    close(false, true);
+    launchFocus = retryLaunchFocus || (activeElement && typeof (activeElement as HTMLElement).focus === "function"
+      ? activeElement as HTMLElement
+      : null);
     activeRequestId = requestId;
     activePreparation = { kind: "preparing", requestId, startedAt: Date.now() };
     loadingStartedAt = Date.now();
@@ -309,7 +319,7 @@
       fontWeight: "600",
     });
 
-    const closeButton = createButton("閉じる", close);
+    const closeButton = createButton("元に戻る", close);
     Object.assign(closeButton.style, {
       position: "absolute",
       left: "50%",
@@ -341,7 +351,6 @@
   function retryPreparation(): void {
     const requestId = activeRequestId;
     if (!requestId) return;
-    close(false);
     sendPreparationMessage({ type: "RETRY_RSVP", requestId });
   }
 
@@ -772,9 +781,15 @@
     return find(root);
   }
 
-  function focusAfterPaint(element: HTMLElement | null): void {
+  function focusAfterPaint(
+    element: HTMLElement | null,
+    scrollPosition: { left: number; top: number } | null = null,
+  ): void {
     if (!element) return;
-    const focus = () => element.focus?.();
+    const focus = () => {
+      element.focus?.({ preventScroll: true });
+      if (scrollPosition) globalThis.scrollTo?.({ ...scrollPosition, behavior: "auto" });
+    };
     if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(focus);
     else focus();
   }
@@ -1739,13 +1754,14 @@
     }
   }
 
-  function close(notifyServiceWorker = true) {
+  function close(notifyServiceWorker = true, preserveSourceScroll = false) {
     const requestId = activeRequestId;
     if (notifyServiceWorker && requestId) {
       sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
       if (activePreparation.kind !== "idle") activePreparation = { kind: "cancelled", requestId };
     }
     const restoreFocus = launchFocus;
+    const restoreScroll = sourceScrollPosition;
     try {
       pause();
       removeOverlay();
@@ -1771,8 +1787,11 @@
         segmentationLocale = "ja";
         currentGraphemeLimit = 12;
         launchFocus = null;
+        sourceScrollPosition = preserveSourceScroll ? restoreScroll : null;
         if (restoreFocus && restoreFocus.isConnected !== false && typeof restoreFocus.focus === "function") {
-          focusAfterPaint(restoreFocus);
+          focusAfterPaint(restoreFocus, restoreScroll);
+        } else if (restoreScroll) {
+          globalThis.scrollTo?.({ ...restoreScroll, behavior: "auto" });
         }
       }
     }

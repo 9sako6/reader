@@ -381,21 +381,65 @@ test("reader cancel closes loading and sends the request id to the service worke
   assert.equal(document.getElementById("__rsvp-reader-root"), null);
 });
 
-test("reader renders classified preparation errors with retry and close actions", () => {
+test("reader renders content-not-found errors with retry and return actions", () => {
   const harness = createOutlineReaderHarness();
-  const { document, messageListener, runtimeMessages } = harness;
+  const { document, messageListener } = harness;
 
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "error-request" });
-  messageListener({ type: "RSVP_ERROR", requestId: "error-request", reason: "unsupported_page" });
+  messageListener({ type: "RSVP_ERROR", requestId: "error-request", reason: "content_not_found" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(findElement(overlay, (element) => element.textContent === "文章を読み取れませんでした"));
+  const retry = findElement(overlay, (element) => element.textContent === "やり直す");
+  const returnButton = findElement(overlay, (element) => element.textContent === "元に戻る");
+  assert.ok(retry);
+  assert.ok(returnButton);
+});
+
+test("reader renders unsupported-page errors with retry and return actions", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "unsupported-request" });
+  messageListener({ type: "RSVP_ERROR", requestId: "unsupported-request", reason: "unsupported_page" });
 
   const overlay = document.getElementById("__rsvp-reader-root");
   assert.ok(findElement(overlay, (element) => element.textContent === "このページはまだ開けません"));
-  const retry = findElement(overlay, (element) => element.textContent === "やり直す");
-  assert.ok(retry);
-  retry.dispatchEvent({ type: "click" });
-  assert.equal(runtimeMessages.length, 1);
+  assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
+  assert.ok(findElement(overlay, (element) => element.textContent === "元に戻る"));
+});
+
+test("reader renders extraction-failed errors with retry and return actions", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "extraction-request" });
+  messageListener({ type: "RSVP_ERROR", requestId: "extraction-request", reason: "extraction_failed" });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(findElement(overlay, (element) => element.textContent === "文章を準備できませんでした"));
+  assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
+  assert.ok(findElement(overlay, (element) => element.textContent === "元に戻る"));
+});
+
+test("reader retries a classified error without replacing its launch focus", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener, runtimeMessages } = harness;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(launchButton);
+  launchButton.focus();
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "error-request" });
+  messageListener({ type: "RSVP_ERROR", requestId: "error-request", reason: "unsupported_page" });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "やり直す").dispatchEvent({ type: "click" });
+
   assert.equal(runtimeMessages[0].type, "RETRY_RSVP");
-  assert.equal(runtimeMessages[0].requestId, "error-request");
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "retry-request" });
+  messageListener({ type: "START_RSVP", text: "再試行後の本文です。", requestId: "retry-request" });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+
+  assert.equal(document.activeElement, launchButton);
 });
 
 test("reader shows the article outline beside the focal point", () => {
@@ -596,7 +640,7 @@ test("reader keeps a fast error dialog focused and restores inert state after Es
   messageListener({ type: "RSVP_ERROR", requestId: "fast-error-request" });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  const closeButton = findElement(overlay, (element) => element.textContent === "閉じる");
+  const closeButton = findElement(overlay, (element) => element.textContent === "元に戻る");
   assert.equal(document.activeElement, closeButton);
   assert.equal(body.inert, true);
   assert.equal(head.inert, true);

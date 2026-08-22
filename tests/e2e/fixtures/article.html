@@ -148,6 +148,11 @@
               return;
             }
             for (const listener of messageListeners) listener({ type: "START_RSVP", requestId, text, readingContext });
+            if (options.paused === true) {
+              const host = document.querySelector("#__rsvp-reader-root");
+              const pauseButton = host?.shadowRoot?.querySelector('[aria-label="一時停止"]');
+              pauseButton?.click();
+            }
           };
           if (delay === 0) start();
           else setTimeout(start, delay);
@@ -192,12 +197,26 @@
         }
         const extractFromPage = globalThis.Extractor.fromPage;
         const extract = () => extractFromPage(document, globalThis.Defuddle);
-        const delayedFixtureContent = () => defaultDelay === 0
-          ? fixtureContent()
-          : new Promise((resolve) => setTimeout(() => resolve(fixtureContent()), defaultDelay));
+        let mobileErrorOnce = null;
+        const delayedFixtureContent = () => {
+          if (mobileErrorOnce) {
+            const reason = mobileErrorOnce;
+            mobileErrorOnce = null;
+            return Promise.reject(new Error(reason));
+          }
+          return defaultDelay === 0
+            ? fixtureContent()
+            : new Promise((resolve) => setTimeout(() => resolve(fixtureContent()), defaultDelay));
+        };
         globalThis.Extractor.fromPage = delayedFixtureContent;
         globalThis.Extractor.fromPageAsync = delayedFixtureContent;
-        return { open: () => globalThis.MobileViewer.open(), extract };
+        return {
+          open: (options = {}) => {
+            if (options.error === true) mobileErrorOnce = options.reason || "extraction_failed";
+            return globalThis.MobileViewer.open();
+          },
+          extract,
+        };
       }
 
       globalThis.ReaderE2EReady = (viewer === "mobile" ? installMobileViewer() : installChromeViewer())
