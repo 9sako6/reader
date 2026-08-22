@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 
@@ -76,6 +76,16 @@ createServer(async (request, response) => {
   try {
     const metadata = await stat(filePath);
     if (!metadata.isFile()) throw new Error("not a file");
+    if (requestUrl.searchParams.has("slow-extraction") && pathname.endsWith("/generated/extractor.js")) {
+      const source = await readFile(filePath, "utf8");
+      const delay = Number(requestUrl.searchParams.get("slow-extraction")) || 900;
+      const delayedExtractor = `${source}\nconst readerOriginalFromPageAsync = globalThis.Extractor?.fromPageAsync;\nif (readerOriginalFromPageAsync) globalThis.Extractor.fromPageAsync = async (...args) => { await new Promise((resolveDelay) => setTimeout(resolveDelay, ${delay})); return readerOriginalFromPageAsync(...args); };\n`;
+      response.writeHead(200, {
+        "content-type": mimeTypes.get(extname(filePath)) || "application/octet-stream",
+        "cache-control": "no-store",
+      }).end(delayedExtractor);
+      return;
+    }
     response.writeHead(200, {
       "content-type": mimeTypes.get(extname(filePath)) || "application/octet-stream",
       "cache-control": "no-store",

@@ -437,6 +437,32 @@ async function verifyGeneratedLazyRuntimeCancelInWebKit() {
   }
 }
 
+async function verifyGeneratedLazyRuntimeHandoffCancelInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${lazyPageUrl}?slow-extraction=1&runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    const bootstrap = page.locator("#__reader-bootstrap");
+    await bootstrap.getByRole("button", { name: "readerで読む" }).click();
+    const reader = page.locator("#__reader-host");
+    await reader.getByRole("button", { name: "中止" }).waitFor();
+    await reader.getByRole("button", { name: "中止" }).click();
+    await page.waitForTimeout(1100);
+    const state = await page.evaluate(() => {
+      const host = document.getElementById("__reader-host");
+      return {
+        bootstrapHost: Boolean(document.getElementById("__reader-bootstrap")),
+        readerHost: Boolean(host),
+        readerOverlay: Boolean(host?.shadowRoot?.querySelector(".reader")),
+        readerHandleCount: host?.shadowRoot?.querySelectorAll(".entry").length || 0,
+      };
+    });
+    assert.deepEqual(state, { bootstrapHost: false, readerHost: true, readerOverlay: false, readerHandleCount: 1 });
+  } finally {
+    await browser.close();
+  }
+}
+
 try {
   if (driverPort === 0) driverPort = await findFreePort();
   fixtureServer = spawn(process.execPath, ["tests/e2e/server.mjs"], {
@@ -450,6 +476,7 @@ try {
   await verifyGeneratedLazyRuntimeInWebKit();
   await verifyGeneratedLazyRuntimeRetryInWebKit();
   await verifyGeneratedLazyRuntimeCancelInWebKit();
+  await verifyGeneratedLazyRuntimeHandoffCancelInWebKit();
   process.stdout.write("Generated Safari resources initialized ReaderSession in WebKit\n");
   try {
     await verifySafariRuntime();

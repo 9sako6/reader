@@ -156,12 +156,12 @@
       const current = await controller.open();
       if (!current) return;
       globalThis.MobileViewer.install();
-      await globalThis.MobileViewer.open();
       clearLoadingTimers();
       globalThis.removeEventListener("scroll", fadeHandleDuringScroll);
       clearScrollFade();
       loading = false;
       host.remove();
+      await globalThis.MobileViewer.open();
     } catch (error) {
       if (!loading) return;
       clearLoadingTimers();
