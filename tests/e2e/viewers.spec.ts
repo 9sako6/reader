@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function loadViewer(page: Page, viewer: "chrome" | "mobile"): Promise<void> {
   await page.goto(`/tests/e2e/fixtures/article.html?viewer=${viewer}`);
@@ -40,6 +40,42 @@ async function placeTextMarker(marker: ReturnType<Page["getByRole"]>, targetTop:
     const scrollerRect = scroller.getBoundingClientRect();
     scroller.scrollTop += markerRect.top - scrollerRect.top - desiredTop;
   }, targetTop);
+}
+
+type ChromeOpenOptions = { delay?: number; text?: string; requestId?: string };
+
+async function openChrome(page: Page, options: ChromeOpenOptions): Promise<void> {
+  await page.evaluate((openOptions) => {
+    (globalThis as typeof globalThis & {
+      ReaderE2E: { open(options: ChromeOpenOptions): string };
+    }).ReaderE2E.open(openOptions);
+  }, options);
+}
+
+async function loadingBarWasRevealed(page: Page): Promise<number> {
+  return page.evaluate(() => (globalThis as typeof globalThis & {
+    ReaderE2E: { loadingBarRevealEvents: unknown[] };
+  }).ReaderE2E.loadingBarRevealEvents.length);
+}
+
+async function loadingBarRevealSnapshot(page: Page): Promise<{
+  height: string;
+  left: number;
+  top: number;
+  width: number;
+  viewportWidth: number;
+  viewportHeight: number;
+} | null> {
+  return page.evaluate(() => (globalThis as typeof globalThis & {
+    ReaderE2E: { loadingBarRevealEvents: Array<{
+      height: string;
+      left: number;
+      top: number;
+      width: number;
+      viewportWidth: number;
+      viewportHeight: number;
+    }> };
+  }).ReaderE2E.loadingBarRevealEvents.at(-1) || null);
 }
 
 const RSVP_WIDTHS = [320, 375, 390, 430, 768];
@@ -110,6 +146,123 @@ for (const viewportWidth of RSVP_WIDTHS) {
     expect(resizedDisplay.widthOverflow).toBeLessThanOrEqual(0);
     expect(resizedDisplay.fontSize).toBe(snapshots[0]?.fontSize);
   });
+}
+
+test("Chrome reader keeps the loading bar hidden when preparation completes in 0ms", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 0 });
+
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(0);
+  expect(await loadingBarWasRevealed(page)).toBe(0);
+});
+
+test("Chrome reader keeps the loading bar hidden when preparation completes in 99ms", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 99 });
+
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(0);
+});
+
+test("Chrome reader reveals a centered thin bar at the 100ms threshold", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 100 });
+
+  await expect.poll(() => loadingBarRevealSnapshot(page)).toMatchObject({ height: "2px" });
+  const snapshot = await loadingBarRevealSnapshot(page);
+  expect(snapshot).not.toBeNull();
+  expect(snapshot!.width).toBeGreaterThan(0);
+  expect(Math.abs(snapshot!.left + snapshot!.width / 2 - snapshot!.viewportWidth / 2)).toBeLessThanOrEqual(1);
+  expect(Math.abs(snapshot!.top + 1 - snapshot!.viewportHeight / 2)).toBeLessThanOrEqual(1);
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+});
+
+test("Chrome reader shows the bar for 1200ms preparation and removes it after the reader opens", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 1200 });
+
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(1);
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(0);
+});
+
+test("Chrome reader disables loading and cover animations for reduced motion", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 1200 });
+
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+  const loadingIndicator = page.locator("[data-reader-loading-indicator]");
+  await expect(loadingIndicator).toHaveCount(1);
+  expect(await loadingIndicator.evaluate((element) => element.getAnimations().length)).toBe(0);
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+  expect(await page.getByRole("dialog", { name: "reader" }).evaluate((element) => element.getAnimations().length)).toBe(0);
+});
+
+test("Chrome reader ignores a stale A result after request B starts", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 1200, text: "Aの本文です。" });
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+
+  await openChrome(page, { delay: 0, text: "Bの本文です。" });
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("[data-reader-unit]")).toHaveText("Bの本文です。");
+
+  await page.waitForTimeout(1300);
+  await expect(dialog.locator("[data-reader-unit]")).toHaveText("Bの本文です。");
+});
+
+test("Chrome reader stays closed when a loading request is closed before its result arrives", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 1200, text: "閉じられる本文です。" });
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+
+  await page.getByRole("button", { name: "閉じる" }).click();
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+  await page.waitForTimeout(1300);
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+});
+
+async function addAccessibilityFixture(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    document.head.inert = true;
+    document.body.inert = false;
+    const outsideButton = document.createElement("button");
+    outsideButton.id = "outside-reader-button";
+    outsideButton.type = "button";
+    outsideButton.textContent = "記事側の操作";
+    const outsideInput = document.createElement("input");
+    outsideInput.id = "outside-reader-input";
+    outsideInput.setAttribute("aria-label", "記事側の入力");
+    const outsideEditor = document.createElement("div");
+    outsideEditor.id = "outside-reader-editor";
+    outsideEditor.contentEditable = "true";
+    outsideEditor.setAttribute("aria-label", "記事側の編集欄");
+    document.body.prepend(outsideEditor, outsideInput, outsideButton);
+  });
+}
+
+async function expectFocusToStayInReader(page: Page, dialog: Locator): Promise<void> {
+  const outsideButton = page.locator("#outside-reader-button");
+  const outsideInput = page.locator("#outside-reader-input");
+  const outsideEditor = page.locator("#outside-reader-editor");
+  for (let index = 0; index < 10; index += 1) {
+    await page.keyboard.press("Tab");
+    await expect(outsideButton).not.toBeFocused();
+    await expect(outsideInput).not.toBeFocused();
+    await expect(outsideEditor).not.toBeFocused();
+    await expect(dialog).toBeVisible();
+  }
+  for (let index = 0; index < 10; index += 1) {
+    await page.keyboard.press("Shift+Tab");
+    await expect(outsideButton).not.toBeFocused();
+    await expect(outsideInput).not.toBeFocused();
+    await expect(outsideEditor).not.toBeFocused();
+    await expect(dialog).toBeVisible();
+  }
 }
 
 test("Chrome viewer keeps RSVP text readable without overflow", async ({ page }) => {
@@ -484,7 +637,8 @@ test("Chrome viewer traps focus and restores the launch button after Escape", as
   const dialog = page.getByRole("dialog", { name: "reader" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAttribute("aria-modal", "true");
-  await expect(dialog.locator("[aria-live]")).toHaveCount(0);
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("aria-live", "off");
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("aria-atomic", "false");
   const closeButton = dialog.getByRole("button", { name: "readerを閉じる" });
   await expect(closeButton).toBeFocused();
   await dialog.getByRole("button", { name: "一時停止" }).click();
@@ -502,6 +656,34 @@ test("Chrome viewer traps focus and restores the launch button after Escape", as
   await expect(launchButton).toBeFocused();
 });
 
+test("Chrome text viewer traps focus and restores the launch button after Escape", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await addAccessibilityFixture(page);
+  const launchButton = page.getByRole("button", { name: "Chrome readerを開く" });
+  await launchButton.focus();
+  await launchButton.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  await expect(dialog.locator("[data-reader-text-shell]")).toBeVisible();
+  const closeButton = dialog.getByRole("button", { name: "readerを閉じる" });
+  const rsvpModeButton = dialog.getByRole("button", { name: "RSVPで読む" });
+  await expect(closeButton).toBeFocused();
+
+  await rsvpModeButton.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(closeButton).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(rsvpModeButton).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: false, head: true });
+  await expect(launchButton).toBeFocused();
+});
+
 test("mobile viewer traps focus and restores the launch button after Escape", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await loadViewer(page, "mobile");
@@ -510,17 +692,54 @@ test("mobile viewer traps focus and restores the launch button after Escape", as
   const dialog = page.getByRole("dialog", { name: "reader" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAttribute("aria-modal", "true");
-  await expect(dialog.locator("[aria-live]")).toHaveCount(0);
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("aria-live", "off");
+  await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("aria-atomic", "false");
   const closeButton = dialog.getByRole("button", { name: "readerを閉じる" });
   await expect(closeButton).toBeFocused();
 
   await page.keyboard.press("Shift+Tab");
-  await expect(dialog.getByRole("button", { name: "文章で読む" })).toBeFocused();
+  await expect(dialog.getByRole("button", { name: "再生" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(closeButton).toBeFocused();
 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  await expect(launchButton).toBeFocused();
+});
+
+test("Chrome viewer keeps background inert and keyboard focus inside the modal", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "chrome");
+  await addAccessibilityFixture(page);
+  const launchButton = page.getByRole("button", { name: "Chrome readerを開く" });
+  await launchButton.focus();
+  await launchButton.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog.getByRole("button", { name: "readerを閉じる" })).toBeFocused();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: true, head: true });
+  await expectFocusToStayInReader(page, dialog);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: false, head: true });
+  await expect(launchButton).toBeFocused();
+});
+
+test("mobile viewer keeps background inert and keyboard focus inside the modal", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await addAccessibilityFixture(page);
+  const launchButton = page.getByRole("button", { name: "readerで読む" });
+  await launchButton.focus();
+  await launchButton.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog.getByRole("button", { name: "readerを閉じる" })).toBeFocused();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: true, head: true });
+  await expectFocusToStayInReader(page, dialog);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: false, head: true });
   await expect(launchButton).toBeFocused();
 });
 
