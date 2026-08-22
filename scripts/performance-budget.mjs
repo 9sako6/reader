@@ -145,7 +145,7 @@ export function evaluateReactMemoryGate({ candidateP90Bytes, baselineP90Bytes, p
     };
   }
   const measuredFixedOverheadBytes = Math.max(0, fixedSummary.p90);
-  const dataScalingBudgetBytes = Math.max(0, baselineP90Bytes) * 1.25;
+  const dataScalingBudgetBytes = Math.max(REACT_MEMORY_FLOOR_BYTES, Math.max(0, baselineP90Bytes)) * 1.25;
   const dataScalingObservedBytes = candidateP90Bytes - measuredFixedOverheadBytes;
   const combinedBudgetBytes = dataScalingBudgetBytes + measuredFixedOverheadBytes;
   const fixedOverheadRegression = measuredFixedOverheadBytes > REACT_FIXED_HEAP_BUDGET_BYTES;

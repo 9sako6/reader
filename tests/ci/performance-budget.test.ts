@@ -141,16 +141,27 @@ test("React memory gate rejects fixed overhead beyond its explicit byte budget",
 
 test("React memory gate keeps the 25 percent data-scaling budget independent of fixed overhead", () => {
   const result = evaluateReactMemoryGate({
-    candidateP90Bytes: 600,
-    baselineP90Bytes: 100,
+    candidateP90Bytes: 600_000,
+    baselineP90Bytes: 100_000,
     pairedMemory: pairedMemory({ baselineCycle0: 100, baselineCycle1: 10, candidateCycle0: 210, candidateCycle1: 20 }),
   });
 
   assert.equal(result.fixedOverheadBytes, 100);
-  assert.equal(result.dataScalingObservedBytes, 500);
-  assert.equal(result.dataScalingBudgetBytes, 125);
+  assert.equal(result.dataScalingObservedBytes, 599_900);
+  assert.equal(result.dataScalingBudgetBytes, 125_000);
   assert.equal(result.dataScalingRegression, true);
   assert.equal(result.regression, true);
+});
+
+test("React memory gate applies the retained-heap floor when the baseline is negative", () => {
+  const result = evaluateReactMemoryGate({
+    candidateP90Bytes: 31_000,
+    baselineP90Bytes: -49_000,
+    pairedMemory: pairedMemory({ baselineCycle0: 100, baselineCycle1: 10, candidateCycle0: 100, candidateCycle1: 10 }),
+  });
+
+  assert.equal(result.dataScalingBudgetBytes, 81_920);
+  assert.equal(result.dataScalingRegression, false);
 });
 
 test("React memory gate rejects a steady cycle p90 above the paired 25 percent budget", () => {
