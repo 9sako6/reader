@@ -907,6 +907,7 @@
     Object.assign(topbar.style, { left: "16px", right: "16px" });
     shell.append(scroller, topbar);
     root.append(shell);
+    attachKeydownListener();
 
     const updatePosition = () => {
       const viewportCenter = scroller.getBoundingClientRect().top + scroller.clientHeight / 2;

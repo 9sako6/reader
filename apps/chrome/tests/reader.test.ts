@@ -429,6 +429,70 @@ test("reader restores background inert state and launch focus after Escape", () 
   assert.equal(document.activeElement, launchButton);
 });
 
+test("reader keeps keyboard focus trapped after switching to text mode", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener } = harness;
+  const body = new FakeElement("body");
+  body.ownerDocument = document;
+  const head = new FakeElement("head");
+  head.ownerDocument = document;
+  head.inert = true;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(body, head, launchButton);
+  launchButton.focus();
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-modal-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "text-modal-request",
+  });
+
+  const rsvpOverlay = document.getElementById("__rsvp-reader-root");
+  const textModeButton = findElement(rsvpOverlay, (element) => element.textContent === "文章で読む");
+  textModeButton.dispatchEvent({ type: "click" });
+
+  const textOverlay = document.getElementById("__rsvp-reader-root");
+  const textShell = findElement(
+    textOverlay,
+    (element) => element.attributes["data-reader-text-shell"] === "true",
+  );
+  const closeButton = findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる");
+  const rsvpModeButton = findElement(textShell, (element) => element.textContent === "RSVPで読む");
+  assert.ok(textShell);
+  assert.equal(document.activeElement, closeButton);
+
+  rsvpModeButton.focus();
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Tab",
+    shiftKey: true,
+    target: rsvpModeButton,
+    preventDefault() {},
+  });
+  assert.equal(document.activeElement, closeButton);
+
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Tab",
+    target: closeButton,
+    preventDefault() {},
+  });
+  assert.equal(document.activeElement, rsvpModeButton);
+
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Escape",
+    target: rsvpModeButton,
+    preventDefault() {},
+  });
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(body.inert, false);
+  assert.equal(head.inert, true);
+  assert.equal(document.activeElement, launchButton);
+});
+
 test("reader keyboard controls pause and move between sentence contexts", () => {
   const harness = createOutlineReaderHarness();
   const { document, documentElement, timers, messageListener } = harness;

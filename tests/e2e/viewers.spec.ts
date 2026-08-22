@@ -352,6 +352,34 @@ test("Chrome viewer traps focus and restores the launch button after Escape", as
   await expect(launchButton).toBeFocused();
 });
 
+test("Chrome text viewer traps focus and restores the launch button after Escape", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await addAccessibilityFixture(page);
+  const launchButton = page.getByRole("button", { name: "Chrome readerを開く" });
+  await launchButton.focus();
+  await launchButton.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  await expect(dialog.locator("[data-reader-text-shell]")).toBeVisible();
+  const closeButton = dialog.getByRole("button", { name: "readerを閉じる" });
+  const rsvpModeButton = dialog.getByRole("button", { name: "RSVPで読む" });
+  await expect(closeButton).toBeFocused();
+
+  await rsvpModeButton.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(closeButton).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(rsvpModeButton).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: false, head: true });
+  await expect(launchButton).toBeFocused();
+});
+
 test("mobile viewer traps focus and restores the launch button after Escape", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await loadViewer(page, "mobile");
