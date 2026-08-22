@@ -1,15 +1,14 @@
 use std::cmp::Ordering;
 
-use serde::{Deserialize, Serialize};
-
 use crate::command::ReaderSessionCommand;
 use crate::effect::ReaderSessionEffect;
 use crate::state::{
     FlowItem, Mode, Playback, Position, PreparationFailure, PreparationInput, ReaderSessionState,
-    ReaderTimingProfile, ReaderUnit,
+    ReaderUnit, SessionContent,
 };
+use std::sync::Arc;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Transition {
     pub state: ReaderSessionState,
     pub effects: Vec<ReaderSessionEffect>,
@@ -23,7 +22,6 @@ pub fn reduce(state: &ReaderSessionState, command: ReaderSessionCommand) -> Tran
     if state.is_ended() {
         return unchanged(state);
     }
-
     match command {
         ReaderSessionCommand::Open { request_id } => open(state, request_id),
         ReaderSessionCommand::PrepareSucceeded { request_id, flow } => {
@@ -43,13 +41,12 @@ pub fn reduce(state: &ReaderSessionState, command: ReaderSessionCommand) -> Tran
         ReaderSessionCommand::RebuildUnits { units, position } => {
             rebuild_units(state, units, position)
         }
-        ReaderSessionCommand::VisibilityHidden => visibility_hidden(state),
+        ReaderSessionCommand::VisibilityHidden => pause(state),
         ReaderSessionCommand::Close => close(state),
     }
 }
 
 fn open(state: &ReaderSessionState, request_id: String) -> Transition {
-    let generation = state.generation().saturating_add(1);
     let effects = if matches!(state, ReaderSessionState::Reading { .. }) {
         vec![ReaderSessionEffect::CancelTimer]
     } else {
@@ -58,7 +55,7 @@ fn open(state: &ReaderSessionState, request_id: String) -> Transition {
     Transition {
         state: ReaderSessionState::Preparing {
             request_id,
-            generation,
+            generation: state.generation().saturating_add(1),
         },
         effects,
     }
@@ -76,7 +73,7 @@ fn prepare_succeeded(
     else {
         return unchanged(state);
     };
-    if *active_request != request_id {
+    if active_request != &request_id {
         return unchanged(state);
     }
     if let Err(reason) = normalize_input(&mut input) {
@@ -89,11 +86,12 @@ fn prepare_succeeded(
             effects: vec![ReaderSessionEffect::CancelTimer],
         };
     }
-    let first = input.flow.first().expect("validated flow is non-empty");
-    let (position, playback) = position_and_playback(first, &input.units);
+    let content: Arc<SessionContent> = input.into();
+    let first = &content.flow[0];
+    let (position, playback) = position_and_playback(first, &content.units);
     let next_generation = generation.saturating_add(1);
     let effects = if matches!(playback, Playback::Playing) {
-        vec![schedule_effect(&input, &input.flow, 0, next_generation)]
+        vec![schedule_effect(&content, 0, next_generation)]
     } else {
         vec![ReaderSessionEffect::CancelTimer]
     };
@@ -101,13 +99,9 @@ fn prepare_succeeded(
         state: ReaderSessionState::Reading {
             mode: Mode::Rsvp,
             playback,
-            text_length: input.text_length,
-            units: input.units,
-            figures: input.figures,
-            flow: input.flow,
+            content,
             flow_index: 0,
             position,
-            timing_profile: input.timing_profile,
             generation: next_generation,
             request_id,
         },
@@ -127,7 +121,7 @@ fn prepare_failed(
     else {
         return unchanged(state);
     };
-    if *active_request != request_id {
+    if active_request != &request_id {
         return unchanged(state);
     }
     Transition {
@@ -148,7 +142,7 @@ fn cancel(state: &ReaderSessionState, request_id: String) -> Transition {
     else {
         return unchanged(state);
     };
-    if *active_request != request_id {
+    if active_request != &request_id {
         return unchanged(state);
     }
     Transition {
@@ -163,19 +157,17 @@ fn play(state: &ReaderSessionState) -> Transition {
     let ReaderSessionState::Reading {
         mode: Mode::Rsvp,
         playback: Playback::Paused,
-        flow,
+        content,
         flow_index,
-        units,
-        timing_profile,
         generation,
         ..
     } = state
     else {
         return unchanged(state);
     };
-    let Some(FlowItem::Unit { .. }) = flow.get(*flow_index) else {
+    if !matches!(content.flow.get(*flow_index), Some(FlowItem::Unit { .. })) {
         return unchanged(state);
-    };
+    }
     let next_generation = generation.saturating_add(1);
     let mut next = state.clone();
     if let ReaderSessionState::Reading {
@@ -189,13 +181,7 @@ fn play(state: &ReaderSessionState) -> Transition {
     }
     Transition {
         state: next,
-        effects: vec![schedule_effect_for_current(
-            units,
-            flow,
-            *flow_index,
-            timing_profile,
-            next_generation,
-        )],
+        effects: vec![schedule_effect(content, *flow_index, next_generation)],
     }
 }
 
@@ -209,6 +195,7 @@ fn pause(state: &ReaderSessionState) -> Transition {
         return unchanged(state);
     };
     let next_generation = generation.saturating_add(1);
+    let was_playing = matches!(playback, Playback::Playing);
     let mut next = state.clone();
     if let ReaderSessionState::Reading {
         playback,
@@ -219,24 +206,21 @@ fn pause(state: &ReaderSessionState) -> Transition {
         *playback = Playback::Paused;
         *generation = next_generation;
     }
-    let effects = if matches!(playback, Playback::Playing) {
-        vec![ReaderSessionEffect::CancelTimer]
-    } else {
-        Vec::new()
-    };
     Transition {
         state: next,
-        effects,
+        effects: if was_playing {
+            vec![ReaderSessionEffect::CancelTimer]
+        } else {
+            Vec::new()
+        },
     }
 }
 
 fn tick(state: &ReaderSessionState, generation: u64) -> Transition {
     let ReaderSessionState::Reading {
         playback: Playback::Playing,
-        flow,
+        content,
         flow_index,
-        units,
-        timing_profile,
         ..
     } = state
     else {
@@ -246,11 +230,11 @@ fn tick(state: &ReaderSessionState, generation: u64) -> Transition {
         return unchanged(state);
     }
     let next_index = flow_index.saturating_add(1);
-    let Some(next_item) = flow.get(next_index) else {
+    let Some(next_item) = content.flow.get(next_index) else {
         return pause(state);
     };
-    let (position, playback) = position_and_playback(next_item, units);
-    let next_generation = state.generation().saturating_add(1);
+    let (position, playback) = position_and_playback(next_item, &content.units);
+    let next_generation = generation.saturating_add(1);
     let mut next = state.clone();
     if let ReaderSessionState::Reading {
         flow_index,
@@ -268,13 +252,7 @@ fn tick(state: &ReaderSessionState, generation: u64) -> Transition {
     let effects = if next_item.is_figure() {
         vec![ReaderSessionEffect::CancelTimer]
     } else {
-        vec![schedule_effect_for_current(
-            units,
-            flow,
-            next_index,
-            timing_profile,
-            next_generation,
-        )]
+        vec![schedule_effect(content, next_index, next_generation)]
     };
     Transition {
         state: next,
@@ -285,22 +263,24 @@ fn tick(state: &ReaderSessionState, generation: u64) -> Transition {
 fn previous_sentence(state: &ReaderSessionState) -> Transition {
     let ReaderSessionState::Reading {
         playback,
-        flow,
+        content,
         flow_index,
-        units,
         generation,
+        mode,
         ..
     } = state
     else {
         return unchanged(state);
     };
-    let was_playing = matches!(playback, Playback::Playing);
-    let Some(current_item) = flow.get(*flow_index) else {
+    let Some(current_item) = content.flow.get(*flow_index) else {
         return unchanged(state);
     };
+    let was_figure = current_item.is_figure();
+    let was_playing = matches!(playback, Playback::Playing);
     let current_unit_index = match current_item {
         FlowItem::Unit { unit_index, .. } => *unit_index,
-        FlowItem::Figure { source_offset, .. } => units
+        FlowItem::Figure { source_offset, .. } => content
+            .units
             .iter()
             .enumerate()
             .filter(|(_, unit)| unit.end <= *source_offset)
@@ -308,18 +288,29 @@ fn previous_sentence(state: &ReaderSessionState) -> Transition {
             .next_back()
             .unwrap_or(0),
     };
-    let target_unit_index = previous_sentence_start(units, current_unit_index);
-    let Some(target_unit) = units.get(target_unit_index) else {
+    let target_unit_index = if was_figure {
+        sentence_start(&content.units, current_unit_index)
+    } else {
+        previous_sentence_start(&content.units, current_unit_index)
+    };
+    let Some(target_unit) = content.units.get(target_unit_index) else {
         return unchanged(state);
     };
     let target_position = Position::Text {
         source_offset: target_unit.start,
     };
-    let target_flow_index = find_flow_index(flow, units, &target_position);
-    if target_flow_index >= flow.len() {
+    let target_flow_index = find_flow_index(&content.flow, &content.units, &target_position);
+    if target_flow_index >= content.flow.len() {
         return unchanged(state);
     }
     let next_generation = generation.saturating_add(1);
+    let target_playback = if matches!(mode, Mode::Text) {
+        Playback::Paused
+    } else if was_figure || was_playing {
+        Playback::Playing
+    } else {
+        Playback::Paused
+    };
     let mut next = state.clone();
     if let ReaderSessionState::Reading {
         flow_index,
@@ -331,29 +322,12 @@ fn previous_sentence(state: &ReaderSessionState) -> Transition {
     {
         *flow_index = target_flow_index;
         *position = target_position;
-        *playback = if was_playing {
-            Playback::Playing
-        } else {
-            Playback::Paused
-        };
+        *playback = target_playback.clone();
         *generation = next_generation;
     }
     let mut effects = vec![ReaderSessionEffect::CancelTimer];
-    if was_playing
-        && let ReaderSessionState::Reading {
-            flow,
-            units,
-            timing_profile,
-            ..
-        } = &next
-    {
-        effects.push(schedule_effect_for_current(
-            units,
-            flow,
-            target_flow_index,
-            timing_profile,
-            next_generation,
-        ));
+    if matches!(target_playback, Playback::Playing) {
+        effects.push(schedule_effect(content, target_flow_index, next_generation));
     }
     Transition {
         state: next,
@@ -363,53 +337,43 @@ fn previous_sentence(state: &ReaderSessionState) -> Transition {
 
 fn resume_from_figure(state: &ReaderSessionState) -> Transition {
     let ReaderSessionState::Reading {
-        flow,
+        content,
         flow_index,
-        units,
         mode,
-        timing_profile,
         generation,
         ..
     } = state
     else {
         return unchanged(state);
     };
-    let Some(FlowItem::Figure { .. }) = flow.get(*flow_index) else {
+    if !matches!(content.flow.get(*flow_index), Some(FlowItem::Figure { .. })) {
         return unchanged(state);
-    };
+    }
     let next_index = flow_index.saturating_add(1);
-    let Some(next_item) = flow.get(next_index) else {
+    let Some(next_item) = content.flow.get(next_index) else {
         return pause(state);
     };
-    let (position, next_playback) = position_and_playback(next_item, units);
-    let next_playback = if matches!(mode, Mode::Rsvp) {
-        next_playback
-    } else {
-        Playback::Paused
-    };
+    let (position, mut playback) = position_and_playback(next_item, &content.units);
+    if matches!(mode, Mode::Text) {
+        playback = Playback::Paused;
+    }
     let next_generation = generation.saturating_add(1);
     let mut next = state.clone();
     if let ReaderSessionState::Reading {
         flow_index,
         position: current_position,
-        playback,
+        playback: current_playback,
         generation,
         ..
     } = &mut next
     {
         *flow_index = next_index;
         *current_position = position;
-        *playback = next_playback.clone();
+        *current_playback = playback.clone();
         *generation = next_generation;
     }
-    let effects = if matches!(next_playback, Playback::Playing) {
-        vec![schedule_effect_for_current(
-            units,
-            flow,
-            next_index,
-            timing_profile,
-            next_generation,
-        )]
+    let effects = if matches!(playback, Playback::Playing) {
+        vec![schedule_effect(content, next_index, next_generation)]
     } else {
         vec![ReaderSessionEffect::CancelTimer]
     };
@@ -421,22 +385,20 @@ fn resume_from_figure(state: &ReaderSessionState) -> Transition {
 
 fn switch_mode(state: &ReaderSessionState, mode: Mode, position: Position) -> Transition {
     let ReaderSessionState::Reading {
-        units,
-        flow,
+        content,
         generation,
-        timing_profile,
         ..
     } = state
     else {
         return unchanged(state);
     };
-    let target_flow_index = find_flow_index(flow, units, &position);
-    let Some(item) = flow.get(target_flow_index) else {
+    let target_flow_index = find_flow_index(&content.flow, &content.units, &position);
+    let Some(item) = content.flow.get(target_flow_index) else {
         return unchanged(state);
     };
     let (target_position, target_playback) = match mode {
         Mode::Text => (position, Playback::Paused),
-        Mode::Rsvp => position_and_playback(item, units),
+        Mode::Rsvp => position_and_playback(item, &content.units),
     };
     let next_generation = generation.saturating_add(1);
     let mut next = state.clone();
@@ -457,13 +419,7 @@ fn switch_mode(state: &ReaderSessionState, mode: Mode, position: Position) -> Tr
     }
     let mut effects = vec![ReaderSessionEffect::CancelTimer];
     if matches!(target_playback, Playback::Playing) {
-        effects.push(schedule_effect_for_current(
-            units,
-            flow,
-            target_flow_index,
-            timing_profile,
-            next_generation,
-        ));
+        effects.push(schedule_effect(content, target_flow_index, next_generation));
     }
     Transition {
         state: next,
@@ -477,11 +433,9 @@ fn rebuild_units(
     position: Position,
 ) -> Transition {
     let ReaderSessionState::Reading {
-        text_length,
-        figures,
+        content,
         mode,
         playback,
-        timing_profile,
         generation,
         request_id,
         ..
@@ -490,11 +444,10 @@ fn rebuild_units(
         return unchanged(state);
     };
     let mut input = PreparationInput {
-        text_length: *text_length,
+        text_length: content.text_length,
         units,
-        figures: figures.clone(),
+        figures: content.figures.clone(),
         flow: Vec::new(),
-        timing_profile: timing_profile.clone(),
     };
     if let Err(reason) = normalize_input(&mut input) {
         return Transition {
@@ -506,12 +459,14 @@ fn rebuild_units(
             effects: vec![ReaderSessionEffect::CancelTimer],
         };
     }
-    let target_flow_index = find_flow_index(&input.flow, &input.units, &position);
-    let Some(item) = input.flow.get(target_flow_index).cloned() else {
+    let rebuilt: Arc<SessionContent> = input.into();
+    let target_flow_index = find_flow_index(&rebuilt.flow, &rebuilt.units, &position);
+    let Some(item) = rebuilt.flow.get(target_flow_index) else {
         return unchanged(state);
     };
-    let (target_position, _) = position_and_playback(&item, &input.units);
-    let next_playback = if item.is_figure() || matches!(mode, Mode::Text) {
+    let (target_position, _) = position_and_playback(item, &rebuilt.units);
+    let target_is_figure = item.is_figure();
+    let next_playback = if target_is_figure || matches!(mode, Mode::Text) {
         Playback::Paused
     } else {
         playback.clone()
@@ -520,45 +475,26 @@ fn rebuild_units(
     let next = ReaderSessionState::Reading {
         mode: mode.clone(),
         playback: next_playback.clone(),
-        text_length: input.text_length,
-        units: input.units,
-        figures: input.figures,
-        flow: input.flow,
+        content: rebuilt,
         flow_index: target_flow_index,
-        position: if item.is_figure() {
+        position: if target_is_figure {
             target_position
         } else {
             position
         },
-        timing_profile: input.timing_profile,
         generation: next_generation,
         request_id: request_id.clone(),
     };
     let mut effects = vec![ReaderSessionEffect::CancelTimer];
     if matches!(next_playback, Playback::Playing)
-        && let ReaderSessionState::Reading {
-            flow,
-            units,
-            timing_profile,
-            ..
-        } = &next
+        && let ReaderSessionState::Reading { content, .. } = &next
     {
-        effects.push(schedule_effect_for_current(
-            units,
-            flow,
-            target_flow_index,
-            timing_profile,
-            next_generation,
-        ));
+        effects.push(schedule_effect(content, target_flow_index, next_generation));
     }
     Transition {
         state: next,
         effects,
     }
-}
-
-fn visibility_hidden(state: &ReaderSessionState) -> Transition {
-    pause(state)
 }
 
 fn close(state: &ReaderSessionState) -> Transition {
@@ -603,35 +539,16 @@ fn position_and_playback(item: &FlowItem, units: &[ReaderUnit]) -> (Position, Pl
     }
 }
 
-fn schedule_effect(
-    input: &PreparationInput,
-    flow: &[FlowItem],
-    index: usize,
-    generation: u64,
-) -> ReaderSessionEffect {
-    schedule_effect_for_current(&input.units, flow, index, &input.timing_profile, generation)
-}
-
-fn schedule_effect_for_current(
-    units: &[ReaderUnit],
-    flow: &[FlowItem],
-    index: usize,
-    profile: &ReaderTimingProfile,
-    generation: u64,
-) -> ReaderSessionEffect {
-    let Some(FlowItem::Unit { unit_index, .. }) = flow.get(index) else {
+fn schedule_effect(content: &SessionContent, index: usize, generation: u64) -> ReaderSessionEffect {
+    let Some(FlowItem::Unit { unit_index, .. }) = content.flow.get(index) else {
         return ReaderSessionEffect::CancelTimer;
     };
-    let unit = &units[*unit_index];
-    let next_unit = flow[index.saturating_add(1)..]
-        .iter()
-        .find_map(|item| match item {
-            FlowItem::Unit { unit_index, .. } => units.get(*unit_index),
-            FlowItem::Figure { .. } => None,
-        });
+    let Some(unit) = content.units.get(*unit_index) else {
+        return ReaderSessionEffect::CancelTimer;
+    };
     ReaderSessionEffect::ScheduleTick {
         generation,
-        delay_ms: profile.duration_for(unit, next_unit, false),
+        delay_ms: unit.duration_ms.max(1),
     }
 }
 
@@ -639,15 +556,7 @@ fn previous_sentence_start(units: &[ReaderUnit], current: usize) -> usize {
     if units.is_empty() {
         return 0;
     }
-    let safe = current.min(units.len() - 1);
-    if safe == 0 {
-        return 0;
-    }
-    let sentence = units[safe].sentence_index;
-    let mut first_of_current = safe;
-    while first_of_current > 0 && units[first_of_current - 1].sentence_index == sentence {
-        first_of_current -= 1;
-    }
+    let first_of_current = sentence_start(units, current);
     if first_of_current == 0 {
         return 0;
     }
@@ -657,6 +566,19 @@ fn previous_sentence_start(units: &[ReaderUnit], current: usize) -> usize {
         target -= 1;
     }
     target
+}
+
+fn sentence_start(units: &[ReaderUnit], current: usize) -> usize {
+    if units.is_empty() {
+        return 0;
+    }
+    let safe = current.min(units.len() - 1);
+    let sentence = units[safe].sentence_index;
+    let mut first = safe;
+    while first > 0 && units[first - 1].sentence_index == sentence {
+        first -= 1;
+    }
+    first
 }
 
 fn find_flow_index(flow: &[FlowItem], units: &[ReaderUnit], position: &Position) -> usize {
@@ -676,7 +598,9 @@ fn find_flow_index(flow: &[FlowItem], units: &[ReaderUnit], position: &Position)
             .position(|unit| unit.start <= *source_offset && *source_offset < unit.end)
             .or_else(|| units.iter().position(|unit| unit.start >= *source_offset))
             .unwrap_or_else(|| units.len().saturating_sub(1));
-        if let Some(index) = flow.iter().position(|item| matches!(item, FlowItem::Unit { unit_index: candidate, .. } if candidate == &unit_index)) {
+        if let Some(index) = flow.iter().position(|item| {
+            matches!(item, FlowItem::Unit { unit_index: candidate, .. } if candidate == &unit_index)
+        }) {
             return index;
         }
     }
@@ -689,19 +613,28 @@ fn find_flow_index(flow: &[FlowItem], units: &[ReaderUnit], position: &Position)
 }
 
 fn normalize_input(input: &mut PreparationInput) -> Result<(), PreparationFailure> {
-    if input.text_length == 0
-        || input.units.is_empty()
-        || (input.flow.is_empty() && input.figures.is_empty())
-    {
+    if input.text_length == 0 || input.units.is_empty() {
         return Err(PreparationFailure::InvalidFlow);
     }
     for unit in &input.units {
-        if unit.start >= unit.end || unit.end > input.text_length {
+        if unit.start >= unit.end || unit.end > input.text_length || unit.duration_ms == 0 {
+            return Err(PreparationFailure::InvalidFlow);
+        }
+    }
+    for pair in input.units.windows(2) {
+        if pair[0].start >= pair[1].start || pair[0].end > pair[1].start {
             return Err(PreparationFailure::InvalidFlow);
         }
     }
     for figure in &input.figures {
         if figure.source_offset > figure.source_end || figure.source_end > input.text_length {
+            return Err(PreparationFailure::InvalidFlow);
+        }
+        if input
+            .units
+            .iter()
+            .any(|unit| figure.source_offset < unit.end && unit.start < figure.source_end)
+        {
             return Err(PreparationFailure::InvalidFlow);
         }
     }
@@ -768,6 +701,17 @@ fn normalize_input(input: &mut PreparationInput) -> Result<(), PreparationFailur
             }
         }
     }
+    if input.units.iter().enumerate().any(|(unit_index, _)| {
+        !seen
+            .iter()
+            .any(|candidate: &(bool, usize)| !candidate.0 && candidate.1 == unit_index)
+    }) || input.figures.iter().enumerate().any(|(figure_index, _)| {
+        !seen
+            .iter()
+            .any(|candidate: &(bool, usize)| candidate.0 && candidate.1 == figure_index)
+    }) {
+        return Err(PreparationFailure::InvalidFlow);
+    }
     input.flow.sort_by(|left, right| {
         left.source_offset()
             .cmp(&right.source_offset())
@@ -802,68 +746,120 @@ fn normalize_input(input: &mut PreparationInput) -> Result<(), PreparationFailur
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::ReaderSessionCommand;
     use crate::effect::ReaderSessionEffect;
-    use crate::state::{Figure, ReaderUnitKind};
+    use crate::state::ReaderUnitKind;
 
     fn input() -> PreparationInput {
         let units = vec![
             ReaderUnit {
-                text: "最初。".into(),
                 sentence_index: 0,
                 kind: ReaderUnitKind::Body,
                 start: 0,
                 end: 3,
-                duration_ms: Some(10),
+                duration_ms: 10,
             },
             ReaderUnit {
-                text: "次。".into(),
                 sentence_index: 1,
                 kind: ReaderUnitKind::Body,
                 start: 3,
                 end: 5,
-                duration_ms: Some(10),
+                duration_ms: 20,
             },
             ReaderUnit {
-                text: "最後。".into(),
                 sentence_index: 2,
                 kind: ReaderUnitKind::Body,
                 start: 5,
                 end: 8,
-                duration_ms: Some(10),
-            },
-        ];
-        let figures = vec![Figure {
-            src: "figure".into(),
-            alt: String::new(),
-            caption: String::new(),
-            source_offset: 3,
-            source_end: 3,
-        }];
-        let flow = vec![
-            FlowItem::Unit {
-                source_offset: 0,
-                unit_index: 0,
-            },
-            FlowItem::Figure {
-                source_offset: 3,
-                figure_index: 0,
-            },
-            FlowItem::Unit {
-                source_offset: 3,
-                unit_index: 1,
-            },
-            FlowItem::Unit {
-                source_offset: 5,
-                unit_index: 2,
+                duration_ms: 30,
             },
         ];
         PreparationInput {
             text_length: 8,
             units,
-            figures,
-            flow,
-            timing_profile: ReaderTimingProfile::default(),
+            figures: vec![crate::state::Figure {
+                source_offset: 3,
+                source_end: 3,
+            }],
+            flow: vec![
+                FlowItem::Unit {
+                    source_offset: 0,
+                    unit_index: 0,
+                },
+                FlowItem::Figure {
+                    source_offset: 3,
+                    figure_index: 0,
+                },
+                FlowItem::Unit {
+                    source_offset: 3,
+                    unit_index: 1,
+                },
+                FlowItem::Unit {
+                    source_offset: 5,
+                    unit_index: 2,
+                },
+            ],
+        }
+    }
+
+    fn figure_after_third_sentence_input() -> PreparationInput {
+        PreparationInput {
+            text_length: 11,
+            units: vec![
+                ReaderUnit {
+                    sentence_index: 0,
+                    kind: ReaderUnitKind::Body,
+                    start: 0,
+                    end: 2,
+                    duration_ms: 10,
+                },
+                ReaderUnit {
+                    sentence_index: 1,
+                    kind: ReaderUnitKind::Body,
+                    start: 2,
+                    end: 5,
+                    duration_ms: 20,
+                },
+                ReaderUnit {
+                    sentence_index: 2,
+                    kind: ReaderUnitKind::Body,
+                    start: 5,
+                    end: 8,
+                    duration_ms: 30,
+                },
+                ReaderUnit {
+                    sentence_index: 3,
+                    kind: ReaderUnitKind::Body,
+                    start: 8,
+                    end: 11,
+                    duration_ms: 40,
+                },
+            ],
+            figures: vec![crate::state::Figure {
+                source_offset: 8,
+                source_end: 8,
+            }],
+            flow: vec![
+                FlowItem::Unit {
+                    source_offset: 0,
+                    unit_index: 0,
+                },
+                FlowItem::Unit {
+                    source_offset: 2,
+                    unit_index: 1,
+                },
+                FlowItem::Unit {
+                    source_offset: 5,
+                    unit_index: 2,
+                },
+                FlowItem::Figure {
+                    source_offset: 8,
+                    figure_index: 0,
+                },
+                FlowItem::Unit {
+                    source_offset: 8,
+                    unit_index: 3,
+                },
+            ],
         }
     }
 
@@ -886,14 +882,13 @@ mod tests {
     }
 
     #[test]
-    fn starts_on_first_unit_and_schedules_with_generation() {
+    fn starts_with_precomputed_duration() {
         let opened = reduce(
             &initial_state(),
             ReaderSessionCommand::Open {
                 request_id: "A".into(),
             },
         );
-        assert!(matches!(opened.state, ReaderSessionState::Preparing { .. }));
         let started = reduce(
             &opened.state,
             ReaderSessionCommand::PrepareSucceeded {
@@ -912,7 +907,10 @@ mod tests {
         ));
         assert!(started.effects.iter().any(|effect| matches!(
             effect,
-            ReaderSessionEffect::ScheduleTick { generation: 2, .. }
+            ReaderSessionEffect::ScheduleTick {
+                generation: 2,
+                delay_ms: 10
+            }
         )));
     }
 
@@ -940,6 +938,15 @@ mod tests {
             },
         );
         assert_eq!(late.state, newer);
+        let late_failure = reduce(
+            &newer,
+            ReaderSessionCommand::PrepareFailed {
+                request_id: "A".into(),
+                reason: PreparationFailure::ExtractionFailed,
+            },
+        );
+        assert_eq!(late_failure.state, newer);
+        assert!(late_failure.effects.is_empty());
         let started = reduce(
             &newer,
             ReaderSessionCommand::PrepareSucceeded {
@@ -948,34 +955,111 @@ mod tests {
             },
         )
         .state;
-        let late_tick = reduce(&started, ReaderSessionCommand::Tick { generation: 1 });
-        assert_eq!(late_tick.state, started);
+        assert_eq!(
+            reduce(&started, ReaderSessionCommand::Tick { generation: 1 }).state,
+            started
+        );
     }
 
     #[test]
-    fn tick_pauses_on_figure_and_resume_advances_to_unit() {
+    fn figure_previous_sentence_starts_playback() {
         let started = reading();
         let figure = reduce(
             &started,
             ReaderSessionCommand::Tick {
                 generation: started.generation(),
             },
-        );
+        )
+        .state;
+        let previous = reduce(&figure, ReaderSessionCommand::PreviousSentence);
+        assert!(matches!(
+            previous.state,
+            ReaderSessionState::Reading {
+                flow_index: 0,
+                playback: Playback::Playing,
+                ..
+            }
+        ));
+        assert!(previous.effects.iter().any(|effect| matches!(
+            effect,
+            ReaderSessionEffect::ScheduleTick { delay_ms: 10, .. }
+        )));
+    }
+
+    #[test]
+    fn figure_previous_sentence_returns_to_the_sentence_before_a_late_figure() {
+        let opened = reduce(
+            &initial_state(),
+            ReaderSessionCommand::Open {
+                request_id: "A".into(),
+            },
+        )
+        .state;
+        let started = reduce(
+            &opened,
+            ReaderSessionCommand::PrepareSucceeded {
+                request_id: "A".into(),
+                flow: figure_after_third_sentence_input(),
+            },
+        )
+        .state;
+        let second = reduce(
+            &started,
+            ReaderSessionCommand::Tick {
+                generation: started.generation(),
+            },
+        )
+        .state;
+        let third = reduce(
+            &second,
+            ReaderSessionCommand::Tick {
+                generation: second.generation(),
+            },
+        )
+        .state;
+        let figure = reduce(
+            &third,
+            ReaderSessionCommand::Tick {
+                generation: third.generation(),
+            },
+        )
+        .state;
+        assert!(matches!(
+            figure,
+            ReaderSessionState::Reading {
+                flow_index: 3,
+                playback: Playback::Paused,
+                ..
+            }
+        ));
+        let previous = reduce(&figure, ReaderSessionCommand::PreviousSentence);
+        assert!(matches!(
+            previous.state,
+            ReaderSessionState::Reading {
+                flow_index: 2,
+                playback: Playback::Playing,
+                position: Position::Text { source_offset: 5 },
+                ..
+            }
+        ));
+        assert!(previous.effects.iter().any(|effect| matches!(
+            effect,
+            ReaderSessionEffect::ScheduleTick { delay_ms: 30, .. }
+        )));
+    }
+
+    #[test]
+    fn tick_stops_at_figure_and_resume_schedules_next_unit() {
+        let started = reading();
+        let figure = reduce(&started, ReaderSessionCommand::Tick { generation: 2 });
         assert!(matches!(
             figure.state,
             ReaderSessionState::Reading {
                 flow_index: 1,
                 playback: Playback::Paused,
-                generation: 3,
                 ..
             }
         ));
-        assert!(
-            figure
-                .effects
-                .iter()
-                .any(|effect| matches!(effect, ReaderSessionEffect::CancelTimer))
-        );
         let resumed = reduce(&figure.state, ReaderSessionCommand::ResumeFromFigure);
         assert!(matches!(
             resumed.state,
@@ -985,100 +1069,74 @@ mod tests {
                 ..
             }
         ));
+        assert!(resumed.effects.iter().any(|effect| matches!(
+            effect,
+            ReaderSessionEffect::ScheduleTick { delay_ms: 20, .. }
+        )));
     }
 
     #[test]
-    fn previous_sentence_preserves_playback_and_invalidates_timer() {
-        let started = reading();
-        let figure = reduce(
-            &started,
-            ReaderSessionCommand::Tick {
-                generation: started.generation(),
+    fn close_cannot_be_revived() {
+        let ended = reduce(&reading(), ReaderSessionCommand::Close).state;
+        let later = reduce(
+            &ended,
+            ReaderSessionCommand::Open {
+                request_id: "B".into(),
             },
-        )
-        .state;
-        let resumed = reduce(&figure, ReaderSessionCommand::ResumeFromFigure).state;
-        let next = reduce(
-            &resumed,
-            ReaderSessionCommand::Tick {
-                generation: resumed.generation(),
-            },
-        )
-        .state;
-        let previous = reduce(&next, ReaderSessionCommand::PreviousSentence);
-        assert!(matches!(
-            previous.state,
-            ReaderSessionState::Reading {
-                flow_index: 2,
-                playback: Playback::Playing,
-                ..
-            }
-        ));
-        assert!(
-            previous
-                .effects
-                .iter()
-                .any(|effect| matches!(effect, ReaderSessionEffect::CancelTimer))
         );
+        assert_eq!(later.state, ended);
+        assert!(later.effects.is_empty());
     }
 
     #[test]
-    fn close_discards_content_and_rejects_late_commands() {
-        let started = reading();
-        let closed = reduce(&started, ReaderSessionCommand::Close);
-        assert!(matches!(closed.state, ReaderSessionState::Ended { .. }));
-        let encoded = serde_json::to_string(&closed.state).unwrap();
-        assert!(!encoded.contains("units"));
-        assert!(!encoded.contains("figures"));
-        assert!(!encoded.contains("flow"));
-        let late = reduce(
-            &closed.state,
-            ReaderSessionCommand::Tick { generation: 999 },
-        );
-        assert!(late.effects.is_empty());
-        assert_eq!(late.state, closed.state);
-    }
+    fn non_reading_observables_have_no_content_kind() {
+        let idle = initial_state().observable();
+        assert_eq!(idle.current_kind, "none");
+        assert_eq!(idle.position, None);
+        assert_eq!(idle.unit_index, None);
+        assert_eq!(idle.figure_index, None);
 
-    #[test]
-    fn visibility_hidden_pauses_and_cancels() {
-        let started = reading();
-        let hidden = reduce(&started, ReaderSessionCommand::VisibilityHidden);
-        assert!(matches!(
-            hidden.state,
-            ReaderSessionState::Reading {
-                playback: Playback::Paused,
-                ..
-            }
-        ));
-        assert!(
-            hidden
-                .effects
-                .iter()
-                .any(|effect| matches!(effect, ReaderSessionEffect::CancelTimer))
-        );
-    }
-
-    #[test]
-    fn invalid_flow_enters_error_without_retaining_content() {
         let opened = reduce(
             &initial_state(),
             ReaderSessionCommand::Open {
                 request_id: "A".into(),
             },
-        )
-        .state;
-        let invalid = PreparationInput {
-            text_length: 2,
-            units: Vec::new(),
-            figures: Vec::new(),
-            flow: Vec::new(),
-            timing_profile: ReaderTimingProfile::default(),
-        };
+        );
+        assert_eq!(opened.state.observable().current_kind, "none");
+
         let failed = reduce(
-            &opened,
+            &opened.state,
+            ReaderSessionCommand::PrepareFailed {
+                request_id: "A".into(),
+                reason: PreparationFailure::SessionUnavailable,
+            },
+        );
+        assert_eq!(failed.state.observable().current_kind, "none");
+        assert_eq!(
+            failed.state.observable().reason.as_deref(),
+            Some("session_unavailable")
+        );
+
+        let ended = reduce(&failed.state, ReaderSessionCommand::Close);
+        assert_eq!(ended.state.observable().current_kind, "none");
+        assert_eq!(ended.state.observable().position, None);
+    }
+
+    #[test]
+    fn rejects_a_supplied_flow_that_skips_metadata() {
+        let opened = reduce(
+            &initial_state(),
+            ReaderSessionCommand::Open {
+                request_id: "A".into(),
+            },
+        );
+        let mut incomplete = input();
+        incomplete.flow.retain(|item| !item.is_figure());
+        let failed = reduce(
+            &opened.state,
             ReaderSessionCommand::PrepareSucceeded {
                 request_id: "A".into(),
-                flow: invalid,
+                flow: incomplete,
             },
         );
         assert!(matches!(
@@ -1088,7 +1146,5 @@ mod tests {
                 ..
             }
         ));
-        let encoded = serde_json::to_string(&failed.state).unwrap();
-        assert!(!encoded.contains("units"));
     }
 }

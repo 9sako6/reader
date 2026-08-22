@@ -9,23 +9,27 @@ xcodegen = "2.46.0"
 description = "Build and bind the shared ReaderSession WASM module"
 run = "bash scripts/build-session-wasm.sh"
 
+[tasks."build:session-licenses"]
+description = "Generate notices for the locked ReaderSession WASM dependencies"
+run = "node scripts/build-session-licenses.mjs"
+
 [tasks."spec:check"]
 description = "Type-check the finite ReaderSession Quint model"
 run = "pnpm exec quint typecheck packages/session/spec/reader_session.qnt"
 
 [tasks."spec:test"]
 description = "Run ReaderSession named Quint tests"
-run = "pnpm exec quint test packages/session/spec/reader_session.qnt --match '^(closeThenLateTick|closeThenLatePreparationSuccess|newRequestSupersedesOldRequest|playUntilFigureAndResume|previousSentenceWhilePlaying|switchModeAtFigure|rebuildUnitsWhilePlaying|visibilityHiddenPauses)$' --seed=180018 --max-samples=1"
+run = "pnpm exec quint test packages/session/spec/reader_session.qnt --match '^(closeThenLateTick|closeThenLatePreparationSuccess|newRequestSupersedesOldRequest|newRequestRejectsLatePreparationFailure|playUntilFigureAndResume|consecutiveFiguresAndResume|duplicateFigureTickDoesNotConsume|previousSentenceWhilePlaying|switchModeAtFigure|switchModeAfterFigure|rebuildUnitsWhilePlaying|visibilityHiddenPauses)$' --seed=180018 --max-samples=1"
 
 [tasks."spec:simulate"]
 description = "Run the fixed-seed ReaderSession Quint simulation"
 depends = ["spec:check"]
-run = "pnpm exec quint run packages/session/spec/reader_session.qnt --max-steps=8 --max-samples=1000 --seed=180018 --invariants endedHasNoContent playingOnlyInRsvp figureIsPaused timerOnlyWhilePlaying positionIsInRange staleTickDoesNotAdvance stalePreparationDoesNotOpen closedSessionCannotRevive noImplicitRewind figureConsumedAtMostOnce modeRoundTripKeepsLocation"
+run = "pnpm exec quint run packages/session/spec/reader_session.qnt --max-steps=12 --max-samples=1000 --seed=180018 --invariants endedHasNoContent playingOnlyInRsvp figureIsPaused timerOnlyWhilePlaying positionIsInRange staleTickDoesNotAdvance stalePreparationDoesNotOpen closedSessionCannotRevive noImplicitRewind figureConsumedAtMostOnce modeRoundTripKeepsLocation"
 
 [tasks."spec:verify"]
-description = "Verify the finite ReaderSession model with TLC"
+description = "Fully verify the finite ReaderSession model with TLC"
 depends = ["spec:check"]
-run = "pnpm exec quint verify packages/session/spec/reader_session.qnt --backend=tlc --max-steps=8 --invariants endedHasNoContent playingOnlyInRsvp figureIsPaused timerOnlyWhilePlaying positionIsInRange staleTickDoesNotAdvance stalePreparationDoesNotOpen closedSessionCannotRevive noImplicitRewind figureConsumedAtMostOnce modeRoundTripKeepsLocation"
+run = "pnpm exec quint verify packages/session/spec/reader_session.qnt --backend=tlc --verbosity=3 --invariants endedHasNoContent playingOnlyInRsvp figureIsPaused timerOnlyWhilePlaying positionIsInRange staleTickDoesNotAdvance stalePreparationDoesNotOpen closedSessionCannotRevive noImplicitRewind figureConsumedAtMostOnce modeRoundTripKeepsLocation"
 
 [tasks."test:session"]
 description = "Run the ReaderSession Rust and Quint Connect tests"
@@ -35,6 +39,7 @@ run = [
   "pnpm exec quint --version | grep -F '0.32.0'",
   "mise run spec:test",
   "mise run spec:simulate",
+  "mise run spec:verify",
 ]
 
 [tasks."measure:session"]
@@ -55,7 +60,7 @@ run = [
 
 [tasks."build:chrome"]
 description = "Build the Chrome extension"
-depends = ["compile", "build:session-wasm"]
+depends = ["compile", "build:session-wasm", "build:session-licenses"]
 run = '''
 rm -rf apps/chrome/dist
 install -d apps/chrome/dist/vendor/defuddle apps/chrome/dist/LICENSES
@@ -71,6 +76,7 @@ cp .build/packages/extractor/src/extractor.js apps/chrome/dist/extractor.js
 cp node_modules/defuddle/dist/index.js apps/chrome/dist/vendor/defuddle/defuddle.js
 cp node_modules/defuddle/LICENSE apps/chrome/dist/vendor/defuddle/LICENSE
 cp LICENSES/lucide.txt apps/chrome/dist/LICENSES/lucide.txt
+cp .build/session-licenses/reader-session-dependencies.txt apps/chrome/dist/LICENSES/reader-session-dependencies.txt
 '''
 
 [tasks."package:chrome"]
@@ -101,7 +107,7 @@ test -f artifacts/chrome/SHA256SUMS
 
 [tasks."build:ios"]
 description = "Build the Safari extension resources"
-depends = ["compile", "build:session-wasm"]
+depends = ["compile", "build:session-wasm", "build:session-licenses"]
 run = '''
 rm -rf apps/ios/ReaderExtension/Resources/generated
 install -d apps/ios/ReaderExtension/Resources/generated
@@ -116,6 +122,7 @@ cp .build/apps/ios/ReaderExtension/Resources/viewer/viewer.js apps/ios/ReaderExt
 cp .build/apps/ios/ReaderExtension/Resources/viewer/bootstrap.js apps/ios/ReaderExtension/Resources/generated/bootstrap.js
 cp node_modules/defuddle/LICENSE apps/ios/ReaderExtension/Resources/generated/defuddle-LICENSE.txt
 cp LICENSES/lucide.txt apps/ios/ReaderExtension/Resources/generated/lucide-LICENSE.txt
+cp .build/session-licenses/reader-session-dependencies.txt apps/ios/ReaderExtension/Resources/generated/reader-session-dependencies.txt
 '''
 
 [tasks.build]

@@ -1,7 +1,7 @@
 use quint_connect::{Config, Driver, Result, State, Step};
 use reader_session::{
     Figure, FlowItem, Position, PreparationInput, ReaderSessionCommand, ReaderSessionState,
-    ReaderTimingProfile, ReaderUnit, ReaderUnitKind, initial_state, reduce,
+    ReaderUnit, ReaderUnitKind, initial_state, reduce,
 };
 use serde::Deserialize;
 
@@ -29,7 +29,7 @@ impl State<SessionDriver> for ModelState {
             playback: value.playback,
             flow_index: value.flow_index.to_string(),
             flow_length: value.flow_length.to_string(),
-            position: value.source_offset.to_string(),
+            position: value.flow_index.to_string(),
             timer_generation: value.generation.to_string(),
             timer_pending: value.timer_pending,
             content_present: value.content_present,
@@ -96,37 +96,37 @@ impl SessionDriver {
 fn preparation() -> PreparationInput {
     let units = vec![
         ReaderUnit {
-            text: "最初。".into(),
             sentence_index: 0,
             kind: ReaderUnitKind::Body,
             start: 0,
             end: 3,
-            duration_ms: Some(10),
+            duration_ms: 10,
         },
         ReaderUnit {
-            text: "次。".into(),
             sentence_index: 1,
             kind: ReaderUnitKind::Body,
             start: 3,
             end: 5,
-            duration_ms: Some(10),
+            duration_ms: 10,
         },
         ReaderUnit {
-            text: "最後。".into(),
             sentence_index: 2,
             kind: ReaderUnitKind::Body,
             start: 5,
             end: 8,
-            duration_ms: Some(10),
+            duration_ms: 10,
         },
     ];
-    let figures = vec![Figure {
-        src: "figure".into(),
-        alt: String::new(),
-        caption: String::new(),
-        source_offset: 3,
-        source_end: 3,
-    }];
+    let figures = vec![
+        Figure {
+            source_offset: 3,
+            source_end: 3,
+        },
+        Figure {
+            source_offset: 3,
+            source_end: 3,
+        },
+    ];
     let flow = vec![
         FlowItem::Unit {
             source_offset: 0,
@@ -135,6 +135,10 @@ fn preparation() -> PreparationInput {
         FlowItem::Figure {
             source_offset: 3,
             figure_index: 0,
+        },
+        FlowItem::Figure {
+            source_offset: 3,
+            figure_index: 1,
         },
         FlowItem::Unit {
             source_offset: 3,
@@ -150,20 +154,22 @@ fn preparation() -> PreparationInput {
         units,
         figures,
         flow,
-        timing_profile: ReaderTimingProfile::default(),
     }
 }
 
-fn model_position(source_offset: u64) -> Position {
-    if source_offset == 3 {
-        Position::Figure {
+fn model_position(flow_index: u64) -> Position {
+    match flow_index {
+        0 => Position::Text { source_offset: 0 },
+        1 => Position::Figure {
             source_offset: 3,
             figure_index: 0,
-        }
-    } else {
-        Position::Text {
-            source_offset: source_offset as usize,
-        }
+        },
+        2 => Position::Figure {
+            source_offset: 3,
+            figure_index: 1,
+        },
+        3 => Position::Text { source_offset: 3 },
+        _ => Position::Text { source_offset: 5 },
     }
 }
 
@@ -177,8 +183,48 @@ fn observable_state_is_stable_for_the_same_command_trace() {
         request_id: "A".into(),
         flow: preparation(),
     });
-    assert_eq!(driver.state.observable().flow_length, 4);
+    assert_eq!(driver.state.observable().flow_length, 5);
     assert_eq!(driver.state.observable().current_kind, "unit");
+}
+
+#[test]
+fn consecutive_figures_keep_identity_and_consume_once() {
+    let mut driver = SessionDriver::default();
+    driver.apply(ReaderSessionCommand::Open {
+        request_id: "A".into(),
+    });
+    driver.apply(ReaderSessionCommand::PrepareSucceeded {
+        request_id: "A".into(),
+        flow: preparation(),
+    });
+    let generation = driver.state.generation();
+    driver.apply(ReaderSessionCommand::Tick { generation });
+    let first_figure = driver.state.observable();
+    assert_eq!(first_figure.flow_index, 1);
+    assert_eq!(first_figure.current_kind, "figure");
+    assert_eq!(first_figure.figure_index, Some(0));
+
+    let first_generation = driver.state.generation();
+    driver.apply(ReaderSessionCommand::ResumeFromFigure);
+    let second_figure = driver.state.observable();
+    assert_eq!(second_figure.flow_index, 2);
+    assert_eq!(second_figure.current_kind, "figure");
+    assert_eq!(second_figure.figure_index, Some(1));
+    assert_eq!(second_figure.playback, "paused");
+    assert!(!second_figure.timer_pending);
+
+    driver.apply(ReaderSessionCommand::Tick {
+        generation: first_generation,
+    });
+    assert_eq!(driver.state.observable().flow_index, 2);
+
+    driver.apply(ReaderSessionCommand::ResumeFromFigure);
+    let after_figures = driver.state.observable();
+    assert_eq!(after_figures.flow_index, 3);
+    assert_eq!(after_figures.current_kind, "unit");
+    assert_eq!(after_figures.unit_index, Some(1));
+    assert_eq!(after_figures.playback, "playing");
+    assert!(after_figures.timer_pending);
 }
 
 #[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "closeThenLateTick")]
@@ -194,10 +240,72 @@ fn new_request_supersedes_old_request() -> impl Driver {
     SessionDriver::default()
 }
 
+#[quint_connect::quint_test(
+    spec = "spec/reader_session.qnt",
+    test = "newRequestRejectsLatePreparationFailure"
+)]
+fn new_request_rejects_late_preparation_failure() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(
+    spec = "spec/reader_session.qnt",
+    test = "closeThenLatePreparationSuccess"
+)]
+fn close_then_late_preparation_success() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "playUntilFigureAndResume")]
+fn play_until_figure_and_resume() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "consecutiveFiguresAndResume")]
+fn consecutive_figures_and_resume() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(
+    spec = "spec/reader_session.qnt",
+    test = "duplicateFigureTickDoesNotConsume"
+)]
+fn duplicate_figure_tick_does_not_consume() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(
+    spec = "spec/reader_session.qnt",
+    test = "previousSentenceWhilePlaying"
+)]
+fn previous_sentence_while_playing() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "switchModeAtFigure")]
+fn switch_mode_at_figure() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "switchModeAfterFigure")]
+fn switch_mode_after_figure() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "rebuildUnitsWhilePlaying")]
+fn rebuild_units_while_playing() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "visibilityHiddenPauses")]
+fn visibility_hidden_pauses() -> impl Driver {
+    SessionDriver::default()
+}
+
 #[quint_connect::quint_run(
     spec = "spec/reader_session.qnt",
     max_samples = 1000,
-    max_steps = 8,
+    max_steps = 12,
     seed = "180018"
 )]
 fn random_session_traces() -> impl Driver {

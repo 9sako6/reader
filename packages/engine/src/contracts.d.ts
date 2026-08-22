@@ -15,7 +15,6 @@ declare global {
     kind: ReaderUnitKind;
     start: number;
     end: number;
-    durationMs?: number;
   }
 
   interface ReaderTimingProfile {

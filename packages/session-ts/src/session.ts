@@ -4,23 +4,22 @@
   root.ReaderSession = api;
 })(globalThis, function createReaderSessionApi(): ReaderSessionApi {
   type WasmSessionExports = {
-    reader_session_create(): string;
-    reader_session_dispatch(stateJson: string, actionJson: string): string;
+    reader_session_create(): number;
+    reader_session_observable(handle: number): string;
+    reader_session_dispatch(handle: number, commandJson: string): string;
+    reader_session_destroy(handle: number): void;
   };
 
   let runtime: WasmSessionExports | null = null;
   let runtimePromise: Promise<void> | null = null;
 
-  function wasmUrl(): string {
-    const extensionRuntime = (globalThis as typeof globalThis & {
+  function extensionWasmUrl(): string | undefined {
+    const scope = globalThis as typeof globalThis & {
       chrome?: { runtime?: { getURL?: (path: string) => string } };
       browser?: { runtime?: { getURL?: (path: string) => string } };
-    }).chrome?.runtime?.getURL
-      || (globalThis as typeof globalThis & {
-        browser?: { runtime?: { getURL?: (path: string) => string } };
-      }).browser?.runtime?.getURL;
-    if (extensionRuntime) return extensionRuntime("reader_session_bg.wasm");
-    return "reader_session_bg.wasm";
+    };
+    const extensionRuntime = scope.chrome?.runtime?.getURL || scope.browser?.runtime?.getURL;
+    return extensionRuntime?.("reader_session_bg.wasm");
   }
 
   async function init(): Promise<void> {
@@ -39,47 +38,55 @@
         if (typeof wasmBindgen !== "function") {
           throw new Error("ReaderSession WASM glue is not loaded");
         }
-        runtime = await wasmBindgen(wasmUrl()) as WasmSessionExports;
-      })();
+        const url = extensionWasmUrl();
+        await wasmBindgen(url);
+        runtime = wasmBindgen as unknown as WasmSessionExports;
+      })().catch((error) => {
+        runtime = null;
+        runtimePromise = null;
+        throw error;
+      });
     }
     await runtimePromise;
   }
 
   function requireRuntime(): WasmSessionExports {
-    if (!runtime) throw new Error("ReaderSession.init() must finish before create or reduce");
+    if (!runtime) throw new Error("ReaderSession.init() must finish before create or dispatch");
     return runtime;
   }
 
-  function create(input: ReaderSessionInput): ReaderSessionState {
+  function create(): ReaderSessionHandle {
     const activeRuntime = requireRuntime();
-    const requestId = input.requestId || "reader-session";
-    let state = JSON.parse(activeRuntime.reader_session_create()) as ReaderSessionState;
-    state = reduce(state, { type: "open", requestId }).state;
-    return reduce(state, {
-      type: "prepareSucceeded",
-      requestId,
-      flow: {
-        textLength: input.textLength,
-        units: input.units,
-        figures: input.figures,
-        flow: input.flow,
-        timingProfile: input.timingProfile || {},
-      },
-    }).state;
+    const id = activeRuntime.reader_session_create();
+    const handle: ReaderSessionHandle = {
+      id,
+      state: JSON.parse(activeRuntime.reader_session_observable(id)) as ReaderSessionObservableState,
+      destroyed: false,
+    };
+    return handle;
   }
 
-  function reduce(state: ReaderSessionState, command: ReaderSessionCommand): ReaderSessionTransition {
+  function dispatch(handle: ReaderSessionHandle, command: ReaderSessionCommand): ReaderSessionTransition {
+    if (handle.destroyed) throw new Error("ReaderSession handle has been destroyed");
     const activeRuntime = requireRuntime();
     const transition = JSON.parse(
-      activeRuntime.reader_session_dispatch(JSON.stringify(state), JSON.stringify(command)),
+      activeRuntime.reader_session_dispatch(handle.id, JSON.stringify(command)),
     ) as ReaderSessionTransition;
+    handle.state = transition.state;
     return transition;
+  }
+
+  function destroy(handle: ReaderSessionHandle): void {
+    if (handle.destroyed) return;
+    if (runtime) runtime.reader_session_destroy(handle.id);
+    handle.destroyed = true;
   }
 
   return {
     init,
     ready: () => runtime !== null,
     create,
-    reduce,
+    dispatch,
+    destroy,
   };
 });

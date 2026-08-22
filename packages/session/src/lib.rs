@@ -9,7 +9,7 @@ mod wasm;
 pub use command::ReaderSessionCommand;
 pub use effect::ReaderSessionEffect;
 pub use state::{
-    Figure, FlowItem, Mode, Playback, Position, PreparationFailure, PreparationInput,
-    ReaderSessionState, ReaderTimingProfile, ReaderUnit, ReaderUnitKind,
+    Figure, FlowItem, Mode, ObservableState, Playback, Position, PreparationFailure,
+    PreparationInput, ReaderSessionState, ReaderUnit, ReaderUnitKind,
 };
 pub use transition::{Transition, initial_state, reduce};

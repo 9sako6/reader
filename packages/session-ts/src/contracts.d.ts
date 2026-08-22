@@ -12,47 +12,60 @@ declare global {
     | { kind: "unit"; sourceOffset: number; unitIndex: number }
     | { kind: "figure"; sourceOffset: number; figureIndex: number };
 
+  type ReaderSessionUnitMetadata = {
+    sentenceIndex: number;
+    kind: ReaderUnitKind;
+    start: number;
+    end: number;
+    durationMs: number;
+  };
+
+  type ReaderSessionFigureMetadata = {
+    sourceOffset: number;
+    sourceEnd: number;
+  };
+
+  type ReaderSessionPreparation = {
+    textLength: number;
+    units: ReaderSessionUnitMetadata[];
+    figures: ReaderSessionFigureMetadata[];
+    flow: ReaderSessionFlowItem[];
+  };
+
   type ReaderSessionEffect =
     | { type: "cancelTimer" }
     | { type: "scheduleTick"; generation: number; delayMs: number };
 
-  type ReaderSessionPreparation = {
-    textLength: number;
-    units: ReaderUnit[];
-    figures: ReaderFigure[];
-    flow: ReaderSessionFlowItem[];
-    timingProfile?: ReaderTimingProfile;
-  };
-
-  type ReaderSessionState = {
+  type ReaderSessionObservableState = {
     phase: "idle" | "preparing" | "reading" | "error" | "ended";
+    mode: ReaderSessionMode;
+    playback: ReaderSessionPlayback;
+    flowIndex: number;
+    flowLength: number;
     generation: number;
-    requestId?: string;
-    mode?: ReaderSessionMode;
-    playback?: ReaderSessionPlayback;
-    textLength?: number;
-    units?: ReaderUnit[];
-    figures?: ReaderFigure[];
-    flow?: ReaderSessionFlowItem[];
-    flowIndex?: number;
-    position?: ReaderSessionPosition;
-    timingProfile?: ReaderTimingProfile;
-    reason?: PreparationFailure | "invalid_flow";
+    sourceOffset: number;
+    currentKind: "none" | "unit" | "figure";
+    requestId: string;
+    timerPending: boolean;
+    contentPresent: boolean;
+    position: ReaderSessionPosition | null;
+    unitIndex: number | null;
+    figureIndex: number | null;
+    reason: PreparationFailure | "invalid_flow" | "session_unavailable" | null;
   };
 
-  type ReaderSessionInput = {
-    requestId?: string;
-    textLength: number;
-    units: ReaderUnit[];
-    figures: ReaderFigure[];
-    flow: ReaderSessionFlowItem[];
-    timingProfile?: ReaderTimingProfile;
+  type ReaderSessionState = ReaderSessionObservableState;
+
+  type ReaderSessionHandle = {
+    id: number;
+    state: ReaderSessionObservableState;
+    destroyed: boolean;
   };
 
   type ReaderSessionCommand =
     | { type: "open"; requestId: string }
     | { type: "prepareSucceeded"; requestId: string; flow: ReaderSessionPreparation }
-    | { type: "prepareFailed"; requestId: string; reason: PreparationFailure | "invalid_flow" }
+    | { type: "prepareFailed"; requestId: string; reason: PreparationFailure | "invalid_flow" | "session_unavailable" }
     | { type: "cancel"; requestId: string }
     | { type: "play" }
     | { type: "pause" }
@@ -61,20 +74,21 @@ declare global {
     | { type: "switchToText"; position: ReaderSessionPosition }
     | { type: "switchToRsvp"; position: ReaderSessionPosition }
     | { type: "resumeFromFigure" }
-    | { type: "rebuildUnits"; units: ReaderUnit[]; position: ReaderSessionPosition }
+    | { type: "rebuildUnits"; units: ReaderSessionUnitMetadata[]; position: ReaderSessionPosition }
     | { type: "visibilityHidden" }
     | { type: "close" };
 
   interface ReaderSessionTransition {
-    state: ReaderSessionState;
+    state: ReaderSessionObservableState;
     effects: ReaderSessionEffect[];
   }
 
   interface ReaderSessionApi {
     init(): Promise<void>;
     ready(): boolean;
-    create(input: ReaderSessionInput): ReaderSessionState;
-    reduce(state: ReaderSessionState, command: ReaderSessionCommand): ReaderSessionTransition;
+    create(): ReaderSessionHandle;
+    dispatch(handle: ReaderSessionHandle, command: ReaderSessionCommand): ReaderSessionTransition;
+    destroy(handle: ReaderSessionHandle): void;
   }
 
   var ReaderSession: ReaderSessionApi;
