@@ -10,6 +10,7 @@ test("fromText produces the same Content contract as page extraction", () => {
   assert.deepEqual(fromText("  選択した文章  "), {
     text: "選択した文章",
     readingContext: {
+      language: "ja",
       title: "",
       blocks: [],
       headings: [],
@@ -23,6 +24,12 @@ test("fromText produces the same Content contract as page extraction", () => {
 
 test("fromText returns no content for whitespace", () => {
   assert.equal(fromText("  "), null);
+});
+
+test("fromText keeps a valid BCP 47-like language and rejects empty or malformed values", () => {
+  assert.equal(fromText("本文", { language: "en-US" }).readingContext.language, "en-US");
+  assert.equal(fromText("本文", { language: "  " }).readingContext.language, "ja");
+  assert.equal(fromText("本文", { language: "not a language" }).readingContext.language, "ja");
 });
 
 test("installed Defuddle bundle exposes its browser constructor", () => {
@@ -61,6 +68,7 @@ test("extractPage returns article text and heading offsets", () => {
     [section, "  記事タイトル\n本文です。\n"],
   ]);
   const document = {
+    documentElement: { lang: "en-US" },
     body: article,
     querySelector() {
       return article;
@@ -95,6 +103,7 @@ test("extractPage returns article text and heading offsets", () => {
   assert.deepEqual(extractPage(document, FakeDefuddle), {
     text: "記事タイトル\n本文です。\n次の節\n続きです。",
     readingContext: {
+      language: "en-US",
       title: "記事タイトル",
       sectionOffsets: [0, 13],
       blocks: [

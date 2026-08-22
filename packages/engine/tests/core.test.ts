@@ -6,6 +6,7 @@ const {
   MAX_WORDS_PER_UNIT,
   MAX_GRAPHEMES_PER_UNIT,
   segmentText,
+  splitSentenceSpans,
   splitStructuralSpans,
   findSentenceStart,
   findPreviousSentenceStart,
@@ -114,15 +115,103 @@ test("parenthetical text is marked as aside", () => {
 });
 
 test("splitStructuralSpans identifies body, quote, and aside", () => {
-  assert.deepEqual(
-    splitStructuralSpans("前「引用」後（補足）").map((span) => span.kind),
-    ["body", "quote", "body", "aside"],
-  );
+  assert.deepEqual(splitStructuralSpans("前「引用」後（補足）"), [
+    { text: "前", kind: "body", start: 0, end: 1 },
+    { text: "「引用」", kind: "quote", start: 1, end: 5 },
+    { text: "後", kind: "body", start: 5, end: 6 },
+    { text: "（補足）", kind: "aside", start: 6, end: 10 },
+  ]);
 });
 
 test("segmentText assigns sentence indices in order", () => {
   const units = segmentText("一文目です。二文目です。三文目です。");
   assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1, 2]);
+});
+
+test("sentence spans move a leading opener to the following sentence", () => {
+  const source = "前文です。「引用です。」次文です。";
+  assert.deepEqual(splitSentenceSpans(source, "ja"), [
+    { start: 0, end: 5, sentenceIndex: 0 },
+    { start: 5, end: 12, sentenceIndex: 1 },
+    { start: 12, end: 17, sentenceIndex: 2 },
+  ]);
+  const units = segmentText(source, "ja");
+  assert.deepEqual(units.map((unit) => unit.text), ["前文です。", "「引用です。」", "次文です。"]);
+  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1, 2]);
+  assert.deepEqual(units.map((unit) => [unit.start, unit.end]), [[0, 5], [5, 12], [12, 17]]);
+  assert.equal(units.map((unit) => unit.text).join(""), source);
+});
+
+test("sentence boundaries inside a quote keep quote classification", () => {
+  const source = "「一文目です。二文目です。」次の文です。";
+  const units = segmentText(source, "ja");
+  assert.deepEqual(units.map((unit) => unit.text), [
+    "「一文目です。",
+    "二文目です。」",
+    "次の文です。",
+  ]);
+  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1, 2]);
+  assert.deepEqual(units.map((unit) => unit.kind), ["quote", "quote", "body"]);
+  assert.equal(units.map((unit) => unit.text).join(""), source);
+  for (const unit of units) assert.equal(source.slice(unit.start, unit.end), unit.text);
+});
+
+test("a quoted phrase followed by a reporting clause remains one sentence", () => {
+  const source = "「引用です」と彼は言った。";
+  const units = segmentText(source, "ja");
+  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 0, 0]);
+  assert.deepEqual(units.map((unit) => unit.kind), ["quote", "body", "body"]);
+  assert.equal(units.map((unit) => unit.text).join(""), source);
+});
+
+test("aside sentence boundaries remain independent from structural classification", () => {
+  const source = "（補足です。続きです。）本文です。";
+  const units = segmentText(source, "ja");
+  assert.deepEqual(units.map((unit) => unit.text), [
+    "（補足です。",
+    "続きです。）",
+    "本文です。",
+  ]);
+  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1, 2]);
+  assert.deepEqual(units.map((unit) => unit.kind), ["aside", "aside", "body"]);
+  assert.equal(units.map((unit) => unit.text).join(""), source);
+});
+
+test("English sentence spans retain Intl.Segmenter boundaries for decimals and URLs", () => {
+  const cases = [
+    {
+      source: "Mr. Smith wrote v1.2. Next sentence.",
+      expectedSentenceSpans: [
+        { start: 0, end: 4, sentenceIndex: 0 },
+        { start: 4, end: 22, sentenceIndex: 1 },
+        { start: 22, end: 36, sentenceIndex: 2 },
+      ],
+      expectedSentenceIndexes: [0, 1, 2],
+    },
+    {
+      source: "The value is 3.14. Continue.",
+      expectedSentenceSpans: [
+        { start: 0, end: 19, sentenceIndex: 0 },
+        { start: 19, end: 28, sentenceIndex: 1 },
+      ],
+      expectedSentenceIndexes: [0, 1],
+    },
+    {
+      source: "Visit https://example.com/test. Continue.",
+      expectedSentenceSpans: [
+        { start: 0, end: 32, sentenceIndex: 0 },
+        { start: 32, end: 41, sentenceIndex: 1 },
+      ],
+      expectedSentenceIndexes: [0, 1],
+    },
+  ];
+  for (const { source, expectedSentenceSpans, expectedSentenceIndexes } of cases) {
+    const units = segmentText(source, "en");
+    assert.deepEqual(splitSentenceSpans(source, "en"), expectedSentenceSpans);
+    assert.equal(units.map((unit) => unit.text).join(""), source);
+    for (const unit of units) assert.equal(source.slice(unit.start, unit.end), unit.text);
+    assert.deepEqual([...new Set(units.map((unit) => unit.sentenceIndex))], expectedSentenceIndexes);
+  }
 });
 
 test("segmentText treats English periods as sentence boundaries", () => {
