@@ -57,8 +57,6 @@ targets:
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/bootstrap.js
         buildPhase: resources
-      - path: ReaderExtension/Resources/generated/reader-runtime.js
-        buildPhase: resources
       - path: ReaderExtension/Resources/generated/defuddle-LICENSE.txt
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/lucide-LICENSE.txt
