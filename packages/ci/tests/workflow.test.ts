@@ -8,6 +8,7 @@ const workflow = fs.readFileSync(path.resolve(__dirname, "../../../.github/workf
 const chromiumJobStart = workflow.indexOf("\n  e2e:\n");
 const iosJobStart = workflow.indexOf("\n  ios:\n", chromiumJobStart);
 const chromiumJob = workflow.slice(chromiumJobStart, iosJobStart);
+const iosJob = workflow.slice(iosJobStart);
 
 test("CI uploads the performance baseline before Chromium E2E can clear test-results", () => {
   const measure = chromiumJob.indexOf("run: mise run measure:performance");
@@ -22,4 +23,13 @@ test("CI uploads the performance baseline before Chromium E2E can clear test-res
   assert.ok(measure >= 0 && measure < upload);
   assert.ok(upload >= 0 && upload < uploadPath && uploadPath < e2e);
   assert.ok(e2e >= 0 && e2e < extensionSmoke && extensionSmoke < diagnostics);
+});
+
+test("CI verifies the generated Safari package after the simulator build", () => {
+  const build = iosJob.indexOf("name: Build for iOS Simulator");
+  const packageRuntime = iosJob.indexOf("run: READER_REQUIRE_IOS_EXTENSION_BUNDLE=1 mise run test:safari-package-runtime");
+  const diagnostics = iosJob.indexOf("name: Upload browser diagnostics");
+
+  assert.ok(iosJobStart >= 0);
+  assert.ok(build >= 0 && build < packageRuntime && packageRuntime < diagnostics);
 });

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Safari package runtime</title>
+    <script>
+      globalThis.browser = {
+        runtime: {
+          getURL(path) {
+            return `/apps/ios/ReaderExtension/Resources/generated/${path}`;
+          },
+        },
+      };
+    </script>
+    <script src="/apps/ios/ReaderExtension/Resources/generated/defuddle.js"></script>
+    <script src="/apps/ios/ReaderExtension/Resources/generated/session-wasm.js"></script>
+    <script src="/apps/ios/ReaderExtension/Resources/generated/session.js"></script>
+    <script src="/apps/ios/ReaderExtension/Resources/generated/engine.js"></script>
+    <script src="/apps/ios/ReaderExtension/Resources/generated/extractor.js"></script>
+    <script src="/apps/ios/ReaderExtension/Resources/generated/icons.js"></script>
+    <script src="/apps/ios/ReaderExtension/Resources/generated/viewer.js"></script>
+    <script src="/apps/ios/ReaderExtension/Resources/generated/bootstrap.js"></script>
+  </head>
+  <body>
+    <article>
+      <h1>Safariの生成パッケージを検証します</h1>
+      <p>Safari Web Extensionの生成リソースが実SafariのJavaScriptとWASMを通過します。</p>
+    </article>
+  </body>
+</html>

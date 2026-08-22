@@ -162,6 +162,11 @@ description = "Run the generated Chrome MV3 extension in a real Chromium context
 depends = ["build:chrome"]
 run = "node scripts/test-chrome-extension-smoke.mjs"
 
+[tasks."test:safari-package-runtime"]
+description = "Verify generated Safari resources and optional Safari WebDriver runtime"
+depends = ["build:ios"]
+run = "node scripts/test-safari-package-runtime.mjs"
+
 [tasks."release:chrome"]
 description = "Release the current Chrome version"
 run = '''
