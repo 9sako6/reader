@@ -222,6 +222,18 @@ test("Xcode project embeds every manifest script in the extension", () => {
   assert.equal(project.includes("RELEASE_CHECKLIST.md"), false);
 });
 
+test("Safari package includes the locked React runtime notices", () => {
+  const session = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "generated", "session.js"), "utf8");
+  assert.equal(session.includes("require("), false);
+  assert.match(session, /ReaderReactViewer/u);
+  assert.match(session, /createRoot/u);
+  const notice = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "generated", "reader-session-dependencies.txt"), "utf8");
+  for (const packageName of ["react@19.2.8", "react-dom@19.2.8", "scheduler@0.27.0", "esbuild@0.28.2"]) {
+    assert.match(notice, new RegExp(`${packageName.replace(/[.]/gu, "\\.")}\\nDeclared license: MIT`, "u"));
+  }
+  assert.match(notice, /Permission is hereby granted, free of charge/u);
+});
+
 test("Safari viewer leaves loading and rendering to ReaderView", () => {
   const source = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "viewer", "viewer.ts"), "utf8");
   for (const symbol of ["createLaunchFeedback", "revealLaunchProgress", "finishLaunchProgress", "launchProgress.element", "launchProgress.animation", "showRewindFeedback", "global.ReaderIcons.create", "feedback.append"]) {
@@ -439,10 +451,10 @@ function createSafariReaderHarness(
     observe() {}
     disconnect() {}
   };
-  context.queueMicrotask = (callback) => callback();
+  context.queueMicrotask = (callback) => Promise.resolve().then(callback);
   context.MessageChannel = class {
     port1 = { onmessage: null };
-    port2 = { postMessage: () => this.port1.onmessage?.({ data: null }) };
+    port2 = { postMessage: () => Promise.resolve().then(() => this.port1.onmessage?.({ data: null })) };
   };
   document.defaultView = context;
   const sessionSource = fs.readFileSync(

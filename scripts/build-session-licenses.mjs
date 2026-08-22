@@ -61,17 +61,46 @@ for (const item of selectedPackages) {
   ].join("\n"));
 }
 
-for (const name of ["react", "react-dom"]) {
-  const packageRoot = join(repositoryRoot, "node_modules", name);
+async function packageRootFor(name) {
+  const directRoot = join(repositoryRoot, "node_modules", name);
+  try {
+    await stat(join(directRoot, "package.json"));
+    return directRoot;
+  } catch {
+  }
+  const reactDomPackage = JSON.parse(await readFile(join(repositoryRoot, "node_modules", "react-dom", "package.json"), "utf8"));
+  const version = reactDomPackage.dependencies?.[name];
+  if (!version) throw new Error(`Cannot resolve bundled package ${name}`);
+  const normalizedVersion = version.replace(/^[^0-9]*/u, "");
+  const pnpmEntries = await readdir(join(repositoryRoot, "node_modules", ".pnpm"));
+  const pnpmEntry = pnpmEntries.find((entry) => entry === `${name}@${normalizedVersion}` || entry.startsWith(`${name}@${normalizedVersion}_`));
+  if (!pnpmEntry) throw new Error(`Cannot resolve pnpm package ${name}@${version}`);
+  const pnpmRoot = join(repositoryRoot, "node_modules", ".pnpm", pnpmEntry, "node_modules", name);
+  await stat(join(pnpmRoot, "package.json"));
+  return pnpmRoot;
+}
+
+for (const name of ["react", "react-dom", "scheduler", "esbuild"]) {
+  const packageRoot = await packageRootFor(name);
   const packageJson = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
-  const licensePath = join(packageRoot, "LICENSE");
+  let licenseName;
+  for (const candidate of ["LICENSE", "LICENSE.md", "LICENSE.txt"]) {
+    try {
+      await stat(join(packageRoot, candidate));
+      licenseName = candidate;
+      break;
+    } catch {
+    }
+  }
+  if (!licenseName) throw new Error(`Cannot find license file for ${name}@${packageJson.version}`);
+  const licensePath = join(packageRoot, licenseName);
   const text = await readFile(licensePath, "utf8");
   if (!licenseTexts.has(text)) licenseTexts.set(text, { names: [], text });
-  licenseTexts.get(text).names.push(`${name}@${packageJson.version}/LICENSE`);
+  licenseTexts.get(text).names.push(`${name}@${packageJson.version}/${licenseName}`);
   packageNotices.push([
     `${name}@${packageJson.version}`,
     `Declared license: ${packageJson.license || "not declared"}`,
-    "License files: LICENSE",
+    `License files: ${licenseName}`,
   ].join("\n"));
 }
 

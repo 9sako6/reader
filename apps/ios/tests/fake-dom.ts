@@ -106,10 +106,9 @@ export class FakeElement {
 
   removeChild(child: FakeElement) {
     const index = this.children.indexOf(child);
-    if (index >= 0) {
-      this.children.splice(index, 1);
-      child.parent = null;
-    }
+    if (index < 0 || child.parent !== this) throw new Error("child is not attached");
+    this.children.splice(index, 1);
+    child.parent = null;
     return child;
   }
 
@@ -208,13 +207,15 @@ export class FakeElement {
 
   querySelectorAll(selector: string) {
     const matches: FakeElement[] = [];
-    const visit = (element: FakeElement) => {
-      for (const child of element.children) {
-        if (matchesSimpleSelector(child, selector)) matches.push(child);
-        visit(child);
-      }
-    };
-    visit(this);
+    const pending = [...this.children].reverse();
+    const visited = new Set<FakeElement>();
+    while (pending.length > 0) {
+      const element = pending.pop();
+      if (!element || visited.has(element)) continue;
+      visited.add(element);
+      if (matchesSimpleSelector(element, selector)) matches.push(element);
+      pending.push(...[...element.children].reverse());
+    }
     return matches;
   }
 
