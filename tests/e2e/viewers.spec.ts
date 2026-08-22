@@ -62,6 +62,8 @@ type ChromeOpenOptions = {
   alt?: string;
   caption?: string;
   cacheKey?: string;
+  srcset?: string;
+  sizes?: string;
   requestId?: string;
   paused?: boolean;
   error?: boolean;
@@ -74,6 +76,8 @@ type MobileOpenOptions = {
   alt?: string;
   caption?: string;
   cacheKey?: string;
+  srcset?: string;
+  sizes?: string;
   error?: boolean;
   reason?: "content_not_found" | "unsupported_page" | "extraction_failed";
 };
@@ -840,6 +844,9 @@ test("Chrome viewer shows delayed figure loading and resumes after a 404", async
   await expect(figure.locator("[data-reader-figure-status]")).toHaveText(/画像を準備しています/u);
   await expect(figure.locator("[data-reader-figure-indicator]")).toBeVisible();
   await expect(figure.locator("[data-reader-figure-description]")).toBeVisible();
+  await expect(figure.locator("[data-reader-image-surface]")).toBeHidden();
+  await expect(figure.locator("[data-reader-image-surface]")).toBeDisabled();
+  await expect(figure.locator("[data-reader-image-surface]")).toHaveAttribute("aria-hidden", "true");
   await expect(figure.locator("[data-reader-figure-description]")).toHaveText("本文の読書フロー図。先頭画像");
   await expect(figure.locator("[data-reader-figure-status]")).toBeHidden({ timeout: 5_000 });
   await dialog.getByRole("button", { name: "続きを読む" }).click();
@@ -877,6 +884,9 @@ test("mobile viewer shows delayed figure loading and resumes after a 404", async
   await expect(figure.locator("[data-reader-figure-status]")).toHaveText(/画像を準備しています/u);
   await expect(figure.locator("[data-reader-figure-indicator]")).toBeVisible();
   await expect(figure.locator("[data-reader-figure-description]")).toBeVisible();
+  await expect(figure.locator("[data-reader-image-surface]")).toBeHidden();
+  await expect(figure.locator("[data-reader-image-surface]")).toBeDisabled();
+  await expect(figure.locator("[data-reader-image-surface]")).toHaveAttribute("aria-hidden", "true");
   await expect(figure.locator("[data-reader-figure-description]")).toHaveText("本文の読書フロー図。先頭画像");
   await expect(figure.locator("[data-reader-figure-status]")).toBeHidden({ timeout: 5_000 });
 
@@ -995,6 +1005,16 @@ for (const viewer of ["chrome", "mobile"] as const) {
       const figure = dialog.getByRole("figure", { name: "本文画像" });
       const surface = figure.locator("[data-reader-image-surface]");
       await expect(surface).toBeVisible();
+      const intrinsicDimensions = {
+        vertical: { width: 240, height: 1200 },
+        horizontal: { width: 1200, height: 240 },
+        transparent: { width: 640, height: 480 },
+        huge: { width: 4000, height: 3000 },
+      }[image];
+      await expect.poll(() => surface.locator("img").evaluate((element) => ({
+        width: (element as HTMLImageElement).naturalWidth,
+        height: (element as HTMLImageElement).naturalHeight,
+      }))).toEqual(intrinsicDimensions);
       const geometry = await surface.evaluate((element) => {
         const box = element.getBoundingClientRect();
         return { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
@@ -1007,7 +1027,7 @@ for (const viewer of ["chrome", "mobile"] as const) {
       expect(geometry.bottom).toBeLessThanOrEqual(dialogBox!.y + dialogBox!.height);
       for (const control of [
         dialog.getByRole("button", { name: "readerを閉じる" }),
-        dialog.getByRole("button", { name: /^(再生|一時停止)$/ }),
+        dialog.getByRole("button", { name: /^(再生|一時停止|続きを読む)$/ }),
       ]) {
         if (await control.count() === 0) continue;
         const controlBox = await control.first().boundingBox();
@@ -1017,6 +1037,9 @@ for (const viewer of ["chrome", "mobile"] as const) {
           || geometry.bottom <= controlBox.y
           || geometry.top >= controlBox.y + controlBox.height).toBe(true);
       }
+      await expect(dialog.getByRole("button", { name: "続きを読む" })).toBeVisible();
+      await dialog.getByRole("button", { name: "続きを読む" }).click();
+      await expect(dialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
     });
   }
 }

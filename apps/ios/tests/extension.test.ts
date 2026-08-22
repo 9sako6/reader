@@ -111,6 +111,8 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
       initialHeadingIndex: -1,
       figures: [{
         src: "https://example.com/figure.png",
+        srcset: "https://example.com/figure@1x.png 1x, https://example.com/figure@2x.png 2x",
+        sizes: "100vw",
         alt: "本文画像",
         caption,
         sourceOffset: figureOffset,
@@ -635,7 +637,7 @@ test("Safari reader uses shared text and figure position markers", async () => {
   assert.equal(figurePanel.dataset.sourceStart, "27");
 });
 
-test("Safari reader preserves the text marker when an earlier text image changes layout", async () => {
+test("Safari reader preserves the text marker when an earlier responsive text image changes layout", async () => {
   const { context, documentElement, timers } = createSafariReaderHarness();
   await context.MobileViewer.open();
   let figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
@@ -657,6 +659,8 @@ test("Safari reader preserves the text marker when an earlier text image changes
   const textFigure = findElement(scroller, (element) => element.className === "article-figure");
   const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
   assert.ok(scroller && afterImageMarker && textImage);
+  assert.equal(textImage.srcset, "https://example.com/figure@1x.png 1x, https://example.com/figure@2x.png 2x");
+  assert.equal(textImage.sizes, "100vw");
   const initialScrollTop = scroller.scrollTop;
   let adjustedScrollTop = initialScrollTop;
   Object.defineProperty(scroller, "scrollTop", {

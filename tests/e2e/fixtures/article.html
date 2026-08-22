@@ -91,6 +91,8 @@
               caption: configuredCaption,
               sourceOffset: figureOffset,
               sourceEnd: figureOffset + configuredCaption.length,
+              ...(typeof options.srcset === "string" ? { srcset: options.srcset } : {}),
+              ...(typeof options.sizes === "string" ? { sizes: options.sizes } : {}),
             }],
           },
         };
@@ -162,6 +164,8 @@
               alt: options.alt,
               caption: options.caption,
               cacheKey: options.cacheKey,
+              srcset: options.srcset,
+              sizes: options.sizes,
             });
           const requestId = typeof options.requestId === "string"
             ? options.requestId
@@ -237,8 +241,8 @@
             return Promise.reject(new Error(reason));
           }
           return defaultDelay === 0
-            ? fixtureContent({ image: mobileFixtureOptions.image || imageFixture, figureFirst: mobileFixtureOptions.figureFirst || figureFirst, alt: mobileFixtureOptions.alt, caption: mobileFixtureOptions.caption, cacheKey: mobileFixtureOptions.cacheKey })
-            : new Promise((resolve) => setTimeout(() => resolve(fixtureContent({ image: mobileFixtureOptions.image || imageFixture, figureFirst: mobileFixtureOptions.figureFirst || figureFirst, alt: mobileFixtureOptions.alt, caption: mobileFixtureOptions.caption, cacheKey: mobileFixtureOptions.cacheKey })), defaultDelay));
+            ? fixtureContent({ image: mobileFixtureOptions.image || imageFixture, figureFirst: mobileFixtureOptions.figureFirst || figureFirst, alt: mobileFixtureOptions.alt, caption: mobileFixtureOptions.caption, cacheKey: mobileFixtureOptions.cacheKey, srcset: mobileFixtureOptions.srcset, sizes: mobileFixtureOptions.sizes })
+            : new Promise((resolve) => setTimeout(() => resolve(fixtureContent({ image: mobileFixtureOptions.image || imageFixture, figureFirst: mobileFixtureOptions.figureFirst || figureFirst, alt: mobileFixtureOptions.alt, caption: mobileFixtureOptions.caption, cacheKey: mobileFixtureOptions.cacheKey, srcset: mobileFixtureOptions.srcset, sizes: mobileFixtureOptions.sizes })), defaultDelay));
         };
         globalThis.Extractor.fromPage = delayedFixtureContent;
         globalThis.Extractor.fromPageAsync = delayedFixtureContent;

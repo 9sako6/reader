@@ -703,7 +703,7 @@
     container.dataset.readerPositionKind = "figure";
     container.dataset.figureIndex = String(figureIndex);
     const image = global.document.createElement("img");
-    configureFigureImage(image, figure, true);
+    configureFigureImage(image, figure, true, true);
     image.dataset.readerSource = figure.src;
     container.append(createVeiledImageSurface(image));
     if (figure.caption) {
@@ -714,9 +714,19 @@
     return container;
   }
 
-  function configureFigureImage(image: HTMLImageElement, figure: ReaderFigure, lazy: boolean): void {
-    if (figure.srcset !== undefined) image.srcset = figure.srcset;
-    if (figure.sizes !== undefined) image.sizes = figure.sizes;
+  function configureFigureImage(
+    image: HTMLImageElement,
+    figure: ReaderFigure,
+    lazy: boolean,
+    deferSource = false,
+  ): void {
+    if (deferSource) {
+      if (figure.srcset !== undefined) image.dataset.readerSrcset = figure.srcset;
+      if (figure.sizes !== undefined) image.dataset.readerSizes = figure.sizes;
+    } else {
+      if (figure.srcset !== undefined) image.srcset = figure.srcset;
+      if (figure.sizes !== undefined) image.sizes = figure.sizes;
+    }
     if (figure.width !== undefined) image.width = figure.width;
     if (figure.height !== undefined) image.height = figure.height;
     image.alt = figure.alt || figure.caption || "本文画像";
@@ -774,8 +784,12 @@
     const image = surface && Array.from(surface.children).find((child) => child.tagName === "IMG") as HTMLImageElement | undefined;
     if (!image) return;
     const source = image.dataset.readerSource;
+    const srcset = image.dataset.readerSrcset;
+    const sizes = image.dataset.readerSizes;
     if (!source) return;
     delete image.dataset.readerSource;
+    delete image.dataset.readerSrcset;
+    delete image.dataset.readerSizes;
     const currentMarker = currentTextPositionMarker(positionMarkers);
     const figureOffset = Number(figureElement.dataset.sourceStart);
     const markerOffset = Number(currentMarker?.dataset.sourceStart);
@@ -812,6 +826,8 @@
     };
     image.addEventListener("load", () => { void adjustAfterDecode(); });
     image.addEventListener("error", () => { void adjustAfterDecode(); });
+    if (srcset !== undefined) image.srcset = srcset;
+    if (sizes !== undefined) image.sizes = sizes;
     image.src = source;
     if (image.complete && image.naturalWidth > 0) void adjustAfterDecode();
   }
@@ -1348,8 +1364,11 @@
     panel.dataset.figureIndex = String(figureIndex);
     panel.addEventListener("pointerup", handleRsvpPointerUp);
     const image = global.document.createElement("img");
-    configureFigureImage(image, figure, false);
+    configureFigureImage(image, figure, false, true);
     const imageSurface = createVeiledImageSurface(image);
+    imageSurface.hidden = true;
+    imageSurface.disabled = true;
+    imageSurface.setAttribute("aria-hidden", "true");
     const status = createFigureStatus();
     const description = global.document.createElement("div");
     description.setAttribute("data-reader-figure-description", "true");
@@ -1378,6 +1397,8 @@
     figurePanel = panel;
     updatePlayButton();
     scheduleFigureLoadingIndicator(token, panel, status, description, caption);
+    if (figure.srcset !== undefined) image.srcset = figure.srcset;
+    if (figure.sizes !== undefined) image.sizes = figure.sizes;
     image.src = figure.src;
     if (image.complete && image.naturalWidth > 0) {
       void settleFigureImage(token, image, panel, status, description, imageSurface, caption);
@@ -1462,7 +1483,7 @@
     panel: HTMLElement,
     status: HTMLElement,
     description: HTMLElement,
-    imageSurface: HTMLElement,
+    imageSurface: HTMLButtonElement,
     caption: HTMLElement | null,
   ): Promise<void> {
     if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
@@ -1487,6 +1508,9 @@
     imageSurface.setAttribute("aria-pressed", "false");
     imageSurface.setAttribute("aria-label", "画像を明るく表示");
     imageSurface.title = "画像を明るく表示";
+    imageSurface.hidden = false;
+    imageSurface.disabled = false;
+    imageSurface.removeAttribute("aria-hidden");
     const veil = Array.from(imageSurface.children).find((child) => child.getAttribute?.("data-reader-image-veil") === "true");
     if (veil) (veil as HTMLElement).style.opacity = "1";
     updatePlayButton();

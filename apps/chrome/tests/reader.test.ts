@@ -1815,7 +1815,7 @@ test("reader keeps the article image and veil in text mode", () => {
   assert.ok(findElement(textFigure, (element) => element.textContent === "図1 処理時間"));
 });
 
-test("reader preserves the text marker when an earlier text image changes layout", () => {
+test("reader preserves the text marker when an earlier responsive text image changes layout", () => {
   const { document, messageListener, timers } = createFigureReaderHarness();
   const text = "前の文です。\n図1\n後の文です。";
   const readingContext = {
@@ -1828,6 +1828,8 @@ test("reader preserves the text marker when an earlier text image changes layout
     initialHeadingIndex: -1,
     figures: [{
       src: "https://example.com/delayed-text.png",
+      srcset: "https://example.com/delayed-text@1x.png 1x, https://example.com/delayed-text@2x.png 2x",
+      sizes: "100vw",
       alt: "遅延画像",
       caption: "図1",
       sourceOffset: 7,
@@ -1859,6 +1861,8 @@ test("reader preserves the text marker when an earlier text image changes layout
   const textFigure = findElement(scroller, (element) => element.attributes["data-reader-text-figure"] === "true");
   const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
   assert.ok(scroller && afterImageMarker && textImage);
+  assert.equal(textImage.srcset, "https://example.com/delayed-text@1x.png 1x, https://example.com/delayed-text@2x.png 2x");
+  assert.equal(textImage.sizes, "100vw");
   const initialScrollTop = scroller.scrollTop;
   let adjustedScrollTop = initialScrollTop;
   Object.defineProperty(scroller, "scrollTop", {

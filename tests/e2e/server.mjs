@@ -14,10 +14,12 @@ const immediateImage = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
-const transparentImage = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAbitOmMAAAAASUVORK5CYII=",
-  "base64",
-);
+const intrinsicImages = new Map([
+  ["/image/vertical.png", '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="1200" viewBox="0 0 240 1200"><rect width="240" height="1200" fill="#4ba9c7"/></svg>'],
+  ["/image/horizontal.png", '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="240" viewBox="0 0 1200 240"><rect width="1200" height="240" fill="#4ba9c7"/></svg>'],
+  ["/image/transparent.png", '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480"/>'],
+  ["/image/huge.png", '<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="3000" viewBox="0 0 4000 3000"><rect width="4000" height="3000" fill="#4ba9c7"/></svg>'],
+]);
 
 createServer(async (request, response) => {
   const requestUrl = new URL(request.url || "/", "http://localhost");
@@ -44,9 +46,12 @@ createServer(async (request, response) => {
       ? configuredDelay
       : pathname.endsWith("delayed.png") ? 500 : 0;
     if (delay > 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
-    response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" }).end(
-      pathname === "/image/transparent.png" ? transparentImage : immediateImage,
-    );
+    const intrinsicImage = intrinsicImages.get(pathname);
+    if (intrinsicImage !== undefined) {
+      response.writeHead(200, { "content-type": "image/svg+xml", "cache-control": "no-store" }).end(intrinsicImage);
+      return;
+    }
+    response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" }).end(immediateImage);
     return;
   }
   const filePath = resolve(repositoryRoot, `.${pathname}`);
