@@ -489,7 +489,7 @@ test("reader disables loading and stage animations for reduced motion", () => {
   assert.equal(reducedStage.animations.length, 0);
 });
 
-function createTimingReaderHarness() {
+function createTimingReaderHarness(engine = Engine) {
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
 
   const documentElement = new FakeElement("html");
@@ -533,7 +533,7 @@ function createTimingReaderHarness() {
     getComputedStyle() {
       return { fontSize: "64px" };
     },
-    Engine,
+    Engine: engine,
     Extractor,
     ReaderIcons,
     Intl,
@@ -587,6 +587,35 @@ test("reader varies timing for punctuation and phrase length", () => {
   assert.equal(display.textContent, "長い文章のまとまりです。");
   const secondTimer = [...timers.values()][0];
   assert.equal(secondTimer.delay, 828);
+});
+
+test("Chrome viewer segments with the ReaderContent language", () => {
+  const locales: string[] = [];
+  const engine = {
+    ...Engine,
+    segmentText(text, locale, boundaries) {
+      locales.push(locale);
+      return Engine.segmentText(text, locale, boundaries);
+    },
+  };
+  const { messageListener } = createTimingReaderHarness(engine);
+  const readingContext = {
+    language: "en-US",
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [],
+  };
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "locale-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "First sentence. Next sentence.",
+    requestId: "locale-request",
+    readingContext,
+  });
+
+  assert.deepEqual(locales, ["en-US"]);
 });
 
 test("reader preserves the literal baseline effective reading rate", () => {

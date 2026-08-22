@@ -3,10 +3,12 @@ export {};
 const assert = require("node:assert/strict");
 const {
   findUnitIndex,
+  findPreviousSentenceStart,
   surroundingSentences,
   displayDuration,
   sourceOffsetAtViewportCenter,
   findBlockIndexForOffset,
+  segmentText,
 } = require("../../../.build/packages/engine/src/engine.js");
 
 const units = [
@@ -33,6 +35,26 @@ test("surrounding sentence context stays stable within a sentence", () => {
     next: "最後です。",
   });
   assert.deepEqual(surroundingSentences(units, 0), { previous: "", next: "次の文章です。" });
+});
+
+test("previous sentence lookup advances one quoted sentence at a time", () => {
+  const source = "「一文目です。二文目です。」次の文です。";
+  const segmented = segmentText(source, "ja");
+  assert.deepEqual(segmented.map((unit) => unit.sentenceIndex), [0, 1, 2]);
+  assert.equal(findPreviousSentenceStart(segmented, 2), 1);
+  assert.equal(findPreviousSentenceStart(segmented, 1), 0);
+});
+
+test("surrounding sentence context keeps a quote and its following sentence separate", () => {
+  const segmented = segmentText("前文です。「引用です。」次文です。", "ja");
+  assert.deepEqual(surroundingSentences(segmented, 1), {
+    previous: "前文です。",
+    next: "次文です。",
+  });
+  assert.deepEqual(surroundingSentences(segmented, 2), {
+    previous: "「引用です。」",
+    next: "",
+  });
 });
 
 test("display duration accounts for punctuation and section changes", () => {

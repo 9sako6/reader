@@ -107,7 +107,7 @@
     playbackState = "paused";
 
     const figureBoundaries = figures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
-    segmentationLocale = "ja";
+    segmentationLocale = readingContext.language;
     baseUnits = globalThis.Engine.segmentText(content.text, segmentationLocale, figureBoundaries)
       .map((unit) => {
         const value = unit.text.trim();
@@ -223,11 +223,13 @@
       .filter((entry) => entry.text.length > 0);
 
     const context: Partial<ReadingContext> & {
+      language: string;
       headings: ReaderHeading[];
       sectionTransitions: ReaderSectionTransition[];
       initialHeadingIndex: number;
       figures: ReaderFigure[];
     } = {
+      language: document.documentElement.lang || "ja",
       headings: [],
       sectionTransitions: [],
       initialHeadingIndex: -1,
