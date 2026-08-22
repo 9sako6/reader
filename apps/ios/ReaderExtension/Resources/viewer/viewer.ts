@@ -45,6 +45,7 @@
   let sourceBodyOverflow: string | null = null;
   let content: ReaderContent | null = null;
   let cachedContent: ReaderContent | null = null;
+  let cachedPageUrl: string | null = null;
   let units: ReaderUnit[] = [];
   let unitIndex = 0;
   let flowItems: ReadingFlowItem[] = [];
@@ -174,11 +175,15 @@
     await nextPaint();
     let preparationError: unknown = null;
     try {
-      content = cachedContent || global.Extractor.fromPage(global.document, global.Defuddle);
+      const pageUrl = global.location.href;
+      content = cachedContent && cachedPageUrl === pageUrl
+        ? cachedContent
+        : global.Extractor.fromPage(global.document, global.Defuddle);
       if (!content?.text) throw new Error("content_not_found");
       rebuildUnits();
       if (units.length === 0) throw new Error("units_not_found");
       cachedContent = content;
+      cachedPageUrl = pageUrl;
       currentOffset = 0;
       seekToUnit(0);
     } catch (error) {
@@ -338,6 +343,7 @@
 
   function retry() {
     cachedContent = null;
+    cachedPageUrl = null;
     close();
     open();
   }

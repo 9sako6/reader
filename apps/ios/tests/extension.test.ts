@@ -88,6 +88,7 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
       }],
     },
   };
+  let activeContent = content;
   let nextTimerId = 1;
   const timers = new Map();
   let launchFeedbackDuringExtraction = null;
@@ -95,6 +96,7 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   let now = 0;
   const context: any = {
     document,
+    location: { href: "https://example.com/articles/first" },
     Engine,
     Extractor: {
       fromPage: () => {
@@ -104,7 +106,7 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
           documentElement,
           (element) => element.className === "launch-feedback",
         );
-        return content;
+        return activeContent;
       },
     },
     ReaderIcons: { create: () => new FakeElement("svg") },
@@ -368,4 +370,32 @@ test("Safari reader preserves reading flow across gestures, images, and text mod
   assert.equal(cachedProgressIndicator.animations.length, 1);
   assert.notEqual(cachedLaunchLoader.style.opacity, "1");
   assert.equal(cachedLaunchFeedback.animations.length, 0);
+
+  context.MobileViewer.close();
+  context.location.href = "https://example.com/articles/second";
+  activeContent = {
+    text: "別の記事の本文です。",
+    readingContext: {
+      title: "別の記事",
+      blocks: [{
+        text: "別の記事の本文です。",
+        kind: "paragraph",
+        level: null,
+        start: 0,
+        end: "別の記事の本文です。".length,
+      }],
+      headings: [],
+      sectionOffsets: [],
+      sectionTransitions: [],
+      initialHeadingIndex: -1,
+      figures: [],
+    },
+  };
+  await context.MobileViewer.open();
+  assert.equal(extractionCount, 2);
+  const secondArticleUnit = findElement(
+    documentElement,
+    (element) => element.className.startsWith("rsvp-unit"),
+  );
+  assert.match(secondArticleUnit.textContent, /別の記事/u);
 });
