@@ -1231,68 +1231,189 @@ test("mobile RSVP viewer does not capture Space or ArrowLeft from editable contr
     const select = document.createElement("select");
     select.id = "reader-editable-select";
     select.setAttribute("aria-label", "Reader内の選択");
-    select.append(new Option("選択肢", "one"));
+    select.append(new Option("選択肢1", "one"), new Option("選択肢2", "two"));
+    select.value = "two";
     const editor = document.createElement("div");
     editor.id = "reader-editable-content";
     editor.contentEditable = "true";
     editor.setAttribute("aria-label", "Reader内の編集領域");
+    editor.textContent = "編集";
+    const referenceEditor = document.createElement("div");
+    referenceEditor.id = "reader-editable-reference";
+    referenceEditor.contentEditable = "true";
+    referenceEditor.setAttribute("aria-label", "編集動作の正常対照");
+    referenceEditor.textContent = "編集";
     for (const element of [input, textarea, select, editor]) {
       Object.assign(element.style, { position: "fixed", left: "8px", top: "8px", zIndex: "10" });
       content.append(element);
     }
+    Object.assign(referenceEditor.style, { position: "fixed", left: "8px", top: "40px", zIndex: "10" });
+    content.append(referenceEditor);
   });
 
   await page.locator("#reader-editable-input").focus();
+  await expect(page.locator("#reader-editable-input")).toBeFocused();
   await page.keyboard.press("Space");
   await page.keyboard.press("ArrowLeft");
+  await expect(page.locator("#reader-editable-input")).toHaveValue("入力 ");
+  await expect.poll(() => page.locator("#reader-editable-input").evaluate((element) => (element as HTMLInputElement).selectionStart)).toBe(2);
   await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
   await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("data-source-start", initialUnit!);
 
   await page.locator("#reader-editable-textarea").focus();
+  await expect(page.locator("#reader-editable-textarea")).toBeFocused();
   await page.keyboard.press("Space");
   await page.keyboard.press("ArrowLeft");
+  await expect(page.locator("#reader-editable-textarea")).toHaveValue("複数行 ");
+  await expect.poll(() => page.locator("#reader-editable-textarea").evaluate((element) => (element as HTMLTextAreaElement).selectionStart)).toBe(3);
   await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
   await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("data-source-start", initialUnit!);
 
   await page.locator("#reader-editable-select").focus();
+  await expect(page.locator("#reader-editable-select")).toBeFocused();
   await page.keyboard.press("Space");
   await page.keyboard.press("ArrowLeft");
+  await expect(page.locator("#reader-editable-select")).toHaveValue("two");
   await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
   await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("data-source-start", initialUnit!);
 
+  const referenceEditor = page.locator("#reader-editable-reference");
+  await referenceEditor.focus();
+  await expect(referenceEditor).toBeFocused();
+  await referenceEditor.evaluate((element) => {
+    const textNode = element.firstChild;
+    if (!(textNode instanceof Text)) throw new Error("Reference contenteditable text node is missing");
+    const range = document.createRange();
+    range.setStart(textNode, textNode.length);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await referenceEditor.press("Space");
+  const referenceAfterSpace = await referenceEditor.evaluate((element) => {
+    const selection = window.getSelection();
+    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    return { text: element.textContent, offset: range?.startOffset };
+  });
+  await referenceEditor.press("ArrowLeft");
+  const referenceAfterArrow = await referenceEditor.evaluate((element) => {
+    const selection = window.getSelection();
+    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    return { text: element.textContent, collapsed: range?.collapsed, offset: range?.startOffset };
+  });
+
   await page.locator("#reader-editable-content").focus();
-  await page.keyboard.press("Space");
-  await page.keyboard.press("ArrowLeft");
+  await expect(page.locator("#reader-editable-content")).toBeFocused();
+  await page.locator("#reader-editable-content").evaluate((element) => {
+    const textNode = element.firstChild;
+    if (!(textNode instanceof Text)) throw new Error("Contenteditable text node is missing");
+    const range = document.createRange();
+    range.setStart(textNode, textNode.length);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await page.locator("#reader-editable-content").press("Space");
+  const editorAfterSpace = await page.locator("#reader-editable-content").evaluate((element) => {
+    const selection = window.getSelection();
+    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    return {
+      text: element.textContent,
+      offset: range?.startOffset,
+    };
+  });
+  await page.locator("#reader-editable-content").press("ArrowLeft");
+  const editorState = await page.locator("#reader-editable-content").evaluate((element) => {
+    const selection = window.getSelection();
+    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    return {
+      text: element.textContent,
+      collapsed: range?.collapsed,
+      offset: range?.startOffset,
+    };
+  });
+  expect(editorAfterSpace.text).toBe(referenceAfterSpace.text);
+  expect(editorState.text).toBe(referenceAfterArrow.text);
+  if (
+    typeof referenceAfterSpace.offset === "number"
+    && typeof referenceAfterArrow.offset === "number"
+    && typeof editorAfterSpace.offset === "number"
+    && typeof editorState.offset === "number"
+  ) {
+    expect(editorAfterSpace.offset).toBe(referenceAfterSpace.offset);
+    expect(editorState.collapsed).toBe(referenceAfterArrow.collapsed);
+    expect(editorState.offset).toBe(referenceAfterArrow.offset);
+  } else {
+    await expect(page.locator("#reader-editable-content")).toBeFocused();
+  }
   await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
   await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("data-source-start", initialUnit!);
 });
 
 test("mobile viewer suppresses control transforms and animations with reduced motion", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.emulateMedia({ reducedMotion: "reduce" });
   await loadViewer(page, "mobile");
   await page.getByRole("button", { name: "readerで読む" }).click();
   const dialog = page.getByRole("dialog", { name: "reader" });
   await expect(dialog).toBeVisible();
 
-  const motion = await dialog.evaluate((reader) => {
+  const normalMotion = await dialog.evaluate((reader) => {
     const controls = [
       reader.querySelector<HTMLElement>(".mode-button"),
       reader.querySelector<HTMLElement>('[aria-label="readerを閉じる"]'),
       reader.querySelector<HTMLElement>('[aria-label="1文戻る"]'),
       reader.querySelector<HTMLElement>('[aria-label="一時停止"]'),
     ];
-    for (const control of controls) control?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     return {
-      inlineScales: controls.map((control) => control?.style.scale || ""),
-      inlineTransforms: controls.map((control) => control?.style.transform || ""),
+      closeTransitionDuration: getComputedStyle(controls[1]!).transitionDuration,
+      transportTransitionDuration: getComputedStyle(controls[2]!).transitionDuration,
+    };
+  });
+  const modeButton = dialog.getByRole("button", { name: "文章で読む" });
+  const modeBox = await modeButton.boundingBox();
+  expect(modeBox).not.toBeNull();
+  await page.mouse.move(modeBox!.x + modeBox!.width / 2, modeBox!.y + modeBox!.height / 2);
+  await page.mouse.down();
+  const normalActiveTransform = await modeButton.evaluate((element) => getComputedStyle(element).transform);
+  await page.mouse.up();
+
+  await dialog.getByRole("button", { name: "readerを閉じる" }).click();
+  await expect(dialog).toBeHidden();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const reducedDialog = page.getByRole("dialog", { name: "reader" });
+  await expect(reducedDialog).toBeVisible();
+  const reducedMotion = await reducedDialog.evaluate((reader) => {
+    const controls = [
+      reader.querySelector<HTMLElement>(".mode-button"),
+      reader.querySelector<HTMLElement>('[aria-label="readerを閉じる"]'),
+      reader.querySelector<HTMLElement>('[aria-label="1文戻る"]'),
+      reader.querySelector<HTMLElement>('[aria-label="一時停止"]'),
+    ];
+    return {
+      closeTransitionDuration: getComputedStyle(controls[1]!).transitionDuration,
+      transportTransitionDuration: getComputedStyle(controls[2]!).transitionDuration,
       animationCount: reader.getAnimations({ subtree: true }).length,
     };
   });
+  const reducedModeButton = reducedDialog.getByRole("button", { name: "文章で読む" });
+  const reducedModeBox = await reducedModeButton.boundingBox();
+  expect(reducedModeBox).not.toBeNull();
+  await page.mouse.move(reducedModeBox!.x + reducedModeBox!.width / 2, reducedModeBox!.y + reducedModeBox!.height / 2);
+  await page.mouse.down();
+  const reducedActiveTransform = await reducedModeButton.evaluate((element) => getComputedStyle(element).transform);
+  await page.mouse.up();
 
-  expect(motion.inlineScales).toEqual(["", "", "", ""]);
-  expect(motion.inlineTransforms).toEqual(["", "", "", ""]);
-  expect(motion.animationCount).toBe(0);
+  expect(normalMotion.closeTransitionDuration).not.toBe("0s");
+  expect(normalMotion.transportTransitionDuration).not.toBe("0s");
+  expect(reducedMotion.closeTransitionDuration).toBe("0s");
+  expect(reducedMotion.transportTransitionDuration).toBe("0s");
+  expect(reducedMotion.animationCount).toBe(0);
+  expect(reducedActiveTransform).not.toBe(normalActiveTransform);
 });
 
 test("mobile viewer keeps a 200 percent text layout within the viewport", async ({ page }) => {
@@ -1309,11 +1430,14 @@ test("mobile viewer keeps a 200 percent text layout within the viewport", async 
     const article = reader.querySelector<HTMLElement>(".article");
     const modeButton = reader.querySelector<HTMLElement>(".mode-button");
     if (!textView || !article || !modeButton) throw new Error("Reader text layout is missing");
-    textView.style.fontSize = "200%";
-    article.style.fontSize = "200%";
+    const baselineFontSize = Number.parseFloat(getComputedStyle(article).fontSize);
+    article.style.fontSize = `${baselineFontSize * 2}px`;
+    const zoomedFontSize = Number.parseFloat(getComputedStyle(article).fontSize);
     const dialogRect = reader.getBoundingClientRect();
     const modeRect = modeButton.getBoundingClientRect();
     return {
+      baselineFontSize,
+      zoomedFontSize,
       textOverflow: textView.scrollWidth - textView.clientWidth,
       articleOverflow: article.scrollWidth - article.clientWidth,
       modeRight: modeRect.right,
@@ -1322,6 +1446,7 @@ test("mobile viewer keeps a 200 percent text layout within the viewport", async 
     };
   });
 
+  expect(layout.zoomedFontSize).toBeCloseTo(layout.baselineFontSize * 2, 1);
   expect(layout.textOverflow).toBeLessThanOrEqual(0);
   expect(layout.articleOverflow).toBeLessThanOrEqual(0);
   expect(layout.modeRight).toBeLessThanOrEqual(layout.dialogRight);
