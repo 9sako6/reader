@@ -438,6 +438,36 @@ test("Safari reader pauses on an image and can return to the previous sentence",
   ));
 });
 
+test("Safari figure surface is keyboard accessible and keeps a failed image recoverable", async () => {
+  const { context, documentElement, timers } = createSafariReaderHarness();
+  await context.MobileViewer.open();
+  let figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
+  while (!figurePanel) {
+    fireNextTimer(timers);
+    figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
+  }
+
+  const surface = findElement(figurePanel, (element) => element.attributes["data-reader-image-surface"] === "true");
+  const veil = findElement(figurePanel, (element) => element.attributes["data-reader-image-veil"] === "true");
+  const image = findElement(figurePanel, (element) => element.tagName === "IMG");
+  assert.equal(surface.tagName, "BUTTON");
+  assert.equal(surface.attributes["aria-pressed"], "false");
+  assert.equal(surface.attributes["aria-label"], "画像を明るく表示");
+  surface.dispatchEvent({ type: "click" });
+  assert.equal(veil.style.opacity, "0");
+  assert.equal(surface.attributes["aria-pressed"], "true");
+  assert.equal(surface.attributes["aria-label"], "画像を暗く表示");
+
+  fireTimerWithDelay(timers, 100);
+  assert.equal(findElement(figurePanel, (element) => element.attributes["data-reader-figure-status"] === "true").hidden, false);
+  image.dispatchEvent({ type: "error" });
+  assert.equal(findElement(figurePanel, (element) => element.attributes["data-reader-figure-status"] === "true").textContent, "画像を読み込めませんでした");
+  const resume = findElement(documentElement, (element) => element.attributes["aria-label"] === "続きを読む");
+  assert.ok(resume);
+  resume.dispatchEvent({ type: "click" });
+  assert.match(findElement(documentElement, (element) => element.className.startsWith("rsvp-unit")).textContent, /画像の後/u);
+});
+
 test("Safari reader maps text viewport positions back to RSVP content", async () => {
   const { context, documentElement, timers } = createSafariReaderHarness();
   await context.MobileViewer.open();
@@ -474,7 +504,7 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
 
   const imagePlayButton = findElement(
     documentElement,
-    (element) => element.attributes["aria-label"] === "再生",
+    (element) => element.attributes["aria-label"] === "続きを読む",
   );
   assert.ok(imagePlayButton);
   imagePlayButton.dispatchEvent({ type: "click" });

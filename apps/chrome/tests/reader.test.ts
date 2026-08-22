@@ -732,20 +732,20 @@ test("reader keeps a fast error dialog focused and restores inert state after Es
       shiftTabPrevented = true;
     },
   });
-  assert.equal(shiftTabPrevented, false);
-  assert.equal(document.activeElement, closeButton);
+  assert.equal(shiftTabPrevented, true);
+  assert.equal(document.activeElement.textContent, "やり直す");
 
   let tabPrevented = false;
   document.dispatchEvent({
     type: "keydown",
     key: "Tab",
-    target: closeButton,
+    target: document.activeElement,
     preventDefault() {
       tabPrevented = true;
     },
   });
   assert.equal(tabPrevented, true);
-  assert.equal(document.activeElement.textContent, "やり直す");
+  assert.equal(document.activeElement, closeButton);
 
   document.dispatchEvent({
     type: "keydown",
@@ -1418,12 +1418,12 @@ test("reader pauses on an article image and exposes its context", () => {
     overlay,
     (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
   );
-  const resumeButton = findElement(overlay, (element) => element.attributes["aria-label"] === "再生");
+  const resumeButton = findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む");
   assert.equal(image.src, "https://example.com/chart.png");
   assert.equal(image.alt, "処理時間の比較グラフ");
   assert.ok(findElement(figurePanel, (element) => element.textContent === "図1 処理時間"));
   assert.ok(resumeButton);
-  assert.equal(findElement(figurePanel, (element) => element.tagName === "BUTTON"), null);
+  assert.ok(findElement(figurePanel, (element) => element.tagName === "BUTTON"));
   const imageSurface = findElement(
     figurePanel,
     (element) => element.attributes["data-reader-image-surface"] === "true",
@@ -1433,14 +1433,143 @@ test("reader pauses on an article image and exposes its context", () => {
     (element) => element.attributes["data-reader-image-veil"] === "true",
   );
   assert.equal(veil.style.opacity, "1");
-  imageSurface.dispatchEvent({ type: "pointerdown" });
+  assert.equal(imageSurface.attributes["aria-pressed"], "false");
+  assert.equal(imageSurface.attributes["aria-label"], "画像を明るく表示");
+  imageSurface.dispatchEvent({ type: "click" });
   assert.equal(veil.style.opacity, "0");
-  imageSurface.dispatchEvent({ type: "pointerup" });
+  assert.equal(imageSurface.attributes["aria-pressed"], "true");
+  assert.equal(imageSurface.attributes["aria-label"], "画像を暗く表示");
+  imageSurface.dispatchEvent({ type: "click" });
   assert.equal(veil.style.opacity, "1");
-  assert.equal(timers.size, 0);
+  assert.equal(imageSurface.attributes["aria-pressed"], "false");
+  assert.equal(timers.size, 1);
   assert.deepEqual(Array.from(figurePanel.animations[0].keyframes, ({ opacity }) => opacity), [0, 1]);
   assert.equal(figurePanel.animations[0].options.duration, 180);
   assert.deepEqual(Array.from(display.animations.at(-1).keyframes, ({ opacity }) => opacity), [1, 0]);
+});
+
+test("reader reveals figure loading feedback after 100ms and resumes after a load failure", () => {
+  const { document, messageListener, timers } = createFigureReaderHarness();
+  const text = "前の文です。\n図1\n後の文です。";
+  const readingContext = {
+    blocks: [
+      { text: "前の文です。", kind: "paragraph", level: null, start: 0, end: 6 },
+      { text: "後の文です。", kind: "paragraph", level: null, start: 9, end: text.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [{
+      src: "https://example.com/delayed.png",
+      alt: "遅延画像の説明",
+      caption: "図1",
+      sourceOffset: 7,
+      sourceEnd: 9,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-delay" });
+  messageListener({ type: "START_RSVP", text, requestId: "figure-delay", readingContext });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  let figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  while (!figurePanel) {
+    const [timerId, timer] = [...timers.entries()][0];
+    timers.delete(timerId);
+    timer.callback();
+    figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  }
+
+  const status = findElement(figurePanel, (element) => element.attributes["data-reader-figure-status"] === "true");
+  const image = findElement(figurePanel, (element) => element.tagName === "IMG");
+  assert.equal(status.hidden, true);
+  const revealEntry = [...timers.entries()].find(([, timer]) => timer.delay === 100);
+  assert.ok(revealEntry);
+  timers.delete(revealEntry[0]);
+  revealEntry[1].callback();
+  assert.equal(status.hidden, false);
+  assert.ok(findElement(status, (element) => element.attributes["data-reader-figure-indicator"] === "true"));
+
+  image.dispatchEvent({ type: "error" });
+  assert.equal(status.textContent, "画像を読み込めませんでした");
+  assert.equal(findElement(figurePanel, (element) => element.attributes["data-reader-figure-description"] === "true").hidden, false);
+  const resumeButton = findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む");
+  assert.ok(resumeButton);
+  resumeButton.dispatchEvent({ type: "click" });
+  assert.equal(findElement(overlay, (element) => element.attributes["data-reader-position-kind"] === "figure"), null);
+  assert.match(findElement(overlay, (element) => element.attributes["data-reader-unit"] === "true").textContent, /後の文/u);
+});
+
+test("reader ignores a stale figure completion after switching modes", async () => {
+  const { document, messageListener, timers } = createFigureReaderHarness();
+  const text = "前の文です。\n図1\n後の文です。";
+  const readingContext = {
+    blocks: [
+      { text: "前の文です。", kind: "paragraph", level: null, start: 0, end: 6 },
+      { text: "後の文です。", kind: "paragraph", level: null, start: 9, end: text.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [{
+      src: "https://example.com/slow.png",
+      alt: "遅い画像",
+      caption: "図1",
+      sourceOffset: 7,
+      sourceEnd: 9,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-stale" });
+  messageListener({ type: "START_RSVP", text, requestId: "figure-stale", readingContext });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  let oldPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  while (!oldPanel) {
+    const [timerId, timer] = [...timers.entries()][0];
+    timers.delete(timerId);
+    timer.callback();
+    oldPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  }
+  const oldImage = findElement(oldPanel, (element) => element.tagName === "IMG");
+  const modeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
+  modeButton.dispatchEvent({ type: "click" });
+  findElement(overlay, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+  const currentPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  const currentStatus = findElement(currentPanel, (element) => element.attributes["data-reader-figure-status"] === "true");
+  oldImage.dispatchEvent({ type: "load" });
+  await Promise.resolve();
+  assert.equal(currentStatus.hidden, true);
+  assert.equal(currentPanel.dataset.figureIndex, "0");
+});
+
+test("reader preserves the order of figures that share one source offset", () => {
+  const { document, messageListener, timers } = createFigureReaderHarness();
+  const text = "前の文です。図図後の文です。";
+  const readingContext = {
+    blocks: [
+      { text: "前の文です。", kind: "paragraph", level: null, start: 0, end: 6 },
+      { text: "後の文です。", kind: "paragraph", level: null, start: 8, end: text.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [
+      { src: "https://example.com/one.png", alt: "一枚目", caption: "図A", sourceOffset: 7, sourceEnd: 8 },
+      { src: "https://example.com/two.png", alt: "二枚目", caption: "図B", sourceOffset: 7, sourceEnd: 8 },
+    ],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-same-offset" });
+  messageListener({ type: "START_RSVP", text, requestId: "figure-same-offset", readingContext });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  let firstPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  while (!firstPanel) {
+    const [timerId, timer] = [...timers.entries()][0];
+    timers.delete(timerId);
+    timer.callback();
+    firstPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  }
+  assert.equal(firstPanel.dataset.figureIndex, "0");
+  findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む").dispatchEvent({ type: "click" });
+  const secondPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  assert.equal(secondPanel.dataset.figureIndex, "1");
+  assert.ok(findElement(secondPanel, (element) => element.textContent === "図B"));
 });
 
 test("reader returns from an image to the previous sentence and resumes after the image", async () => {

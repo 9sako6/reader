@@ -1,5 +1,10 @@
 (() => {
   type PlaybackState = "idle" | "paused" | "playing";
+  type FigureViewState =
+    | { kind: "idle" }
+    | { kind: "loading"; token: number; figureIndex: number }
+    | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
+    | { kind: "failed"; token: number; figureIndex: number };
   type ReaderMessage =
     | { type: "SHOW_RSVP_LOADING"; requestId: string }
     | { type: "START_RSVP"; requestId: string; text: string; readingContext?: Partial<ReadingContext> | null }
@@ -49,6 +54,9 @@
   let flowItems: ReaderFlowItem[] = [];
   let flowIndex = 0;
   let figurePanel: HTMLElement | null = null;
+  let figureViewState: FigureViewState = { kind: "idle" };
+  let figureLoadToken = 0;
+  let figureLoadRevealTimerId: number | null = null;
   let readerMain: HTMLDivElement | null = null;
   let sourceText = "";
   let blocks: ReaderBlock[] = [];
@@ -632,7 +640,7 @@
       right: "0",
       pointerEvents: "auto",
     });
-    topbar.append(modeButton, closeButton);
+    topbar.append(closeButton, modeButton);
     return topbar;
   }
 
@@ -837,7 +845,10 @@
   }
 
   function focusCloseIfNeeded(previousFocus: HTMLElement | null): void {
-    if (!containsReaderElement(previousFocus)) focusAfterPaint(findCloseButton());
+    if (containsReaderElement(previousFocus)) return;
+    const closeButton = findCloseButton();
+    if (!closeButton) return;
+    closeButton.focus?.({ preventScroll: true });
   }
 
   function attachKeydownListener(): void {
@@ -1071,6 +1082,7 @@
     textPositionMarkers = positionMarkers;
     textPositionDirty = false;
     textRestoreScrollTop = null;
+    figureElements.forEach((figureElement) => attachTextFigureLoadCorrection(scroller, figureElement, positionMarkers));
     const topbar = createTopbar("RSVPで読む", () => {
       if (textPositionDirty) updateTextPosition(scroller, positionMarkers, true);
       showRsvpView();
@@ -1092,7 +1104,7 @@
       fontVariantNumeric: "tabular-nums",
       pointerEvents: "none",
     });
-    shell.append(scroller, topbar, progressLabel);
+    shell.append(topbar, scroller, progressLabel);
     root.append(shell);
     attachKeydownListener();
 
@@ -1105,7 +1117,8 @@
     scroller.addEventListener("scroll", updatePosition, { passive: true });
     globalThis.requestAnimationFrame?.(() => {
       textRestoring = true;
-      restoreTextPosition(scroller, positionMarkers);
+      if (scroller.scrollTop > 0) updateTextPosition(scroller, positionMarkers);
+      else restoreTextPosition(scroller, positionMarkers);
       textRestoreScrollTop = scroller.scrollTop;
       textPositionDirty = false;
       textRestoring = false;
@@ -1134,6 +1147,8 @@
 
   function clearRenderedView() {
     if (!root || !rootStyle) return;
+    invalidateFigureLoad();
+    figurePanel = null;
     detachKeydownListener();
     displayResizeObserver?.disconnect();
     displayResizeObserver = null;
@@ -1269,10 +1284,8 @@
       margin: "2em 0",
     });
     const image = document.createElement("img");
+    configureFigureImage(image, figure, true);
     image.src = figure.src;
-    image.alt = figure.alt || figure.caption || "本文画像";
-    image.loading = "lazy";
-    image.decoding = "async";
     const imageSurface = createVeiledImageSurface(image, "72vh", "10px");
     Object.assign(image.style, {
       display: "block",
@@ -1296,10 +1309,29 @@
     return container;
   }
 
-  function createVeiledImageSurface(image: HTMLImageElement, maxHeight: string, borderRadius: string): HTMLElement {
-    const surface = document.createElement("div");
+  function configureFigureImage(image: HTMLImageElement, figure: ReaderFigure, lazy: boolean): void {
+    if (figure.srcset !== undefined) image.srcset = figure.srcset;
+    if (figure.sizes !== undefined) image.sizes = figure.sizes;
+    if (figure.width !== undefined) image.width = figure.width;
+    if (figure.height !== undefined) image.height = figure.height;
+    image.alt = figure.alt || figure.caption || "本文画像";
+    image.decoding = "async";
+    if (lazy) image.loading = "lazy";
+  }
+
+  function createVeiledImageSurface(image: HTMLImageElement, maxHeight: string, borderRadius: string): HTMLButtonElement {
+    const surface = document.createElement("button");
+    surface.type = "button";
     surface.setAttribute("data-reader-image-surface", "true");
+    surface.setAttribute("aria-pressed", "false");
+    surface.setAttribute("aria-label", "画像を明るく表示");
+    surface.title = "画像を明るく表示";
     Object.assign(surface.style, {
+      appearance: "none",
+      border: "0",
+      padding: "0",
+      background: "transparent",
+      color: "inherit",
       position: "relative",
       width: "min(100%, 720px)",
       margin: "0 auto",
@@ -1320,14 +1352,81 @@
       pointerEvents: "none",
       transition: prefersReducedMotion() ? "none" : "opacity 120ms ease-out",
     });
-    const reveal = () => { veil.style.opacity = "0"; };
-    const dim = () => { veil.style.opacity = "1"; };
-    surface.addEventListener("pointerdown", reveal);
-    surface.addEventListener("pointerup", dim);
-    surface.addEventListener("pointercancel", dim);
-    surface.addEventListener("pointerleave", dim);
+    let revealed = false;
+    const updateBrightness = () => {
+      surface.setAttribute("aria-pressed", String(revealed));
+      const label = revealed ? "画像を暗く表示" : "画像を明るく表示";
+      surface.setAttribute("aria-label", label);
+      surface.title = label;
+      veil.style.opacity = revealed ? "0" : "1";
+      if (figureViewState.kind === "ready") {
+        figureViewState = {
+          ...figureViewState,
+          brightness: revealed ? "revealed" : "dimmed",
+        };
+      }
+    };
+    surface.addEventListener("click", () => {
+      revealed = !revealed;
+      updateBrightness();
+    });
     surface.append(image, veil);
     return surface;
+  }
+
+  function attachTextFigureLoadCorrection(
+    scroller: HTMLElement,
+    figureElement: HTMLElement,
+    positionMarkers: HTMLElement[],
+  ): void {
+    const surface = Array.from(figureElement.children).find((child) => child.tagName === "BUTTON");
+    const image = surface && Array.from(surface.children).find((child) => child.tagName === "IMG") as HTMLImageElement | undefined;
+    if (!image) return;
+    const adjustAfterDecode = async () => {
+      if (textScroller !== scroller) return;
+      const currentMarker = currentTextPositionMarker(positionMarkers);
+      const figureOffset = Number(figureElement.dataset.sourceStart);
+      const markerOffset = Number(currentMarker?.dataset.sourceStart);
+      if (!currentMarker || !Number.isFinite(figureOffset) || !Number.isFinite(markerOffset) || figureOffset > markerOffset) return;
+      const beforeTop = elementRect(currentMarker, 0, 100).top;
+      try {
+        if (typeof image.decode === "function") await image.decode();
+      } catch {
+      }
+      if (textScroller !== scroller) return;
+      const applyCorrection = () => {
+        if (textScroller !== scroller) return;
+        const afterTop = elementRect(currentMarker, 0, 100).top;
+        const delta = afterTop - beforeTop;
+        if (Number.isFinite(delta)) {
+          textRestoring = true;
+          scroller.scrollTop += delta;
+          textRestoreScrollTop = scroller.scrollTop;
+          textRestoring = false;
+        }
+      };
+      if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(applyCorrection);
+      else applyCorrection();
+    };
+    image.addEventListener("load", () => { void adjustAfterDecode(); });
+    image.addEventListener("error", () => { void adjustAfterDecode(); });
+  }
+
+  function currentTextPositionMarker(positionMarkers: HTMLElement[]): HTMLElement | undefined {
+    const position = currentPosition;
+    if (position.kind === "figure") {
+      return positionMarkers.find((marker) => (
+        marker.dataset.readerPositionKind === "figure"
+        && Number(marker.dataset.figureIndex) === position.figureIndex
+      ));
+    }
+    return positionMarkers.find((marker) => (
+      marker.dataset.readerPositionKind === "text"
+      && Number(marker.dataset.sourceStart) <= currentPosition.sourceOffset
+      && Number(marker.dataset.sourceEnd) > currentPosition.sourceOffset
+    )) || [...positionMarkers].reverse().find((marker) => (
+      Number(marker.dataset.sourceStart) <= currentPosition.sourceOffset
+    ));
   }
 
   function updateTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[], preferReadableTop = false): void {
@@ -1353,7 +1452,20 @@
         firstReadableTop = rect.top;
       }
     }
-    const selected = preferReadableTop ? firstReadable || firstVisible : firstVisible;
+    const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
+    const lastFigureOffset = Math.max(...positionMarkers
+      .filter((marker) => marker.dataset.readerPositionKind === "figure")
+      .map((marker) => Number(marker.dataset.sourceStart))
+      .filter((offset) => Number.isFinite(offset)), -1);
+    const firstTextAfterFigure = lastFigureOffset >= 0
+      ? positionMarkers.find((marker) => (
+        marker.dataset.readerPositionKind === "text"
+        && Number(marker.dataset.sourceStart) > lastFigureOffset
+      ))
+      : undefined;
+    const selected = atBottom && firstTextAfterFigure
+      ? firstTextAfterFigure
+      : preferReadableTop ? firstReadable || firstVisible : firstVisible;
     if (!selected) return;
     const sourceOffset = Number(selected.dataset.sourceStart);
     if (!Number.isFinite(sourceOffset)) return;
@@ -1586,6 +1698,9 @@
   function showFigure(figure: ReaderFigure, figureIndex: number): void {
     if (!readerMain || !display) return;
     pause();
+    dismissFigurePanel();
+    const token = ++figureLoadToken;
+    figureViewState = { kind: "loading", token, figureIndex };
 
     currentPosition = {
       kind: "figure",
@@ -1597,13 +1712,13 @@
     animateOpacity(display, 1, 0, 180);
     display.style.pointerEvents = "none";
 
-    figurePanel = document.createElement("figure");
-    figurePanel.setAttribute("aria-label", "本文画像");
-    figurePanel.dataset.sourceStart = String(figure.sourceOffset);
-    figurePanel.dataset.sourceEnd = String(figure.sourceEnd);
-    figurePanel.dataset.readerPositionKind = "figure";
-    figurePanel.dataset.figureIndex = String(figureIndex);
-    Object.assign(figurePanel.style, {
+    const panel = document.createElement("figure");
+    panel.setAttribute("aria-label", "本文画像");
+    panel.dataset.sourceStart = String(figure.sourceOffset);
+    panel.dataset.sourceEnd = String(figure.sourceEnd);
+    panel.dataset.readerPositionKind = "figure";
+    panel.dataset.figureIndex = String(figureIndex);
+    Object.assign(panel.style, {
       position: "absolute",
       inset: "52px 0 64px",
       display: "flex",
@@ -1616,8 +1731,7 @@
     });
 
     const image = document.createElement("img");
-    image.src = figure.src;
-    image.alt = figure.alt || figure.caption || "本文画像";
+    configureFigureImage(image, figure, false);
     const imageSurface = createVeiledImageSurface(image, "min(54vh, 560px)", "12px");
     Object.assign(image.style, {
       display: "block",
@@ -1625,7 +1739,25 @@
       objectFit: "contain",
     });
 
-    figurePanel.append(imageSurface);
+    const status = createFigureStatus();
+    const description = document.createElement("div");
+    description.setAttribute("data-reader-figure-description", "true");
+    description.textContent = figure.alt || figure.caption || "本文画像";
+    description.hidden = true;
+    Object.assign(description.style, {
+      color: "rgba(255,255,255,0.72)",
+      fontSize: "14px",
+      lineHeight: "1.45",
+      textAlign: "center",
+    });
+    image.addEventListener("load", () => {
+      void settleFigureImage(token, image, panel, status, description, imageSurface);
+    });
+    image.addEventListener("error", () => {
+      failFigureImage(token, figureIndex, panel, status, description, imageSurface);
+    });
+
+    panel.append(imageSurface, status, description);
     if (figure.caption) {
       const caption = document.createElement("figcaption");
       caption.textContent = figure.caption;
@@ -1636,10 +1768,129 @@
         lineHeight: "1.4",
         textAlign: "center",
       });
-      figurePanel.append(caption);
+      panel.append(caption);
     }
-    readerMain.append(figurePanel);
-    animateOpacity(figurePanel, 0, 1, 180);
+    figurePanel = panel;
+    readerMain.append(panel);
+    updatePlayPauseButton();
+    scheduleFigureLoadingIndicator(token, panel, status);
+    image.src = figure.src;
+    if (image.complete && image.naturalWidth > 0) {
+      void settleFigureImage(token, image, panel, status, description, imageSurface);
+    }
+    animateOpacity(panel, 0, 1, 180);
+  }
+
+  function createFigureStatus(): HTMLDivElement {
+    const status = document.createElement("div");
+    status.setAttribute("data-reader-figure-status", "true");
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.textContent = "画像を準備しています";
+    status.hidden = true;
+    Object.assign(status.style, {
+      display: "none",
+      alignItems: "center",
+      gap: "8px",
+      color: "rgba(255,255,255,0.72)",
+      fontSize: "14px",
+      lineHeight: "1.4",
+    });
+    return status;
+  }
+
+  function scheduleFigureLoadingIndicator(token: number, panel: HTMLElement, status: HTMLElement): void {
+    if (figureLoadRevealTimerId !== null) globalThis.clearTimeout(figureLoadRevealTimerId);
+    figureLoadRevealTimerId = globalThis.setTimeout(() => {
+      figureLoadRevealTimerId = null;
+      if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
+      status.hidden = false;
+      status.style.display = "flex";
+      const indicator = document.createElement("span");
+      indicator.setAttribute("data-reader-figure-indicator", "true");
+      indicator.setAttribute("aria-hidden", "true");
+      Object.assign(indicator.style, {
+        width: "28px",
+        height: "2px",
+        borderRadius: "999px",
+        background: "rgba(255,255,255,0.28)",
+        display: "inline-block",
+        overflow: "hidden",
+      });
+      const bar = document.createElement("span");
+      Object.assign(bar.style, {
+        display: "block",
+        width: "100%",
+        height: "100%",
+        background: "rgba(255,255,255,0.84)",
+        transform: "translateX(-100%) scaleX(.35)",
+        transformOrigin: "left center",
+      });
+      indicator.append(bar);
+      if (!prefersReducedMotion()) bar.animate(
+        [
+          { transform: "translateX(-100%) scaleX(.35)" },
+          { transform: "translateX(220%) scaleX(.35)" },
+        ],
+        { duration: 900, iterations: Infinity, easing: "linear" },
+      );
+      status.append(indicator);
+    }, 100);
+  }
+
+  async function settleFigureImage(
+    token: number,
+    image: HTMLImageElement,
+    panel: HTMLElement,
+    status: HTMLElement,
+    description: HTMLElement,
+    imageSurface: HTMLElement,
+  ): Promise<void> {
+    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
+    try {
+      if (typeof image.decode === "function") await image.decode();
+    } catch {
+      if (!(image.complete && image.naturalWidth > 0)) {
+        failFigureImage(token, figureViewState.figureIndex, panel, status, description, imageSurface);
+        return;
+      }
+    }
+    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
+    if (figureLoadRevealTimerId !== null) {
+      globalThis.clearTimeout(figureLoadRevealTimerId);
+      figureLoadRevealTimerId = null;
+    }
+    status.hidden = true;
+    status.style.display = "none";
+    description.hidden = true;
+    figureViewState = { kind: "ready", token, figureIndex: figureViewState.figureIndex, brightness: "dimmed" };
+    imageSurface.setAttribute("aria-pressed", "false");
+    imageSurface.setAttribute("aria-label", "画像を明るく表示");
+    imageSurface.title = "画像を明るく表示";
+    const veil = Array.from(imageSurface.children).find((child) => child.getAttribute?.("data-reader-image-veil") === "true");
+    if (veil) (veil as HTMLElement).style.opacity = "1";
+    updatePlayPauseButton();
+  }
+
+  function failFigureImage(
+    token: number,
+    figureIndex: number,
+    panel: HTMLElement,
+    status: HTMLElement,
+    description: HTMLElement,
+    _imageSurface: HTMLElement,
+  ): void {
+    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
+    if (figureLoadRevealTimerId !== null) {
+      globalThis.clearTimeout(figureLoadRevealTimerId);
+      figureLoadRevealTimerId = null;
+    }
+    status.hidden = false;
+    status.style.display = "block";
+    status.textContent = "画像を読み込めませんでした";
+    description.hidden = false;
+    figureViewState = { kind: "failed", token, figureIndex };
+    updatePlayPauseButton();
   }
 
   function advanceFromFigure() {
@@ -1653,12 +1904,23 @@
     if (!renderCurrentFlowItem()) play();
   }
 
+  function invalidateFigureLoad(): void {
+    figureLoadToken += 1;
+    figureViewState = { kind: "idle" };
+    if (figureLoadRevealTimerId !== null) {
+      globalThis.clearTimeout(figureLoadRevealTimerId);
+      figureLoadRevealTimerId = null;
+    }
+  }
+
   function dismissFigurePanel() {
+    invalidateFigureLoad();
     const outgoing = figurePanel;
     if (!outgoing) return;
     figurePanel = null;
     outgoing.style.pointerEvents = "none";
     const outgoingAnimation = animateOpacity(outgoing, 1, 0, 180);
+    outgoing.remove();
     afterAnimation(outgoingAnimation, () => outgoing.remove());
     if (display) {
       animateOpacity(display, 0, 1, 180);
@@ -1738,6 +2000,13 @@
 
   function updatePlayPauseButton() {
     if (!playPauseButton) return;
+    if (figurePanel) {
+      playPauseButton.replaceChildren(globalThis.ReaderIcons.create(document, "play", 30));
+      playPauseButton.setAttribute("aria-label", "続きを読む");
+      playPauseButton.setAttribute("aria-pressed", "false");
+      playPauseButton.title = "続きを読む";
+      return;
+    }
     const playing = playbackState === "playing";
     playPauseButton.replaceChildren(
       globalThis.ReaderIcons.create(document, playing ? "pause" : "play", playing ? 26 : 30),
@@ -1774,11 +2043,9 @@
     if (focusable.length === 0) return;
     const active = readerActiveElement();
     const currentIndex = focusable.indexOf(active as HTMLElement);
-    const atStart = currentIndex === 0;
-    const atEnd = currentIndex === focusable.length - 1;
-    const outsideReader = currentIndex < 0;
-    if (!outsideReader && !(event.shiftKey ? atStart : atEnd)) return;
-    const nextIndex = event.shiftKey ? focusable.length - 1 : 0;
+    const nextIndex = event.shiftKey
+      ? currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1
+      : currentIndex < 0 || currentIndex >= focusable.length - 1 ? 0 : currentIndex + 1;
     event.preventDefault();
     focusable[nextIndex]?.focus();
   }
@@ -1873,6 +2140,7 @@
 
   function removeOverlay() {
     cancelLoadingReveal();
+    invalidateFigureLoad();
     loadingIndicatorAnimation?.cancel?.();
     loadingIndicatorAnimation = null;
     loadingIndicator = null;
