@@ -1,7 +1,12 @@
+import { percentile } from "./performance-sample.mjs";
+
 export const FEEDBACK_ABSOLUTE_BUDGET_MS = 100;
 export const FEEDBACK_PAIRED_P50_BUDGET_MS = 16;
 export const REACT_BUNDLE_MAX_INCREASE_PERCENT = 35;
 export const REACT_FIXED_HEAP_BUDGET_BYTES = 400_000;
+export const REACT_MEMORY_FLOOR_BYTES = 65_536;
+export const REACT_STEADY_P50_FLOOR_BYTES = 32_768;
+export const REACT_STEADY_P90_FLOOR_BYTES = 65_536;
 export const REACT_INITIALIZATION_METRICS = ["reactInitMs", "wasmInitMs", "initializationSpanMs"];
 
 export function evaluateFeedbackBudget({ observedP90, pairedP50DeltaMs = null }) {
@@ -15,81 +20,153 @@ export function evaluateFeedbackBudget({ observedP90, pairedP50DeltaMs = null })
   };
 }
 
-function summarizeCycleIncrements(cycles, warmupCycles) {
-  const increments = cycles?.slice(warmupCycles).map((cycle) => cycle.delta) || [];
+export function summarizeMemorySamples(values) {
+  const samples = Array.isArray(values) ? [...values] : [];
+  const measured = samples.length > 0 && samples.every((value) => Number.isFinite(value));
   return {
-    increments,
-    p50: increments.length > 0 && increments.every((value) => Number.isFinite(value))
-      ? [...increments].sort((left, right) => left - right)[Math.floor(increments.length / 2)]
-      : null,
-    p90: increments.length > 0 && increments.every((value) => Number.isFinite(value))
-      ? [...increments].sort((left, right) => left - right)[Math.max(0, Math.ceil(increments.length * 0.9) - 1)]
-      : null,
-    max: increments.length > 0 && increments.every((value) => Number.isFinite(value)) ? Math.max(...increments) : null,
+    samples,
+    count: samples.length,
+    p50: measured ? percentile(samples, 0.5) : null,
+    p90: measured ? percentile(samples, 0.9) : null,
+    max: measured ? Math.max(...samples) : null,
   };
 }
 
-export function evaluateReactMemoryGate({ candidateP90Bytes, baselineP90Bytes, fixedOverheadBytes = null, cleanupCycles = null }) {
+function cycleDelta(run, cycle) {
+  return run?.cleanupCycles?.cycles?.[cycle]?.delta ?? null;
+}
+
+export function buildPairedMemorySamples(baselineRuns, candidateRuns, { requireBalanced = false } = {}) {
+  if (!Array.isArray(baselineRuns) || !Array.isArray(candidateRuns) || baselineRuns.length !== candidateRuns.length) {
+    throw new Error("Paired memory samples require equal baseline and candidate run counts");
+  }
+  const samples = baselineRuns.map((baselineRun, index) => {
+    const candidateRun = candidateRuns[index];
+    const baselineOrder = baselineRun?.executionOrder;
+    const candidateOrder = candidateRun?.executionOrder;
+    if (![
+      "baseline-candidate",
+      "candidate-baseline",
+    ].includes(baselineOrder) || baselineOrder !== candidateOrder) {
+      throw new Error(`Paired memory sample ${index} has inconsistent execution order`);
+    }
+    const baselineCycle0 = cycleDelta(baselineRun, 0);
+    const baselineCycle1 = cycleDelta(baselineRun, 1);
+    const candidateCycle0 = cycleDelta(candidateRun, 0);
+    const candidateCycle1 = cycleDelta(candidateRun, 1);
+    const fixedOverheadBytes = [baselineCycle0, baselineCycle1, candidateCycle0, candidateCycle1].every(Number.isFinite)
+      ? (candidateCycle0 - candidateCycle1) - (baselineCycle0 - baselineCycle1)
+      : null;
+    if (![baselineCycle0, baselineCycle1, candidateCycle0, candidateCycle1].every(Number.isFinite)) {
+      throw new Error(`Paired memory sample ${index} is missing cycle0 or cycle1 heap data`);
+    }
+    return {
+      run: index,
+      executionOrder: candidateRun?.executionOrder ?? baselineRun?.executionOrder ?? null,
+      baseline: { cycle0: baselineCycle0, cycle1: baselineCycle1 },
+      candidate: { cycle0: candidateCycle0, cycle1: candidateCycle1 },
+      fixedOverheadBytes,
+    };
+  });
+  const executionOrderCounts = {
+    "baseline-candidate": samples.filter((sample) => sample.executionOrder === "baseline-candidate").length,
+    "candidate-baseline": samples.filter((sample) => sample.executionOrder === "candidate-baseline").length,
+  };
+  if (requireBalanced && (samples.length !== 10 || executionOrderCounts["baseline-candidate"] !== 5 || executionOrderCounts["candidate-baseline"] !== 5)) {
+    throw new Error("Paired memory samples require ten runs split across five AB and five BA orders");
+  }
+  return {
+    sampleCount: samples.length,
+    samples,
+    executionOrderCounts,
+    fixedOverhead: summarizeMemorySamples(samples.map((sample) => sample.fixedOverheadBytes)),
+    baselineSteady: summarizeMemorySamples(samples.map((sample) => sample.baseline.cycle1)),
+    candidateSteady: summarizeMemorySamples(samples.map((sample) => sample.candidate.cycle1)),
+    steadyDelta: summarizeMemorySamples(samples.map((sample) => sample.candidate.cycle1 - sample.baseline.cycle1)),
+  };
+}
+
+function steadyMemoryGate(baselineSummary, candidateSummary, pairedDelta) {
+  const measured = Number.isFinite(baselineSummary?.p90)
+    && Number.isFinite(candidateSummary?.p90)
+    && Number.isFinite(pairedDelta?.p90);
+  const p50BudgetBytes = measured
+    ? Math.max(REACT_STEADY_P50_FLOOR_BYTES, Math.max(0, baselineSummary.p90) * 0.02)
+    : null;
+  const p90BudgetBytes = measured
+    ? Math.max(REACT_STEADY_P90_FLOOR_BYTES, Math.max(0, baselineSummary.p90) * 0.25)
+    : null;
+  return {
+    baseline: baselineSummary,
+    candidate: candidateSummary,
+    pairedDelta,
+    budgetBytes: p90BudgetBytes,
+    p50BudgetBytes,
+    p90BudgetBytes,
+    floorBytes: REACT_MEMORY_FLOOR_BYTES,
+    regression: !measured || pairedDelta.p50 > p50BudgetBytes || pairedDelta.p90 > p90BudgetBytes,
+  };
+}
+
+function representativeMemoryGate(representativeCleanup) {
+  if (!representativeCleanup) return null;
+  const baseline = representativeCleanup.baseline?.steadyIncrements;
+  const candidate = representativeCleanup.candidate?.steadyIncrements;
+  const pairedDelta = representativeCleanup.steadyDelta;
+  return {
+    ...steadyMemoryGate(baseline, candidate, pairedDelta),
+    warmupCycles: representativeCleanup.candidate?.warmupCycles ?? null,
+    cycleCount: representativeCleanup.candidate?.cycles?.length ?? null,
+  };
+}
+
+export function evaluateReactMemoryGate({ candidateP90Bytes, baselineP90Bytes, pairedMemory = null, representativeCleanup = null }) {
   const candidateMeasured = Number.isFinite(candidateP90Bytes);
   const baselineMeasured = Number.isFinite(baselineP90Bytes);
-  if (!candidateMeasured || !baselineMeasured) {
+  const fixedSummary = pairedMemory?.fixedOverhead;
+  const fixedMeasured = Number.isFinite(fixedSummary?.p90);
+  const steadyMeasured = Number.isFinite(pairedMemory?.baselineSteady?.p90)
+    && Number.isFinite(pairedMemory?.candidateSteady?.p90)
+    && Number.isFinite(pairedMemory?.steadyDelta?.p90);
+  if (!candidateMeasured || !baselineMeasured || !fixedMeasured || !steadyMeasured) {
     return {
       status: "unmeasured",
       candidateP90Bytes,
       baselineP90Bytes,
-      fixedOverheadBytes,
+      fixedOverheadBytes: fixedMeasured ? Math.max(0, fixedSummary.p90) : null,
+      fixedOverhead: fixedSummary ?? null,
       fixedOverheadBudgetBytes: REACT_FIXED_HEAP_BUDGET_BYTES,
       dataScalingBudgetBytes: null,
       combinedBudgetBytes: null,
-      steadyGrowth: null,
+      dataScalingObservedBytes: null,
+      steadyGrowth: pairedMemory ? steadyMemoryGate(pairedMemory.baselineSteady, pairedMemory.candidateSteady, pairedMemory.steadyDelta) : null,
+      representativeGrowth: representativeMemoryGate(representativeCleanup),
       regression: true,
     };
   }
-  const measuredFixedOverheadBytes = Number.isFinite(fixedOverheadBytes)
-    ? Math.max(0, fixedOverheadBytes)
-    : cleanupCycles && Number.isFinite(cleanupCycles.candidate?.cycles?.[0]?.delta) && Number.isFinite(cleanupCycles.baseline?.cycles?.[0]?.delta)
-      ? Math.max(0, cleanupCycles.candidate.cycles[0].delta - cleanupCycles.baseline.cycles[0].delta)
-      : null;
-  if (!Number.isFinite(measuredFixedOverheadBytes)) {
-    return {
-      status: "unmeasured",
-      candidateP90Bytes,
-      baselineP90Bytes,
-      fixedOverheadBytes: measuredFixedOverheadBytes,
-      fixedOverheadBudgetBytes: REACT_FIXED_HEAP_BUDGET_BYTES,
-      dataScalingBudgetBytes: null,
-      combinedBudgetBytes: null,
-      steadyGrowth: null,
-      regression: true,
-    };
-  }
+  const measuredFixedOverheadBytes = Math.max(0, fixedSummary.p90);
   const dataScalingBudgetBytes = Math.max(0, baselineP90Bytes) * 1.25;
+  const dataScalingObservedBytes = candidateP90Bytes - measuredFixedOverheadBytes;
   const combinedBudgetBytes = dataScalingBudgetBytes + measuredFixedOverheadBytes;
   const fixedOverheadRegression = measuredFixedOverheadBytes > REACT_FIXED_HEAP_BUDGET_BYTES;
-  const dataScalingRegression = candidateP90Bytes > combinedBudgetBytes;
-  const candidateSteady = cleanupCycles ? summarizeCycleIncrements(cleanupCycles.candidate?.cycles, cleanupCycles.candidate?.warmupCycles ?? 2) : null;
-  const baselineSteady = cleanupCycles ? summarizeCycleIncrements(cleanupCycles.baseline?.cycles, cleanupCycles.baseline?.warmupCycles ?? 2) : null;
-  const cleanupMeasured = cleanupCycles === null
-    || (Number.isFinite(candidateSteady?.p90) && Number.isFinite(baselineSteady?.p90));
-  const steadyBudgetBytes = cleanupMeasured && cleanupCycles !== null ? Math.max(0, baselineSteady.p90) * 1.25 : null;
-  const cleanupRegression = cleanupCycles !== null
-    && (!cleanupMeasured || candidateSteady.p90 > steadyBudgetBytes);
+  const dataScalingRegression = dataScalingObservedBytes > dataScalingBudgetBytes;
+  const steadyGrowth = steadyMemoryGate(pairedMemory.baselineSteady, pairedMemory.candidateSteady, pairedMemory.steadyDelta);
+  const representativeGrowth = representativeMemoryGate(representativeCleanup);
+  const cleanupRegression = steadyGrowth.regression || representativeGrowth?.regression === true;
   return {
     status: fixedOverheadRegression || dataScalingRegression || cleanupRegression ? "regression" : "within-budget",
     candidateP90Bytes,
     baselineP90Bytes,
     fixedOverheadBytes: measuredFixedOverheadBytes,
+    fixedOverhead: fixedSummary,
     fixedOverheadBudgetBytes: REACT_FIXED_HEAP_BUDGET_BYTES,
     dataScalingBudgetBytes,
+    dataScalingObservedBytes,
     combinedBudgetBytes,
     fixedOverheadRegression,
     dataScalingRegression,
-    steadyGrowth: cleanupCycles === null ? null : {
-      candidate: candidateSteady,
-      baseline: baselineSteady,
-      budgetBytes: steadyBudgetBytes,
-      regression: cleanupRegression,
-    },
+    steadyGrowth,
+    representativeGrowth,
     regression: fixedOverheadRegression || dataScalingRegression || cleanupRegression,
   };
 }

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import { chromium } from "@playwright/test";
-import { evaluateFeedbackBudget, evaluateReactMemoryGate, evaluateReactMigrationGate, REACT_FIXED_HEAP_BUDGET_BYTES } from "./performance-budget.mjs";
+import { buildPairedMemorySamples, evaluateFeedbackBudget, evaluateReactMemoryGate, evaluateReactMigrationGate, REACT_FIXED_HEAP_BUDGET_BYTES, summarizeMemorySamples } from "./performance-budget.mjs";
 import { buildPerformanceSample, median, percentile } from "./performance-sample.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
@@ -207,7 +207,14 @@ function pairedDeltaReport(baselineRuns, candidateRuns) {
     });
     return [key, { samples, p50: percentile(samples, 0.5), p90: percentile(samples, 0.9) }];
   }));
-  return { baselineRuns, candidateRuns, deltas };
+  return {
+    baselineRuns,
+    candidateRuns,
+    deltas,
+    pairedMemory: buildPairedMemorySamples(baselineRuns, candidateRuns, {
+      requireBalanced: process.env.READER_PERFORMANCE_ENFORCE === "1",
+    }),
+  };
 }
 
 function budgetReport(fixtureName, p90, retainedHeap, pairedBaseline = null, pairedDelta = null, reactMemoryGate = null) {
@@ -361,11 +368,18 @@ async function setupPerformancePage(browser, fixture, variant = "candidate") {
   return { page, cdp };
 }
 
-async function measurePerformanceCycle(page, cdp, settleMs = 0) {
+async function measurePerformanceCycle(page, cdp, settleMs = 0, { clearEntries = false, priorWasmFetchedBeforeTap = false } = {}) {
+  if (clearEntries) {
+    await page.evaluate(() => {
+      performance.clearMarks();
+      performance.clearMeasures();
+      performance.clearResourceTimings();
+    });
+  }
   await cdp.send("HeapProfiler.enable");
   await cdp.send("HeapProfiler.collectGarbage");
   const beforeOpenMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
-  const rawResult = await page.evaluate(() => {
+  const rawResult = await page.evaluate((priorWasmFetchedBeforeTap) => {
     const openPromise = globalThis.MobileViewer.open();
     return openPromise.then(() => {
       const mark = (name) => performance.getEntriesByName(name, "mark").at(-1)?.startTime;
@@ -389,14 +403,19 @@ async function measurePerformanceCycle(page, cdp, settleMs = 0) {
       return {
         marks,
         metrics,
-        wasmFetchedBeforeTap: wasmRequestsBeforeTap.some((entry) => entry.startTime < marks.tap),
+        wasmFetchedBeforeTap: priorWasmFetchedBeforeTap || wasmRequestsBeforeTap.some((entry) => entry.startTime < marks.tap),
         nodeCount: document.querySelectorAll("*").length,
       };
-    });
+    }, priorWasmFetchedBeforeTap);
   });
   const result = buildPerformanceSample(rawResult);
   await page.evaluate(() => globalThis.MobileViewer.close());
   if (settleMs > 0) await page.waitForTimeout(settleMs);
+  await page.evaluate(() => {
+    performance.clearMarks();
+    performance.clearMeasures();
+    performance.clearResourceTimings();
+  });
   await cdp.send("HeapProfiler.enable");
   await cdp.send("HeapProfiler.collectGarbage");
   const afterCloseMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
@@ -410,10 +429,19 @@ async function measurePerformanceCycle(page, cdp, settleMs = 0) {
   };
 }
 
-async function measurePage(browser, fixture, variant = "candidate") {
+async function measurePage(browser, fixture, variant = "candidate", { withCleanup = true } = {}) {
   const { page, cdp } = await setupPerformancePage(browser, fixture, variant);
   try {
-    return await measurePerformanceCycle(page, cdp);
+    const first = await measurePerformanceCycle(page, cdp);
+    if (!withCleanup) return first;
+    const second = await measurePerformanceCycle(page, cdp, 500, {
+      clearEntries: true,
+      priorWasmFetchedBeforeTap: first.wasmFetchedBeforeTap,
+    });
+    return {
+      ...first,
+      cleanupCycles: cleanupCycleReport([first, second], 1),
+    };
   } finally {
     await page.close();
   }
@@ -424,12 +452,7 @@ function cleanupCycleReport(runs, warmupCycles = 2) {
   return {
     cycles: runs.map((run, cycle) => ({ cycle, before: run.heapBeforeOpenBytes, after: run.retainedHeapAfterCloseBytes, delta: run.retainedHeapDeltaBytes })),
     warmupCycles,
-    steadyIncrements: {
-      increments,
-      p50: median(increments),
-      p90: percentile(increments, 0.9),
-      max: increments.length > 0 && increments.every((value) => Number.isFinite(value)) ? Math.max(...increments) : null,
-    },
+    steadyIncrements: summarizeMemorySamples(increments),
   };
 }
 
@@ -438,12 +461,61 @@ async function measureCleanupCycles(browser, fixture, variant, cycles = 8) {
   try {
     const runs = [];
     for (let cycle = 0; cycle < cycles; cycle += 1) {
-      runs.push(await measurePerformanceCycle(page, cdp, 500));
+      runs.push(await measurePerformanceCycle(page, cdp, 500, {
+        clearEntries: cycle > 0,
+        priorWasmFetchedBeforeTap: runs[0]?.wasmFetchedBeforeTap ?? false,
+      }));
     }
-    return cleanupCycleReport(runs);
+    return cleanupCycleReport(runs, 1);
   } finally {
     await page.close();
   }
+}
+
+function combineRepresentativeTrajectories(trajectories) {
+  const combineVariant = (variant) => {
+    const reports = trajectories.map((trajectory) => trajectory[variant]);
+    const cycleCount = Math.min(...reports.map((report) => report.cycles.length));
+    const cycles = Array.from({ length: cycleCount }, (_, cycle) => {
+      const samples = reports.map((report) => report.cycles[cycle]?.delta ?? null);
+      const summary = summarizeMemorySamples(samples);
+      return { cycle, samples, p50: summary.p50, p90: summary.p90, max: summary.max };
+    });
+    const steadyIncrements = summarizeMemorySamples(cycles.slice(1).flatMap((cycle) => cycle.samples));
+    return { warmupCycles: 1, cycles, steadyIncrements };
+  };
+  const steadyDelta = summarizeMemorySamples(trajectories.flatMap((trajectory) => trajectory.candidate.cycles
+    .slice(1)
+    .map((candidateCycle, cycle) => {
+      const baselineDelta = trajectory.baseline.cycles[cycle + 1]?.delta;
+      return Number.isFinite(candidateCycle.delta) && Number.isFinite(baselineDelta)
+        ? candidateCycle.delta - baselineDelta
+        : null;
+    })));
+  return {
+    executionOrders: trajectories.map((trajectory) => trajectory.executionOrder),
+    baseline: combineVariant("baseline"),
+    candidate: combineVariant("candidate"),
+    steadyDelta,
+  };
+}
+
+async function measureRepresentativeCleanup(browser, fixture, cycles) {
+  const trajectories = [];
+  for (const baselineFirst of [true, false]) {
+    const executionOrder = baselineFirst ? "baseline-candidate" : "candidate-baseline";
+    let baseline;
+    let candidate;
+    if (baselineFirst) {
+      baseline = await measureCleanupCycles(browser, fixture, "baseline", cycles);
+      candidate = await measureCleanupCycles(browser, fixture, "candidate", cycles);
+    } else {
+      candidate = await measureCleanupCycles(browser, fixture, "candidate", cycles);
+      baseline = await measureCleanupCycles(browser, fixture, "baseline", cycles);
+    }
+    trajectories.push({ executionOrder, baseline, candidate });
+  }
+  return combineRepresentativeTrajectories(trajectories);
 }
 
 const browser = await chromium.launch({ headless: true });
@@ -457,9 +529,9 @@ try {
     const baselineRuns = [];
     for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) {
       const baselineFirst = warmup % 2 === 0;
-      if (baselineRoot && baselineFirst) await measurePage(browser, fixture, "baseline");
-      await measurePage(browser, fixture);
-      if (baselineRoot && !baselineFirst) await measurePage(browser, fixture, "baseline");
+      if (baselineRoot && baselineFirst) await measurePage(browser, fixture, "baseline", { withCleanup: false });
+      await measurePage(browser, fixture, "candidate", { withCleanup: false });
+      if (baselineRoot && !baselineFirst) await measurePage(browser, fixture, "baseline", { withCleanup: false });
     }
     const runs = [];
     for (let run = 0; run < runsPerCase; run += 1) {
@@ -505,9 +577,9 @@ try {
     const baselineRuns = [];
     for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) {
       const baselineFirst = warmup % 2 === 0;
-      if (baselineRoot && baselineFirst) await measurePage(browser, fixture, "baseline");
-      await measurePage(browser, fixture);
-      if (baselineRoot && !baselineFirst) await measurePage(browser, fixture, "baseline");
+      if (baselineRoot && baselineFirst) await measurePage(browser, fixture, "baseline", { withCleanup: false });
+      await measurePage(browser, fixture, "candidate", { withCleanup: false });
+      if (baselineRoot && !baselineFirst) await measurePage(browser, fixture, "baseline", { withCleanup: false });
     }
     const runs = [];
     for (let run = 0; run < runsPerCase; run += 1) {
@@ -548,19 +620,20 @@ try {
   }
 
   const cleanupCycles = {};
-  let measuredReactFixedHeapOverheadBytes = null;
+  let fixedOverheadSummary = null;
   if (baselineRoot) {
-    const cleanupFixtures = [
-      ...fixtures,
-      ...nodeCounts.map((nodeCount) => ({ name: `nodes-${nodeCount}`, nodeCount, extraction: "dominant" })),
+    const representativeFixtures = [
+      fixtures[0],
+      { name: "nodes-100000", nodeCount: 100_000, extraction: "dominant" },
     ];
-    for (const fixture of cleanupFixtures) {
-      const baselineCycles = await measureCleanupCycles(browser, fixture, "baseline", cleanupCyclesPerCase);
-      const candidateCycles = await measureCleanupCycles(browser, fixture, "candidate", cleanupCyclesPerCase);
-      cleanupCycles[fixture.name] = { baseline: baselineCycles, candidate: candidateCycles };
+    for (const fixture of representativeFixtures) {
+      cleanupCycles[fixture.name] = await measureRepresentativeCleanup(browser, fixture, cleanupCyclesPerCase);
     }
-    const fixedOverheads = Object.values(cleanupCycles).map(({ baseline, candidate }) => candidate.cycles[0]?.delta - baseline.cycles[0]?.delta);
-    if (fixedOverheads.every((value) => Number.isFinite(value))) measuredReactFixedHeapOverheadBytes = Math.max(0, ...fixedOverheads);
+    const pairedMemoryReports = [
+      ...Object.values(pairedComparison.fixtures),
+      ...Object.values(pairedComparison.nodeBenchmarks),
+    ].map((comparison) => comparison.pairedMemory).filter(Boolean);
+    fixedOverheadSummary = summarizeMemorySamples(pairedMemoryReports.flatMap((memory) => memory.fixedOverhead.samples));
   }
 
   if (baselineRoot) {
@@ -570,11 +643,12 @@ try {
     ]) {
       const baselineReport = baselineRuns;
       const baselineP90Bytes = baselineReport ? retainedHeapReport(baselineReport).p90Bytes : null;
+      const pairedMemory = pairedComparison.fixtures[name]?.pairedMemory || pairedComparison.nodeBenchmarks[name]?.pairedMemory || null;
       const reactMemoryGate = evaluateReactMemoryGate({
         candidateP90Bytes: report.retainedHeap.p90Bytes,
         baselineP90Bytes,
-        fixedOverheadBytes: measuredReactFixedHeapOverheadBytes,
-        cleanupCycles: cleanupCycles[name] || cleanupCycles[`nodes-${name}`] || null,
+        pairedMemory,
+        representativeCleanup: cleanupCycles[name] || cleanupCycles[`nodes-${name}`] || null,
       });
       const retainedMetric = report.budget.metrics.retainedHeapDeltaBytes;
       if (retainedMetric) {
@@ -665,9 +739,11 @@ try {
     bundleBytes,
     reactMigration,
     reactMemory: {
-      fixedOverheadBytes: measuredReactFixedHeapOverheadBytes,
+      fixedOverheadBytes: fixedOverheadSummary?.p90 ?? null,
+      fixedOverhead: fixedOverheadSummary,
       fixedOverheadBudgetBytes: REACT_FIXED_HEAP_BUDGET_BYTES,
       cleanupCyclesPerCase: baselineRoot ? cleanupCyclesPerCase : null,
+      representativeCases: Object.keys(cleanupCycles),
     },
     cleanupCycles,
     passive,

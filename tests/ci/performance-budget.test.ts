@@ -1,7 +1,13 @@
 export {};
 
 const assert = require("node:assert/strict");
-const { evaluateFeedbackBudget, evaluateReactMemoryGate, evaluateReactMigrationGate } = require("../../scripts/performance-budget.mjs");
+const {
+  buildPairedMemorySamples,
+  evaluateFeedbackBudget,
+  evaluateReactMemoryGate,
+  evaluateReactMigrationGate,
+  summarizeMemorySamples,
+} = require("../../scripts/performance-budget.mjs");
 
 test("feedback budget accepts a p90 outlier when paired median remains stable", () => {
   const result = evaluateFeedbackBudget({ observedP90: 99, pairedP50DeltaMs: 0.3 });
@@ -69,25 +75,56 @@ test("React migration gate rejects bundle growth and every missing or invalid in
   assert.match(result.failures.join("\n"), /fixture:short-article\.initializationSpanMs is not measured/);
 });
 
-function cleanupCycles(baseline, candidate) {
+function pairedMemory({ baselineCycle0 = 400_000, baselineCycle1 = 100, candidateCycle0 = 780_020, candidateCycle1 = 120 } = {}) {
+  const baselineRuns = [];
+  const candidateRuns = [];
+  for (let run = 0; run < 10; run += 1) {
+    const order = run % 2 === 0 ? "baseline-candidate" : "candidate-baseline";
+    baselineRuns.push({
+      executionOrder: order,
+      cleanupCycles: { cycles: [{ delta: baselineCycle0 }, { delta: baselineCycle1 }], warmupCycles: 1 },
+    });
+    candidateRuns.push({
+      executionOrder: order,
+      cleanupCycles: { cycles: [{ delta: candidateCycle0 }, { delta: candidateCycle1 }], warmupCycles: 1 },
+    });
+  }
+  return buildPairedMemorySamples(baselineRuns, candidateRuns);
+}
+
+function representativeCleanup(baselineSteady, candidateSteady) {
+  const steadyDelta = summarizeMemorySamples(candidateSteady.map((value, index) => value - baselineSteady[index]));
   return {
-    baseline: { warmupCycles: 2, cycles: baseline.map((delta) => ({ delta })) },
-    candidate: { warmupCycles: 2, cycles: candidate.map((delta) => ({ delta })) },
+    baseline: {
+      warmupCycles: 1,
+      cycles: [0, ...baselineSteady].map((delta, cycle) => ({ cycle, samples: [delta] })),
+      steadyIncrements: summarizeMemorySamples(baselineSteady),
+    },
+    candidate: {
+      warmupCycles: 1,
+      cycles: [0, ...candidateSteady].map((delta, cycle) => ({ cycle, samples: [delta] })),
+      steadyIncrements: summarizeMemorySamples(candidateSteady),
+    },
+    steadyDelta,
   };
 }
 
-test("React memory gate separates measured first-cycle overhead from steady data growth", () => {
+test("React memory gate uses ten AB/BA paired cycles to separate fixed overhead from steady data growth", () => {
   const result = evaluateReactMemoryGate({
     candidateP90Bytes: 756_000,
     baselineP90Bytes: 412_000,
-    cleanupCycles: cleanupCycles([393_000, 27_000, 100, 120, 80], [733_000, 40_000, 110, 130, 90]),
+    pairedMemory: pairedMemory(),
+    representativeCleanup: representativeCleanup([100, 110, 120, 115, 105], [120, 125, 120, 115, 120]),
   });
 
   assert.equal(result.status, "within-budget");
-  assert.equal(result.fixedOverheadBytes, 340_000);
-  assert.equal(result.steadyGrowth.candidate.p90, 130);
-  assert.equal(result.steadyGrowth.baseline.p90, 120);
+  assert.equal(result.fixedOverheadBytes, 380_000);
+  assert.equal(result.fixedOverhead.p50, 380_000);
+  assert.equal(result.fixedOverhead.p90, 380_000);
+  assert.equal(result.steadyGrowth.candidate.p90, 120);
+  assert.equal(result.steadyGrowth.baseline.p90, 100);
   assert.equal(result.steadyGrowth.regression, false);
+  assert.equal(result.representativeGrowth.regression, false);
   assert.equal(result.regression, false);
 });
 
@@ -95,7 +132,7 @@ test("React memory gate rejects fixed overhead beyond its explicit byte budget",
   const result = evaluateReactMemoryGate({
     candidateP90Bytes: 600_000,
     baselineP90Bytes: 100_000,
-    cleanupCycles: cleanupCycles([900_000, 20, 10], [1_350_001, 20, 10]),
+    pairedMemory: pairedMemory({ baselineCycle0: 100_000, baselineCycle1: 0, candidateCycle0: 600_001, candidateCycle1: 0 }),
   });
 
   assert.equal(result.fixedOverheadRegression, true);
@@ -104,12 +141,13 @@ test("React memory gate rejects fixed overhead beyond its explicit byte budget",
 
 test("React memory gate keeps the 25 percent data-scaling budget independent of fixed overhead", () => {
   const result = evaluateReactMemoryGate({
-    candidateP90Bytes: 300,
+    candidateP90Bytes: 600,
     baselineP90Bytes: 100,
-    cleanupCycles: cleanupCycles([100, 20, 10], [200, 20, 10]),
+    pairedMemory: pairedMemory({ baselineCycle0: 100, baselineCycle1: 10, candidateCycle0: 210, candidateCycle1: 20 }),
   });
 
   assert.equal(result.fixedOverheadBytes, 100);
+  assert.equal(result.dataScalingObservedBytes, 500);
   assert.equal(result.dataScalingBudgetBytes, 125);
   assert.equal(result.dataScalingRegression, true);
   assert.equal(result.regression, true);
@@ -119,12 +157,62 @@ test("React memory gate rejects a steady cycle p90 above the paired 25 percent b
   const result = evaluateReactMemoryGate({
     candidateP90Bytes: 200,
     baselineP90Bytes: 100,
-    cleanupCycles: cleanupCycles([100, 20, 100, 100], [200, 20, 130, 130]),
+    pairedMemory: pairedMemory({ baselineCycle0: 100, baselineCycle1: 100, candidateCycle0: 70_100, candidateCycle1: 70_000 }),
   });
 
   assert.equal(result.steadyGrowth.baseline.p90, 100);
-  assert.equal(result.steadyGrowth.candidate.p90, 130);
-  assert.equal(result.steadyGrowth.budgetBytes, 125);
+  assert.equal(result.steadyGrowth.candidate.p90, 70_000);
+  assert.equal(result.steadyGrowth.budgetBytes, 65_536);
   assert.equal(result.steadyGrowth.regression, true);
   assert.equal(result.regression, true);
+});
+
+test("React memory gate rejects persistent representative-cycle growth and keeps all cycle positions", () => {
+  const cleanup = representativeCleanup([20, 22, 24, 26, 28], [20, 22, 70_000, 70_000, 70_000]);
+  const result = evaluateReactMemoryGate({
+    candidateP90Bytes: 100,
+    baselineP90Bytes: 100,
+    pairedMemory: pairedMemory({ candidateCycle0: 800_000, candidateCycle1: 120 }),
+    representativeCleanup: cleanup,
+  });
+
+  assert.equal(cleanup.candidate.cycles.length, 6);
+  assert.equal(cleanup.candidate.cycles[3].samples[0], 70_000);
+  assert.equal(result.representativeGrowth.regression, true);
+  assert.equal(result.regression, true);
+});
+
+test("React memory samples preserve execution order and require balanced AB/BA runs for enforcement", () => {
+  const baseline = [{ executionOrder: "baseline-candidate", cleanupCycles: { cycles: [{ delta: 1 }, { delta: 2 }] } }];
+  const candidate = [{ executionOrder: "baseline-candidate", cleanupCycles: { cycles: [{ delta: 1 }, { delta: 2 }] } }];
+  assert.deepEqual(buildPairedMemorySamples(baseline, candidate).executionOrderCounts, {
+    "baseline-candidate": 1,
+    "candidate-baseline": 0,
+  });
+  assert.throws(
+    () => buildPairedMemorySamples([], candidate),
+    /equal baseline and candidate run counts/,
+  );
+  assert.throws(
+    () => buildPairedMemorySamples(
+      baseline,
+      [{ executionOrder: "candidate-baseline", cleanupCycles: { cycles: [{ delta: 1 }, { delta: 2 }] } }],
+    ),
+    /inconsistent execution order/,
+  );
+  assert.throws(
+    () => buildPairedMemorySamples(
+      baseline,
+      [{ executionOrder: "baseline-candidate", cleanupCycles: { cycles: [{ delta: 1 }] } }],
+    ),
+    /missing cycle0 or cycle1/,
+  );
+  assert.throws(
+    () => buildPairedMemorySamples(
+      Array.from({ length: 10 }, () => baseline[0]),
+      Array.from({ length: 10 }, () => candidate[0]),
+      { requireBalanced: true },
+    ),
+    /ten runs split across five AB and five BA/,
+  );
 });
