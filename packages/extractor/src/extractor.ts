@@ -7,6 +7,17 @@
     "ADDRESS", "BLOCKQUOTE", "BR", "DD", "DT", "FIGCAPTION", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "LI", "P", "PRE", "TR",
   ]);
 
+  interface IndexedNodeRange {
+    start: number;
+    contentEnd: number;
+    end: number;
+  }
+
+  interface IndexedSource {
+    rawText: string;
+    ranges: Map<Node, IndexedNodeRange>;
+  }
+
   function fromText(text: string, readingContext: Partial<ReadingContext> | null = {}): ReaderContent | null {
     const value = typeof text === "string" ? text.trim() : "";
     if (!value) return null;
@@ -49,27 +60,34 @@
       fullRange.selectNodeContents(contentRoot);
       rawText = fullRange.toString();
     }
-    const leadingWhitespaceLength = rawText.length - rawText.trimStart().length;
-    const text = rawText.trim();
+    const leadingTrim = rawText.length - rawText.trimStart().length;
+    const trailingTrim = rawText.length - rawText.trimEnd().length;
+    const text = rawText.slice(leadingTrim, rawText.length - trailingTrim);
     if (!text) return null;
-    const sourceOffsets = indexedSource.offsets;
 
     const headingEntries = [...contentRoot.querySelectorAll("h1, h2, h3, h4, h5, h6")]
-      .map((element) => ({
-        element,
-        text: (element.textContent || "").trim(),
-        level: Number(element.tagName?.slice(1)) || 1,
-      }))
+      .map((element) => {
+        const indexedRange = indexedSource.ranges.get(element);
+        const headingRange = indexedRange
+          ? trimIndexedNodeRange(text, indexedRange, leadingTrim)
+          : null;
+        return {
+          element,
+          range: headingRange,
+          text: headingRange?.value ?? String(element.textContent || "").trim(),
+          level: Number(element.tagName?.slice(1)) || 1,
+        };
+      })
       .filter(({ text: headingText }) => headingText.length > 0);
     const title = typeof result.title === "string" ? result.title.trim() : "";
     const includeTitle = title.length > 0 && headingEntries[0]?.text !== title;
-    const sectionOffsets = headingEntries.map(({ element }) => offsetBefore(
+    const sectionOffsets = headingEntries.map(({ element, range }) => range?.start ?? offsetBefore(
       sourceDocument,
       contentRoot,
       element,
       text.length,
-      leadingWhitespaceLength,
-      sourceOffsets,
+      leadingTrim,
+      indexedSource,
     ));
     const headings = headingEntries.map(({ text: headingText, level }) => ({ text: headingText, level }));
     if (includeTitle) headings.unshift({ text: title, level: 1 });
@@ -82,12 +100,12 @@
       text,
       readingContext: {
         title: title || headingEntries[0]?.text || "",
-        blocks: extractBlocks(sourceDocument, contentRoot, text, leadingWhitespaceLength, sourceOffsets),
+        blocks: extractBlocks(sourceDocument, contentRoot, text, leadingTrim, indexedSource),
         headings,
         sectionOffsets,
         sectionTransitions,
         initialHeadingIndex: includeTitle ? 0 : -1,
-        figures: extractFigures(sourceDocument, contentRoot, text, leadingWhitespaceLength, sourceOffsets),
+        figures: extractFigures(sourceDocument, contentRoot, text, leadingTrim, indexedSource),
       },
     };
   }
@@ -154,44 +172,104 @@
     contentRoot: DocumentFragment | HTMLElement,
     element: Node,
     textLength: number,
-    leadingWhitespaceLength: number,
-    sourceOffsets: Map<Node, number>,
+    leadingTrim: number,
+    indexedSource: IndexedSource,
   ): number {
-    const indexedOffset = sourceOffsets.get(element);
-    if (indexedOffset !== undefined) {
-      return Math.min(textLength, Math.max(0, indexedOffset - leadingWhitespaceLength));
+    const indexedRange = indexedSource.ranges.get(element);
+    if (indexedRange !== undefined) {
+      return toTextOffset(indexedRange.start, leadingTrim, textLength);
     }
     const prefixRange = sourceDocument.createRange();
     prefixRange.selectNodeContents(contentRoot);
     prefixRange.setEndBefore(element);
-    return Math.min(textLength, Math.max(0, prefixRange.toString().length - leadingWhitespaceLength));
+    return toTextOffset(prefixRange.toString().length, leadingTrim, textLength);
   }
 
   function indexSourceOffsets(
     contentRoot: DocumentFragment | HTMLElement,
-  ): { rawText: string; offsets: Map<Node, number> } {
-    const offsets = new Map<Node, number>();
+  ): IndexedSource {
+    const ranges = new Map<Node, IndexedNodeRange>();
     let rawText = "";
     const visit = (node: Node): void => {
-      offsets.set(node, rawText.length);
+      const start = rawText.length;
       if (node.nodeType === 3) {
         rawText += node.nodeValue || "";
+        const end = rawText.length;
+        ranges.set(node, { start, contentEnd: end, end });
         return;
       }
       for (const child of node.childNodes || []) visit(child);
+      const contentEnd = rawText.length;
       const tagName = String((node as Element).tagName || "").toUpperCase();
       if (TEXT_BOUNDARY_TAGS.has(tagName) && !rawText.endsWith("\n")) rawText += "\n";
+      ranges.set(node, { start, contentEnd, end: rawText.length });
     };
     visit(contentRoot);
-    return { rawText, offsets };
+    return { rawText, ranges };
+  }
+
+  function toTextOffset(rawOffset: number, leadingTrim: number, textLength: number): number {
+    return Math.min(textLength, Math.max(0, rawOffset - leadingTrim));
+  }
+
+  function trimTextRange(text: string, start: number, end: number): { start: number; end: number; value: string } {
+    const boundedStart = Math.min(text.length, Math.max(0, start));
+    const boundedEnd = Math.min(text.length, Math.max(boundedStart, end));
+    const value = text.slice(boundedStart, boundedEnd);
+    const leadingTrim = value.length - value.trimStart().length;
+    const trailingTrim = value.length - value.trimEnd().length;
+    const trimmedStart = boundedStart + leadingTrim;
+    const trimmedEnd = Math.max(trimmedStart, boundedEnd - trailingTrim);
+    return {
+      start: trimmedStart,
+      end: trimmedEnd,
+      value: text.slice(trimmedStart, trimmedEnd),
+    };
+  }
+
+  function trimIndexedNodeRange(text: string, range: IndexedNodeRange, leadingTrim: number): { start: number; end: number; value: string } {
+    return trimTextRange(
+      text,
+      toTextOffset(range.start, leadingTrim, text.length),
+      toTextOffset(range.contentEnd, leadingTrim, text.length),
+    );
+  }
+
+  function fallbackNodeRange(
+    sourceDocument: Document,
+    contentRoot: DocumentFragment | HTMLElement,
+    element: Element,
+    text: string,
+    leadingTrim: number,
+    indexedSource: IndexedSource,
+  ): { start: number; end: number; value: string } {
+    const start = offsetBefore(sourceDocument, contentRoot, element, text.length, leadingTrim, indexedSource);
+    const endRange = sourceDocument.createRange();
+    endRange.selectNodeContents(contentRoot);
+    if (typeof endRange.setEndAfter === "function") {
+      endRange.setEndAfter(element);
+      return trimTextRange(
+        text,
+        start,
+        toTextOffset(endRange.toString().length, leadingTrim, text.length),
+      );
+    }
+    const elementText = typeof element.textContent === "string" ? element.textContent : "";
+    const rawStart = start + leadingTrim;
+    const rawEnd = rawStart + elementText.length;
+    return trimTextRange(
+      text,
+      toTextOffset(rawStart, leadingTrim, text.length),
+      toTextOffset(rawEnd, leadingTrim, text.length),
+    );
   }
 
   function extractBlocks(
     sourceDocument: Document,
     contentRoot: DocumentFragment | HTMLElement,
     text: string,
-    leadingWhitespaceLength: number,
-    sourceOffsets: Map<Node, number>,
+    leadingTrim: number,
+    indexedSource: IndexedSource,
   ): ReaderBlock[] {
     if (typeof contentRoot.querySelectorAll !== "function") return [];
     const blockSelector = "h1, h2, h3, h4, h5, h6, p, blockquote, pre, li";
@@ -199,16 +277,18 @@
       .map((element) => {
         const parentBlock = element.parentElement?.closest?.(blockSelector);
         if (parentBlock && parentBlock !== contentRoot) return null;
-        const blockText = (element.textContent || "").trim();
-        if (!blockText) return null;
-        const start = offsetBefore(sourceDocument, contentRoot, element, text.length, leadingWhitespaceLength, sourceOffsets);
+        const indexedRange = indexedSource.ranges.get(element);
+        const blockRange = indexedRange
+          ? trimIndexedNodeRange(text, indexedRange, leadingTrim)
+          : fallbackNodeRange(sourceDocument, contentRoot, element, text, leadingTrim, indexedSource);
+        if (!blockRange.value) return null;
         const tagName = String(element.tagName || "p").toLowerCase();
         return {
-          text: blockText,
+          text: blockRange.value,
           kind: /^h[1-6]$/u.test(tagName) ? "heading" : tagName === "blockquote" ? "quote" : tagName === "pre" ? "preformatted" : "paragraph",
           level: /^h[1-6]$/u.test(tagName) ? Number(tagName.slice(1)) : null,
-          start,
-          end: Math.min(text.length, start + blockText.length),
+          start: blockRange.start,
+          end: blockRange.end,
         };
       })
       .filter((block): block is ReaderBlock => block !== null);
@@ -218,8 +298,8 @@
     sourceDocument: Document,
     contentRoot: DocumentFragment | HTMLElement,
     text: string,
-    leadingWhitespaceLength: number,
-    sourceOffsets: Map<Node, number>,
+    leadingTrim: number,
+    indexedSource: IndexedSource,
   ): ReaderFigure[] {
     if (typeof contentRoot.querySelectorAll !== "function") return [];
     const figures: ReaderFigure[] = [];
@@ -227,18 +307,41 @@
       const container = image.closest?.("figure") || image;
       const src = String(image.currentSrc || image.src || image.getAttribute?.("src") || "").trim();
       if (!src || /^javascript:/iu.test(src)) continue;
-      const figureOffset = offsetBefore(sourceDocument, contentRoot, container, text.length, leadingWhitespaceLength, sourceOffsets);
+      const indexedRange = indexedSource.ranges.get(container);
+      const figureOffset = indexedRange
+        ? toTextOffset(indexedRange.start, leadingTrim, text.length)
+        : offsetBefore(sourceDocument, contentRoot, container, text.length, leadingTrim, indexedSource);
       const caption = (container.querySelector?.("figcaption")?.textContent || "").trim();
-      const containerTextLength = (container.textContent || caption).length;
+      const sourceEnd = indexedRange
+        ? toTextOffset(indexedRange.contentEnd, leadingTrim, text.length)
+        : fallbackFigureEnd(sourceDocument, contentRoot, container, figureOffset, text.length, leadingTrim, caption);
       figures.push({
         src,
         alt: (image.getAttribute?.("alt") || "").trim(),
         caption,
         sourceOffset: figureOffset,
-        sourceEnd: Math.min(text.length, figureOffset + containerTextLength),
+        sourceEnd,
       });
     }
     return figures.sort((left, right) => left.sourceOffset - right.sourceOffset);
+  }
+
+  function fallbackFigureEnd(
+    sourceDocument: Document,
+    contentRoot: DocumentFragment | HTMLElement,
+    container: Element,
+    figureOffset: number,
+    textLength: number,
+    leadingTrim: number,
+    caption: string,
+  ): number {
+    const endRange = sourceDocument.createRange();
+    endRange.selectNodeContents(contentRoot);
+    if (typeof endRange.setEndAfter === "function") {
+      endRange.setEndAfter(container);
+      return toTextOffset(endRange.toString().length, leadingTrim, textLength);
+    }
+    return Math.min(textLength, figureOffset + caption.length);
   }
 
   return { fromPage, fromText };
