@@ -90,7 +90,7 @@ jobs:
           baseline_dir="$RUNNER_TEMP/reader-main-baseline"
           git worktree add --detach "$baseline_dir" FETCH_HEAD
           echo "READER_PERFORMANCE_BASELINE_ROOT=$baseline_dir" >> "$GITHUB_ENV"
-          ln -s "$GITHUB_WORKSPACE/node_modules" "$baseline_dir/node_modules"
+          (cd "$baseline_dir" && pnpm install --frozen-lockfile --ignore-scripts)
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
           (cd "$baseline_dir" && rustup override set 1.97.1)
           mise trust "$baseline_dir/mise.toml"
