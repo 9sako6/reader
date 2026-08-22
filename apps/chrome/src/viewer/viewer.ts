@@ -5,6 +5,7 @@
     | { kind: "loading"; token: number; figureIndex: number; brightness?: "dimmed" | "revealed" }
     | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "failed"; token: number; figureIndex: number };
+  type ReactReaderBlock = ReaderBlock & { sentenceSpans: SentenceSpan[] };
   type ReaderMessage =
     | { type: "SHOW_RSVP_LOADING"; requestId: string }
     | { type: "START_RSVP"; requestId: string; text: string; readingContext?: Partial<ReadingContext> | null }
@@ -52,12 +53,15 @@
   let figureLoadRevealTimerId: number | null = null;
   let sourceText = "";
   let blocks: ReaderBlock[] = [];
+  let viewBlocks: ReactReaderBlock[] = [];
   let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
   let textScroller: HTMLElement | null = null;
   let textPositionMarkers: HTMLElement[] = [];
   let textPositionDirty = false;
   let textRestoreScrollTop: number | null = null;
   let textRestoring = false;
+  let textRestoreGeneration = 0;
+  let textRestorePending = false;
   let reactTextFigureCorrections = new WeakMap<HTMLImageElement, {
     scroller: HTMLElement;
     positionMarkers: HTMLElement[];
@@ -88,6 +92,7 @@
   let reactLoadingRevealed = false;
   let performanceReactInitStarted = false;
   let performanceReactInitMarked = false;
+  let performanceUnitMarked = false;
 
   type ReactReaderViewModel = {
     kind: "closed" | "loading" | "error" | "rsvp" | "text";
@@ -105,7 +110,7 @@
     loadingCover?: boolean;
     headings?: ReaderHeading[];
     activeHeadingIndex?: number;
-    blocks?: ReaderBlock[];
+    blocks?: ReactReaderBlock[];
     figures?: ReaderFigure[];
     language?: string;
     position?: ReaderPosition;
@@ -141,6 +146,7 @@
     reactViewMount = null;
     performanceReactInitStarted = false;
     performanceReactInitMarked = false;
+    performanceUnitMarked = false;
   }
 
   function renderReactView(model: ReactReaderViewModel): void {
@@ -163,16 +169,45 @@
       headingSelect: jumpToHeading,
       togglePlayback: togglePlayPause,
       resumeFigure: advanceFromFigure,
-      figureLoad: (figureIndex: number) => settleReactFigure(figureIndex, true),
-      figureError: (figureIndex: number) => settleReactFigure(figureIndex, false),
+      figureLoad: (figureIndex: number, token?: number) => settleReactFigure(figureIndex, true, token),
+      figureError: (figureIndex: number, token?: number) => settleReactFigure(figureIndex, false, token),
+      figureImage: (element: HTMLImageElement, figureIndex: number, token?: number) => {
+        if (typeof token !== "number" || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token || !element.complete) return;
+        const capturedToken = token;
+        void Promise.resolve().then(() => {
+          if (element.isConnected === false || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== capturedToken) return;
+          settleReactFigure(figureIndex, element.naturalWidth > 0, capturedToken);
+        });
+      },
       toggleFigureBrightness: (figureIndex: number) => toggleReactFigureBrightness(figureIndex),
-      textScroll: (element: HTMLElement) => {
+      loadingAnimation: animateLoadingIndicator,
+      rewindAnimation: animateRewindFeedback,
+      textScroll: (element: HTMLElement | null) => {
+        if (!element) {
+          textScroller = null;
+          textPositionMarkers = [];
+          return;
+        }
         textScroller = element;
         textPositionMarkers = [...element.querySelectorAll<HTMLElement>('[data-reader-position-kind="text"], [data-reader-position-kind="figure"]')];
+        textRestoreScrollTop = element.scrollTop;
         attachReactTextFigureLoadCorrections(element);
+        if (textRestorePending) {
+          scheduleTextRestore(element, textPositionMarkers);
+        }
       },
-      textPosition: (element: HTMLElement) => updateTextPosition(element, textPositionMarkers),
+      textPosition: (element: HTMLElement) => {
+        if (textRestoring) {
+          if (textRestoreScrollTop === null || Math.abs(element.scrollTop - textRestoreScrollTop) < 1) return;
+        }
+        updateTextPosition(element, textPositionMarkers);
+        textRestoreScrollTop = element.scrollTop;
+      },
     });
+    if (model.kind === "rsvp" && model.unit && !performanceUnitMarked) {
+      performanceUnitMarked = true;
+      markPerformance("reader:first-unit");
+    }
     if (performanceReactInitStarted && !performanceReactInitMarked) {
       performanceReactInitMarked = true;
       markPerformance("reader:react-init-end");
@@ -227,7 +262,7 @@
     if (state?.mode === "text") {
       return {
         kind: "text",
-        blocks: blocks.length > 0 ? blocks : fallbackBlocks(sourceText),
+        blocks: viewBlocks,
         figures,
         language: segmentationLocale,
         position: currentPosition,
@@ -248,6 +283,7 @@
         figure,
         figureIndex,
         status: figureState,
+        token: figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.token : undefined,
         loadingVisible: figureState === "loading" && figureLoadRevealTimerId === null,
         brightness: figureViewState.kind === "ready" || figureViewState.kind === "loading"
           ? figureViewState.brightness || "dimmed"
@@ -262,6 +298,7 @@
       unit,
       figure: figureView,
       playing: state?.playback === "playing",
+      reducedMotion: prefersReducedMotion(),
       progress: sourceText ? globalThis.Engine.calculateReadingProgress(position.sourceOffset, sourceText.length) : 0,
       loadingCover: loadingCoverVisible,
       headings,
@@ -269,15 +306,13 @@
     };
   }
 
-  function settleReactFigure(figureIndex: number, loaded: boolean): void {
-    if (figureViewState.kind === "idle" || figureViewState.figureIndex !== figureIndex) return;
+  function settleReactFigure(figureIndex: number, loaded: boolean, token?: number): void {
+    if (typeof token !== "number" || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token) return;
     if (figureLoadRevealTimerId !== null) {
       globalThis.clearTimeout(figureLoadRevealTimerId);
       figureLoadRevealTimerId = null;
     }
-    const brightness = figureViewState.kind === "ready" || figureViewState.kind === "loading"
-      ? figureViewState.brightness
-      : undefined;
+    const brightness = figureViewState.brightness;
     figureViewState = loaded
       ? { kind: "ready", token: figureViewState.token, figureIndex, brightness: brightness || "dimmed" }
       : { kind: "failed", token: figureViewState.token, figureIndex };
@@ -429,6 +464,7 @@
 
     const figureBoundaries = figures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
     segmentationLocale = readingContext.language;
+    viewBlocks = buildViewBlocks(blocks.length > 0 ? blocks : fallbackBlocks(sourceText), segmentationLocale);
     baseUnits = globalThis.Engine.segmentText(content.text, segmentationLocale, figureBoundaries)
       .map((unit) => {
         const value = unit.text.trim();
@@ -1085,6 +1121,8 @@
   function showTextView() {
     if (!root || !sourceText) return;
     const activeElement = readerActiveElement();
+    textRestoring = true;
+    textRestorePending = true;
     if (!applyingSession) {
       dispatchSession({ type: "switchToText", position: currentPosition });
     }
@@ -1098,11 +1136,20 @@
     if (!root || units.length === 0) return;
     const previousFocus = readerActiveElement();
     const restoreModeFocus = previousFocus?.getAttribute?.("data-reader-mode-button") === "true";
+    textRestorePending = false;
+    let capturedPosition = currentPosition;
     if (sessionMode() === "text" && textScroller) {
-      updateTextPosition(textScroller, textPositionMarkers, true, false);
+      const restoreInProgress = textRestoring || textRestorePending;
+      const scrollChanged = textRestoreScrollTop === null || Math.abs(textScroller.scrollTop - textRestoreScrollTop) >= 1;
+      if (!restoreInProgress || scrollChanged) {
+        textRestoring = true;
+        updateTextPosition(textScroller, textPositionMarkers, true, false);
+      }
+      capturedPosition = currentPosition;
     }
-    dispatchSession({ type: "switchToRsvp", position: currentPosition });
+    dispatchSession({ type: "switchToRsvp", position: capturedPosition });
     renderReactView(reactViewModel());
+    scheduleTextRestoreRelease();
     attachKeydownListener();
     if (restoreModeFocus) focusAfterPaint(findModeButton());
     return;
@@ -1119,6 +1166,10 @@
       searchFrom = start + value.length;
     }
     return result;
+  }
+
+  function buildViewBlocks(sourceBlocks: ReaderBlock[], locale: string): ReactReaderBlock[] {
+    return sourceBlocks.map((block) => ({ ...block, sentenceSpans: globalThis.Engine.splitSentenceSpans(block.text, locale) }));
   }
 
   function attachReactTextFigureLoadCorrections(scroller: HTMLElement): void {
@@ -1168,7 +1219,7 @@
             textRestoring = true;
             correction.scroller.scrollTop += delta;
             textRestoreScrollTop = correction.scroller.scrollTop;
-            textRestoring = false;
+            scheduleTextRestoreRelease(false);
           }
         };
         if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(applyCorrection);
@@ -1176,6 +1227,7 @@
       };
       image.addEventListener("load", () => { void adjustAfterDecode(); });
       image.addEventListener("error", () => { void adjustAfterDecode(); });
+      if (image.complete && image.naturalWidth > 0) void adjustAfterDecode();
     }
   }
 
@@ -1260,7 +1312,7 @@
         ? firstTextAfterFigure
         : preferReadableTop
           ? firstReadable || (anchoredVisible ? anchoredMarker : firstVisible)
-          : firstVisible;
+        : firstVisible;
     if (!selected) return;
     const sourceOffset = Number(selected.dataset.sourceStart);
     if (!Number.isFinite(sourceOffset)) return;
@@ -1299,6 +1351,41 @@
     const scrollerRect = elementRect(scroller, 0, scroller.clientHeight || 500);
     const targetY = targetRect.top - scrollerRect.top + scroller.scrollTop;
     scroller.scrollTop = Math.max(0, targetY - 72);
+  }
+
+  function scheduleTextRestoreRelease(invalidate = true): void {
+    const generation = invalidate ? ++textRestoreGeneration : textRestoreGeneration;
+    const release = () => {
+      if (generation === textRestoreGeneration && !textRestorePending) textRestoring = false;
+    };
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(release));
+    } else {
+      release();
+    }
+  }
+
+  function scheduleTextRestore(element: HTMLElement, positionMarkers: HTMLElement[]): void {
+    const generation = ++textRestoreGeneration;
+    const apply = () => {
+      if (generation !== textRestoreGeneration || textScroller !== element) return;
+      restoreTextPosition(element, positionMarkers);
+      textRestoreScrollTop = element.scrollTop;
+      textRestorePending = false;
+      const release = () => {
+        if (generation === textRestoreGeneration && textScroller === element) textRestoring = false;
+      };
+      if (typeof globalThis.requestAnimationFrame === "function") {
+        globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(release));
+      } else {
+        release();
+      }
+    };
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(apply));
+    } else {
+      apply();
+    }
   }
 
   function elementRect(element: HTMLElement, fallbackTop: number, fallbackBottom: number): DOMRect {
@@ -1540,6 +1627,56 @@
     return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
   }
 
+  function animateLoadingIndicator(element: HTMLElement, reducedMotion: boolean): (() => void) | undefined {
+    if (reducedMotion || typeof element.animate !== "function") return undefined;
+    const animation = element.animate(
+      [
+        { transform: "translateX(-100%) scaleX(.35)" },
+        { transform: "translateX(220%) scaleX(.35)" },
+      ],
+      { duration: 1100, iterations: Infinity, easing: "linear" },
+    );
+    return () => animation.cancel?.();
+  }
+
+  function animateRewindFeedback(
+    elements: { firstRing: HTMLElement; secondRing: HTMLElement; icon: SVGElement },
+    reducedMotion: boolean,
+    onDone: () => void,
+  ): (() => void) | undefined {
+    const { firstRing, secondRing, icon } = elements;
+    if (typeof firstRing.animate !== "function" || typeof secondRing.animate !== "function" || typeof icon.animate !== "function") return undefined;
+    const ringFrames = reducedMotion
+      ? [{ opacity: 0.28 }, { opacity: 0 }]
+      : [
+        { opacity: 0.08, transform: "scale(.32)" },
+        { opacity: 0.26, transform: "scale(.9)" },
+        { opacity: 0, transform: "scale(2.15)" },
+      ];
+    const firstAnimation = firstRing.animate(ringFrames, { duration: reducedMotion ? 160 : 420, easing: "cubic-bezier(.22, 1, .36, 1)", fill: "forwards" });
+    const secondAnimation = secondRing.animate(ringFrames, { duration: reducedMotion ? 160 : 420, delay: reducedMotion ? 0 : 80, easing: "cubic-bezier(.22, 1, .36, 1)", fill: "forwards" });
+    const iconAnimation = icon.animate(
+      reducedMotion
+        ? [{ opacity: 0.72 }, { opacity: 0 }]
+        : [
+          { opacity: 0, transform: "translateX(8px) scale(.9)" },
+          { opacity: 0.72, transform: "translateX(0) scale(1)" },
+          { opacity: 0, transform: "translateX(-8px) scale(.96)" },
+        ],
+      { duration: reducedMotion ? 160 : 360, easing: "ease-out", fill: "forwards" },
+    );
+    let cancelled = false;
+    Promise.allSettled([firstAnimation.finished, secondAnimation.finished, iconAnimation.finished]).then(() => {
+      if (!cancelled) onDone();
+    });
+    return () => {
+      cancelled = true;
+      firstAnimation.cancel?.();
+      secondAnimation.cancel?.();
+      iconAnimation.cancel?.();
+    };
+  }
+
   function stopTimer() {
     if (timerId !== null) {
       globalThis.clearTimeout(timerId);
@@ -1583,6 +1720,8 @@
       textPositionDirty = false;
       textRestoreScrollTop = null;
       textRestoring = false;
+      textRestorePending = false;
+      textRestoreGeneration += 1;
       reactTextFigureCorrections = new WeakMap();
       lastReaderFocusedElement = null;
       reactRenderedKind = null;
@@ -1637,6 +1776,7 @@
           flowItems = [];
           sourceText = "";
           blocks = [];
+          viewBlocks = [];
           baseUnits = [];
           currentPosition = { kind: "text", sourceOffset: 0 };
           segmentationLocale = "ja";

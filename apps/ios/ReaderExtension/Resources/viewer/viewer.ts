@@ -8,6 +8,7 @@
     | { kind: "loading"; token: number; figureIndex: number }
     | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "failed"; token: number; figureIndex: number };
+  type ReactReaderBlock = ReaderBlock & { sentenceSpans: SentenceSpan[] };
   interface LaunchProgress {
     startedAt: number;
     revealTimer: number | null;
@@ -35,6 +36,7 @@
   let sourceOverflow: string | null = null;
   let sourceBodyOverflow: string | null = null;
   let content: ReaderContent | null = null;
+  let viewBlocks: ReactReaderBlock[] = [];
   let units: ReaderUnit[] = [];
   let flowItems: ReaderFlowItem[] = [];
   let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
@@ -70,6 +72,9 @@
   let reactViewHost: HTMLDivElement | null = null;
   let reactTextScroller: HTMLElement | null = null;
   let reactTextMarkers: HTMLElement[] = [];
+  let reactTextRestoring = false;
+  let reactTextRestoreGeneration = 0;
+  let reactTextRestorePending = false;
   let reactTextRestoreScrollTop: number | null = null;
   let rewindFeedback: { left: number; top: number; id: number } | null = null;
   let rewindFeedbackId = 0;
@@ -108,6 +113,60 @@
     global.performance?.mark?.(name);
   }
 
+  function prefersReducedMotion(): boolean {
+    return global.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  }
+
+  function animateLoadingIndicator(element: HTMLElement, reducedMotion: boolean): (() => void) | undefined {
+    if (reducedMotion || typeof element.animate !== "function") return undefined;
+    const animation = element.animate(
+      [
+        { transform: "translateX(-100%) scaleX(.35)" },
+        { transform: "translateX(220%) scaleX(.35)" },
+      ],
+      { duration: 1100, iterations: Infinity, easing: "linear" },
+    );
+    return () => animation.cancel?.();
+  }
+
+  function animateRewindFeedback(
+    elements: { firstRing: HTMLElement; secondRing: HTMLElement; icon: SVGElement },
+    reducedMotion: boolean,
+    onDone: () => void,
+  ): (() => void) | undefined {
+    const { firstRing, secondRing, icon } = elements;
+    if (typeof firstRing.animate !== "function" || typeof secondRing.animate !== "function" || typeof icon.animate !== "function") return undefined;
+    const ringFrames = reducedMotion
+      ? [{ opacity: 0.28 }, { opacity: 0 }]
+      : [
+        { opacity: 0.08, transform: "scale(.32)" },
+        { opacity: 0.26, transform: "scale(.9)" },
+        { opacity: 0, transform: "scale(2.15)" },
+      ];
+    const firstAnimation = firstRing.animate(ringFrames, { duration: reducedMotion ? 160 : 420, easing: "cubic-bezier(.22, 1, .36, 1)", fill: "forwards" });
+    const secondAnimation = secondRing.animate(ringFrames, { duration: reducedMotion ? 160 : 420, delay: reducedMotion ? 0 : 80, easing: "cubic-bezier(.22, 1, .36, 1)", fill: "forwards" });
+    const iconAnimation = icon.animate(
+      reducedMotion
+        ? [{ opacity: 0.72 }, { opacity: 0 }]
+        : [
+          { opacity: 0, transform: "translateX(8px) scale(.9)" },
+          { opacity: 0.72, transform: "translateX(0) scale(1)" },
+          { opacity: 0, transform: "translateX(-8px) scale(.96)" },
+        ],
+      { duration: reducedMotion ? 160 : 360, easing: "ease-out", fill: "forwards" },
+    );
+    let cancelled = false;
+    Promise.allSettled([firstAnimation.finished, secondAnimation.finished, iconAnimation.finished]).then(() => {
+      if (!cancelled) onDone();
+    });
+    return () => {
+      cancelled = true;
+      firstAnimation.cancel?.();
+      secondAnimation.cancel?.();
+      iconAnimation.cancel?.();
+    };
+  }
+
   function mountReactViewer(shadowRoot: ShadowRoot | null): void {
     if (!shadowRoot || reactViewMount) return;
     if (!globalThis.ReaderReactViewer || typeof globalThis.ReaderReactViewer.mount !== "function") throw new Error("reader_view_unavailable");
@@ -140,14 +199,14 @@
   function reactViewModel(): unknown {
     if (activePreparation.kind === "preparing") {
       const elapsed = Date.now() - activePreparation.startedAt;
-      return { kind: "loading", slow: slowPreparationVisible || elapsed >= SLOW_PREPARATION_DELAY_MS, revealed: launchProgress?.revealed === true, reducedMotion: global.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true, mobile: true };
+      return { kind: "loading", slow: slowPreparationVisible || elapsed >= SLOW_PREPARATION_DELAY_MS, revealed: launchProgress?.revealed === true, reducedMotion: prefersReducedMotion(), mobile: true };
     }
     if (activePreparation.kind === "failed") {
       return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: true, mobile: true };
     }
     const state = readingSessionState();
     if (state?.mode === "text") {
-      return { kind: "text", language: content?.readingContext.language || "ja", blocks: content?.readingContext.blocks || fallbackBlocks(content?.text || ""), figures: content?.readingContext.figures || [], position: currentPosition, progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, title: content?.readingContext.title || global.document.title || "", mobile: true };
+      return { kind: "text", language: content?.readingContext.language || "ja", blocks: viewBlocks, figures: content?.readingContext.figures || [], position: currentPosition, progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, title: content?.readingContext.title || global.document.title || "", mobile: true };
     }
     const item = state ? flowItems[state.flowIndex] : flowItems[0];
     const unitIndex = state?.unitIndex ?? (item?.kind === "unit" ? item.unitIndex : 0);
@@ -156,7 +215,7 @@
     const figureStatus = figure && figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.kind : figure ? "loading" : null;
     const unit = item?.kind === "unit" ? units[unitIndex] || null : null;
     const context = unit ? global.Engine.surroundingSentences(units, unitIndex) : { previous: "", next: "" };
-    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus, loadingVisible: figureStatus === "loading" && figureLoadRevealTimerId === null, brightness: reactFigureBrightness } : null, playing: state?.playback === "playing", progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, rewindFeedback, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
+    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus, token: figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.token : undefined, loadingVisible: figureStatus === "loading" && figureLoadRevealTimerId === null, brightness: reactFigureBrightness } : null, playing: state?.playback === "playing", reducedMotion: prefersReducedMotion(), progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, rewindFeedback, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
   }
 
   function renderReactView(): void {
@@ -189,20 +248,43 @@
       rsvpPointerUp: handleRsvpPointerUp,
       togglePlayback,
       resumeFigure: advanceFromFigure,
-      figureLoad: (figureIndex: number) => settleReactFigure(figureIndex, true),
-      figureError: (figureIndex: number) => settleReactFigure(figureIndex, false),
+      figureLoad: (figureIndex: number, token?: number) => settleReactFigure(figureIndex, true, token),
+      figureError: (figureIndex: number, token?: number) => settleReactFigure(figureIndex, false, token),
+      figureImage: (element: HTMLImageElement, figureIndex: number, token?: number) => {
+        if (typeof token !== "number" || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token || !element.complete) return;
+        const capturedToken = token;
+        void Promise.resolve().then(() => {
+          if (element.isConnected === false || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== capturedToken) return;
+          settleReactFigure(figureIndex, element.naturalWidth > 0, capturedToken);
+        });
+      },
       toggleFigureBrightness: (figureIndex: number) => toggleReactFigureBrightness(figureIndex),
       rewindFeedbackDone: clearRewindFeedback,
-      textScroll: (element: HTMLElement) => {
+      loadingAnimation: animateLoadingIndicator,
+      rewindAnimation: animateRewindFeedback,
+      textScroll: (element: HTMLElement | null) => {
+        if (!element) {
+          reactTextScroller = null;
+          reactTextMarkers = [];
+          return;
+        }
         if (!content) return;
         reactTextScroller = element;
         reactTextMarkers = Array.from(element.querySelectorAll<HTMLElement>("[data-reader-position-kind=\"text\"], [data-reader-position-kind=\"figure\"]"));
+        reactTextRestoreScrollTop = element.scrollTop;
         for (const figure of element.querySelectorAll<HTMLElement>("[data-reader-text-figure=\"true\"]")) {
           attachTextFigureLoadCorrection(element, figure, reactTextMarkers);
         }
+        if (reactTextRestorePending) {
+          scheduleReactTextRestore(element, reactTextMarkers);
+        }
       },
       textPosition: (element: HTMLElement) => {
+        if (reactTextRestoring) {
+          if (reactTextRestoreScrollTop === null || Math.abs(element.scrollTop - reactTextRestoreScrollTop) < 1) return;
+        }
         updateTextPosition(element, reactTextMarkers);
+        reactTextRestoreScrollTop = element.scrollTop;
       },
     });
     if (performanceReactInitStarted && !performanceReactInitMarked) {
@@ -222,8 +304,8 @@
     }
   }
 
-  function settleReactFigure(figureIndex: number, loaded: boolean): void {
-    if (figureViewState.kind === "idle" || figureViewState.figureIndex !== figureIndex) return;
+  function settleReactFigure(figureIndex: number, loaded: boolean, token?: number): void {
+    if (typeof token !== "number" || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token) return;
     if (figureLoadRevealTimerId !== null) {
       global.clearTimeout(figureLoadRevealTimerId);
       figureLoadRevealTimerId = null;
@@ -439,6 +521,9 @@
       }
       content = extractedContent;
       if (!content?.text) throw new Error("content_not_found");
+      const locale = content.readingContext?.language || "ja";
+      const sourceBlocks = content.readingContext?.blocks?.length ? content.readingContext.blocks : fallbackBlocks(content.text);
+      viewBlocks = sourceBlocks.map((block) => ({ ...block, sentenceSpans: global.Engine.splitSentenceSpans(block.text, locale) }));
       rebuildUnits();
       markPerformance("reader:segmentation-end");
       if (units.length === 0) throw new Error("units_not_found");
@@ -785,8 +870,10 @@
         const afterTop = (currentMarker as HTMLElement).getBoundingClientRect().top;
         const delta = afterTop - beforeTop;
         if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
+          reactTextRestoring = true;
           correction.scroller.scrollTop += delta;
           reactTextRestoreScrollTop = correction.scroller.scrollTop;
+          scheduleReactTextRestoreRelease(false);
         }
       };
       if (typeof global.requestAnimationFrame === "function") global.requestAnimationFrame(applyCorrection);
@@ -942,16 +1029,60 @@
     scroller.scrollTop = Math.max(0, targetY - 72);
   }
 
+  function scheduleReactTextRestoreRelease(invalidate = true): void {
+    const generation = invalidate ? ++reactTextRestoreGeneration : reactTextRestoreGeneration;
+    const release = () => {
+      if (generation === reactTextRestoreGeneration && !reactTextRestorePending) reactTextRestoring = false;
+    };
+    if (typeof global.requestAnimationFrame === "function") {
+      global.requestAnimationFrame(() => global.requestAnimationFrame(release));
+    } else {
+      release();
+    }
+  }
+
+  function scheduleReactTextRestore(element: HTMLElement, positionMarkers: HTMLElement[]): void {
+    const generation = ++reactTextRestoreGeneration;
+    const apply = () => {
+      if (generation !== reactTextRestoreGeneration || reactTextScroller !== element) return;
+      restoreTextPosition(element, positionMarkers);
+      reactTextRestoreScrollTop = element.scrollTop;
+      reactTextRestorePending = false;
+      const release = () => {
+        if (generation === reactTextRestoreGeneration && reactTextScroller === element) reactTextRestoring = false;
+      };
+      if (typeof global.requestAnimationFrame === "function") {
+        global.requestAnimationFrame(() => global.requestAnimationFrame(release));
+      } else {
+        release();
+      }
+    };
+    if (typeof global.requestAnimationFrame === "function") {
+      global.requestAnimationFrame(() => global.requestAnimationFrame(apply));
+    } else {
+      apply();
+    }
+  }
+
   function switchMode(nextMode: ReadingMode): void {
     const currentMode = sessionMode();
     if (nextMode === currentMode) return;
     const previousFocus = readerActiveElement();
     clearPendingLeftTap();
+    reactTextRestorePending = nextMode === "text";
+    let capturedPosition = currentPosition;
     if (nextMode === "rsvp" && currentMode === "text") {
       const textScroller = reactTextScroller;
       const textMarkers = reactTextMarkers;
-      if (textScroller) captureTextPosition(textScroller, textMarkers, true, false);
+      const restoreInProgress = reactTextRestoring || reactTextRestorePending;
+      const scrollChanged = textScroller && (reactTextRestoreScrollTop === null || Math.abs(textScroller.scrollTop - reactTextRestoreScrollTop) >= 1);
+      if (!restoreInProgress || scrollChanged) {
+        reactTextRestoring = true;
+        if (textScroller) captureTextPosition(textScroller, textMarkers, true, false);
+      }
+      capturedPosition = currentPosition;
     } else if (currentMode === "rsvp") {
+      reactTextRestoring = true;
       const currentFlow = flowItems[sessionFlowIndex()];
       if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
     }
@@ -959,10 +1090,11 @@
     if (!applyingSession) {
       dispatchSession({
         type: nextMode === "text" ? "switchToText" : "switchToRsvp",
-        position: currentPosition,
+        position: capturedPosition,
       }, false);
     }
     renderSessionState();
+    if (nextMode === "rsvp") scheduleReactTextRestoreRelease();
     if (!containsReaderElement(previousFocus)) {
       global.requestAnimationFrame(() => findCloseButton()?.focus());
     }
@@ -1310,6 +1442,7 @@
     if (rewindFeedbackClearTimer !== null) global.clearTimeout(rewindFeedbackClearTimer);
     rewindFeedbackClearTimer = null;
     content = null;
+    viewBlocks = [];
     units = [];
     flowItems = [];
     contextSentenceIndex = null;
@@ -1332,6 +1465,9 @@
     slowPreparationVisible = false;
     reactTextScroller = null;
     reactTextMarkers = [];
+    reactTextRestoreGeneration += 1;
+    reactTextRestoring = false;
+    reactTextRestorePending = false;
     reactTextRestoreScrollTop = null;
     rewindFeedback = null;
   }
