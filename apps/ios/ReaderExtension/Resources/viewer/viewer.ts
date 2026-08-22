@@ -78,6 +78,8 @@
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
   let performanceUnitMarked = false;
+  let performanceReactInitStarted = false;
+  let performanceReactInitMarked = false;
 
   function readingSessionState(): ReaderSessionObservableState | null {
     return sessionState?.phase === "reading" ? sessionState : null;
@@ -113,11 +115,14 @@
     root.setAttribute("data-reader-react-root", "true");
     Object.assign(root.style, { position: "absolute", inset: "0", pointerEvents: "auto" });
     shadowRoot.append(root);
+    performanceReactInitStarted = true;
+    markPerformance("reader:react-init-start");
     try {
       reactViewMount = globalThis.ReaderReactViewer.mount(root);
       reactViewHost = root;
     } catch (error) {
       root.remove();
+      performanceReactInitStarted = false;
       throw error;
     }
   }
@@ -128,6 +133,8 @@
     root?.remove();
     reactViewMount = null;
     reactViewHost = null;
+    performanceReactInitStarted = false;
+    performanceReactInitMarked = false;
   }
 
   function reactViewModel(): unknown {
@@ -198,6 +205,10 @@
         updateTextPosition(element, reactTextMarkers);
       },
     });
+    if (performanceReactInitStarted && !performanceReactInitMarked) {
+      performanceReactInitMarked = true;
+      markPerformance("reader:react-init-end");
+    }
     const model = reactViewModel() as { kind: string; unit?: ReaderUnit | null };
     if (model.kind === "rsvp") {
       if (!performanceControlsMarked) {
@@ -341,9 +352,9 @@
 
   async function open() {
     if (overlay || opening || !handle || !shadow) return;
+    markPerformance("reader:tap");
     if (!reactViewMount) mountReactViewer(shadow);
     if (!reactViewMount || !reactViewHost) throw new Error("reader_view_unavailable");
-    markPerformance("reader:tap");
     performanceRenderMarked = false;
     performanceControlsMarked = false;
     performanceUnitMarked = false;
@@ -626,9 +637,11 @@
     }
     if (!sessionInitPromise) {
       markPerformance("reader:session-init-start");
+      markPerformance("reader:wasm-init-start");
       sessionInitPromise = global.ReaderSession.init()
         .then(() => {
           markPerformance("reader:session-init-end");
+          markPerformance("reader:wasm-init-end");
           if (activePreparation.kind === "idle" || activePreparation.kind === "cancelled") return;
           if (sessionHandle) {
             if (!applyingSession) dispatchSession({ type: "close" });

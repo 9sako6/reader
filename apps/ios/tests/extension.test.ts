@@ -562,10 +562,14 @@ test("Safari mounts one React root per open session and removes it on close", as
   assert.equal(reactRoots().length, 0);
   await context.MobileViewer.open();
   assert.equal(reactRoots().length, 1);
+  assert.equal(harness.performanceMarks().filter((name) => name === "reader:react-init-start").length, 1);
+  assert.equal(harness.performanceMarks().filter((name) => name === "reader:react-init-end").length, 1);
   context.MobileViewer.close();
   assert.equal(reactRoots().length, 0);
   await context.MobileViewer.open();
   assert.equal(reactRoots().length, 1);
+  assert.equal(harness.performanceMarks().filter((name) => name === "reader:react-init-start").length, 2);
+  assert.equal(harness.performanceMarks().filter((name) => name === "reader:react-init-end").length, 2);
   context.MobileViewer.close();
   assert.equal(reactRoots().length, 0);
 });
@@ -593,6 +597,8 @@ test("Safari reader marks startup phases without including page content", async 
   assert.deepEqual(harness.performanceMarks(), [
     "reader:bootstrap-ready",
     "reader:tap",
+    "reader:react-init-start",
+    "reader:react-init-end",
     "reader:first-feedback",
     "reader:extraction-start",
     "reader:extraction-end",

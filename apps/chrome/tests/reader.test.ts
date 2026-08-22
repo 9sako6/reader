@@ -273,7 +273,7 @@ function loadReaderView(context, document) {
   context.navigator ||= { userAgent: "reader-test" };
   context.innerWidth ||= 1000;
   context.performance ||= { now: () => 0 };
-  context.queueMicrotask ||= (callback) => callback();
+  context.queueMicrotask ||= (callback) => Promise.resolve().then(callback);
   class FakeMessageChannel {
     port1: { onmessage: ((event: unknown) => void) | null };
     port2: { postMessage: () => void };
@@ -281,7 +281,7 @@ function loadReaderView(context, document) {
     constructor() {
       this.port1 = { onmessage: null };
       this.port2 = {
-        postMessage: () => this.port1.onmessage?.({ data: null }),
+        postMessage: () => Promise.resolve().then(() => this.port1.onmessage?.({ data: null })),
       };
     }
   }

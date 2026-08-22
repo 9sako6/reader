@@ -86,6 +86,8 @@
   let reactRenderedKind: ReactReaderViewModel["kind"] | null = null;
   let reactRenderedPositionKey: string | null = null;
   let reactLoadingRevealed = false;
+  let performanceReactInitStarted = false;
+  let performanceReactInitMarked = false;
 
   type ReactReaderViewModel = {
     kind: "closed" | "loading" | "error" | "rsvp" | "text";
@@ -123,10 +125,13 @@
     dialog.append(host);
     const viewer = globalThis.ReaderReactViewer;
     if (!viewer) throw new Error("reader_view_unavailable");
+    performanceReactInitStarted = true;
+    markPerformance("reader:react-init-start");
     try {
       reactViewMount = viewer.mount(host);
     } catch (error) {
       host.remove();
+      performanceReactInitStarted = false;
       throw error;
     }
   }
@@ -134,6 +139,8 @@
   function unmountReactViewer(): void {
     reactViewMount?.unmount();
     reactViewMount = null;
+    performanceReactInitStarted = false;
+    performanceReactInitMarked = false;
   }
 
   function renderReactView(model: ReactReaderViewModel): void {
@@ -166,6 +173,10 @@
       },
       textPosition: (element: HTMLElement) => updateTextPosition(element, textPositionMarkers),
     });
+    if (performanceReactInitStarted && !performanceReactInitMarked) {
+      performanceReactInitMarked = true;
+      markPerformance("reader:react-init-end");
+    }
     display = root?.querySelector?.<HTMLDivElement>('[data-reader-unit="true"]') || null;
     if (
       model.kind === "rsvp"
@@ -518,9 +529,11 @@
     }
     if (!sessionInitPromise) {
       markPerformance("reader:session-init-start");
+      markPerformance("reader:wasm-init-start");
       sessionInitPromise = globalThis.ReaderSession.init()
         .then(() => {
           markPerformance("reader:session-init-end");
+          markPerformance("reader:wasm-init-end");
           const currentRequestId = activeRequestId;
           if (!currentRequestId || activePreparation.kind === "cancelled") return;
           if (sessionHandle) {
