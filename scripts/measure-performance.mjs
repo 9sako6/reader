@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import { chromium } from "@playwright/test";
 import { buildPairedMemorySamples, evaluateFeedbackBudget, evaluateReactMemoryGate, evaluateReactMigrationGate, REACT_FIXED_HEAP_BUDGET_BYTES, summarizeMemorySamples } from "./performance-budget.mjs";
+import { clearPerformanceEntries } from "./performance-entry-cleanup.mjs";
 import { buildPerformanceSample, median, percentile } from "./performance-sample.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
@@ -374,11 +375,7 @@ async function measurePerformanceCycle(page, cdp, settleMs = 0, {
   priorWasmFetchedBeforeTap = false,
 } = {}) {
   if (clearEntries) {
-    await page.evaluate(() => {
-      performance.clearMarks();
-      performance.clearMeasures();
-      performance.clearResourceTimings();
-    });
+    await page.evaluate(clearPerformanceEntries);
   }
   await cdp.send("HeapProfiler.enable");
   await cdp.send("HeapProfiler.collectGarbage");
@@ -417,11 +414,7 @@ async function measurePerformanceCycle(page, cdp, settleMs = 0, {
     : { wasmFetchedBeforeTap: rawResult.wasmFetchedBeforeTap };
   await page.evaluate(() => globalThis.MobileViewer.close());
   if (settleMs > 0) await page.waitForTimeout(settleMs);
-  await page.evaluate(() => {
-    performance.clearMarks();
-    performance.clearMeasures();
-    performance.clearResourceTimings();
-  });
+  await page.evaluate(clearPerformanceEntries);
   await cdp.send("HeapProfiler.enable");
   await cdp.send("HeapProfiler.collectGarbage");
   const afterCloseMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
