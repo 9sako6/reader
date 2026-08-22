@@ -799,27 +799,31 @@ test("Chrome viewer toggles a ready image surface with touch and keyboard", asyn
   await expect(surface).toHaveAttribute("aria-pressed", "true");
 });
 
-test("mobile viewer toggles a ready image surface with touch and keyboard", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&image=immediate&figure=first");
-  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
-  await openMobile(page, { image: "immediate", figureFirst: true });
+test.describe("mobile viewer touch controls", () => {
+  test.use({ hasTouch: true });
 
-  const dialog = page.getByRole("dialog", { name: "reader" });
-  const figure = dialog.getByRole("figure", { name: "本文画像" });
-  await expect(figure).toBeVisible();
-  const surface = figure.locator('[data-reader-image-surface]');
-  await expect(surface).toHaveAccessibleName("画像を明るく表示");
-  await expect(surface).toHaveAttribute("aria-pressed", "false");
+  test("toggles a ready image surface with tap and keyboard", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&image=immediate&figure=first");
+    await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+    await openMobile(page, { image: "immediate", figureFirst: true });
 
-  await surface.click();
-  await expect(surface).toHaveAttribute("aria-pressed", "true");
-  await expect(surface).toHaveAccessibleName("画像を暗く表示");
-  await surface.focus();
-  await page.keyboard.press("Space");
-  await expect(surface).toHaveAttribute("aria-pressed", "false");
-  await page.keyboard.press("Enter");
-  await expect(surface).toHaveAttribute("aria-pressed", "true");
+    const dialog = page.getByRole("dialog", { name: "reader" });
+    const figure = dialog.getByRole("figure", { name: "本文画像" });
+    await expect(figure).toBeVisible();
+    const surface = figure.locator('[data-reader-image-surface]');
+    await expect(surface).toHaveAccessibleName("画像を明るく表示");
+    await expect(surface).toHaveAttribute("aria-pressed", "false");
+
+    await surface.tap();
+    await expect(surface).toHaveAttribute("aria-pressed", "true");
+    await expect(surface).toHaveAccessibleName("画像を暗く表示");
+    await surface.focus();
+    await page.keyboard.press("Space");
+    await expect(surface).toHaveAttribute("aria-pressed", "false");
+    await page.keyboard.press("Enter");
+    await expect(surface).toHaveAttribute("aria-pressed", "true");
+  });
 });
 
 test("Chrome viewer shows delayed figure loading and resumes after a 404", async ({ page }) => {
