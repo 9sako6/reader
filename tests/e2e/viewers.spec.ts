@@ -17,8 +17,28 @@ async function openChrome(page: Page, options: ChromeOpenOptions): Promise<void>
 
 async function loadingBarWasRevealed(page: Page): Promise<number> {
   return page.evaluate(() => (globalThis as typeof globalThis & {
-    ReaderE2E: { loadingBarRevealEvents: number[] };
+    ReaderE2E: { loadingBarRevealEvents: unknown[] };
   }).ReaderE2E.loadingBarRevealEvents.length);
+}
+
+async function loadingBarRevealSnapshot(page: Page): Promise<{
+  height: string;
+  left: number;
+  top: number;
+  width: number;
+  viewportWidth: number;
+  viewportHeight: number;
+} | null> {
+  return page.evaluate(() => (globalThis as typeof globalThis & {
+    ReaderE2E: { loadingBarRevealEvents: Array<{
+      height: string;
+      left: number;
+      top: number;
+      width: number;
+      viewportWidth: number;
+      viewportHeight: number;
+    }> };
+  }).ReaderE2E.loadingBarRevealEvents.at(-1) || null);
 }
 
 const RSVP_WIDTHS = [320, 375, 390, 430, 768];
@@ -112,10 +132,12 @@ test("Chrome reader reveals a centered thin bar at the 100ms threshold", async (
   await loadViewer(page, "chrome");
   await openChrome(page, { delay: 100 });
 
-  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
-  const bar = page.locator("[data-reader-loading-bar]");
-  await expect(bar).toHaveCount(1);
-  await expect(bar).toHaveCSS("height", "2px");
+  await expect.poll(() => loadingBarRevealSnapshot(page)).toMatchObject({ height: "2px" });
+  const snapshot = await loadingBarRevealSnapshot(page);
+  expect(snapshot).not.toBeNull();
+  expect(snapshot!.width).toBeGreaterThan(0);
+  expect(Math.abs(snapshot!.left + snapshot!.width / 2 - snapshot!.viewportWidth / 2)).toBeLessThanOrEqual(1);
+  expect(Math.abs(snapshot!.top + 1 - snapshot!.viewportHeight / 2)).toBeLessThanOrEqual(1);
   await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
 });
 

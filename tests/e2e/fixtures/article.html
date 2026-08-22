@@ -128,15 +128,28 @@
           const requestedDelay = Number(options.delay);
           const delay = Number.isFinite(requestedDelay) && requestedDelay >= 0 ? requestedDelay : defaultDelay;
           for (const listener of messageListeners) listener({ type: "SHOW_RSVP_LOADING", requestId });
-          setTimeout(() => {
+          const start = () => {
             for (const listener of messageListeners) listener({ type: "START_RSVP", requestId, text, readingContext });
-          }, delay);
+          };
+          if (delay === 0) start();
+          else setTimeout(start, delay);
           return requestId;
         };
         const loadingObserver = new MutationObserver(() => {
           const host = document.querySelector("#__rsvp-reader-root");
           const bar = host?.shadowRoot?.querySelector("[data-reader-loading-bar]");
-          if (bar && loadingBarRevealEvents.length === 0) loadingBarRevealEvents.push(performance.now());
+          if (bar && loadingBarRevealEvents.length === 0) {
+            const style = getComputedStyle(bar);
+            const rectangle = bar.getBoundingClientRect();
+            loadingBarRevealEvents.push({
+              height: style.height,
+              left: rectangle.left,
+              top: rectangle.top,
+              width: rectangle.width,
+              viewportWidth: innerWidth,
+              viewportHeight: innerHeight,
+            });
+          }
         });
         loadingObserver.observe(document.documentElement, { childList: true, subtree: true });
         document.querySelector("#launch-chrome").addEventListener("click", open);
