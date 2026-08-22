@@ -3,6 +3,11 @@
   root.MobileViewer = factory(root);
 })(globalThis, function createMobileViewer(global: typeof globalThis): ReaderMobileViewer {
   type ReadingMode = "rsvp" | "text";
+  type FigureViewState =
+    | { kind: "idle" }
+    | { kind: "loading"; token: number; figureIndex: number }
+    | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
+    | { kind: "failed"; token: number; figureIndex: number };
   type MobileIconName = "previous" | "play" | "pause" | "close";
   interface LaunchProgress {
     element: HTMLElement;
@@ -61,6 +66,9 @@
   let playbackTimer: number | null = null;
   let playing = false;
   let figurePanel: HTMLElement | null = null;
+  let figureViewState: FigureViewState = { kind: "idle" };
+  let figureLoadToken = 0;
+  let figureLoadRevealTimerId: number | null = null;
   let mode: ReadingMode = "rsvp";
   let nodes: MobileNodes | null = null;
   let opening = false;
@@ -530,9 +538,9 @@
     open();
   }
 
-  function renderReader() {
+  function renderReader(autoPlayRsvp = true) {
     updateModeButton();
-    if (mode === "rsvp") renderRsvpView();
+    if (mode === "rsvp") renderRsvpView(autoPlayRsvp);
     else renderTextView();
     if (!performanceRenderMarked) {
       performanceRenderMarked = true;
@@ -582,11 +590,15 @@
     scroller.addEventListener("scroll", updatePosition, { passive: true });
     getNodes().textScroller = scroller;
     getNodes().textMarkers = positionMarkers;
-    global.requestAnimationFrame(() => {
+    const initializeTextView = () => {
       if (!isCurrentSession(generation) || !nodes || !content) return;
-      restoreTextPosition(scroller, positionMarkers);
+      if (scroller.scrollTop > 0) captureTextPosition(scroller, positionMarkers, getNodes().progress, true);
+      else restoreTextPosition(scroller, positionMarkers);
       getNodes().textRestoreScrollTop = scroller.scrollTop;
-    });
+      figureElements.forEach((figureElement) => attachTextFigureLoadCorrection(scroller, figureElement, positionMarkers));
+    };
+    if (typeof global.requestAnimationFrame === "function") global.requestAnimationFrame(initializeTextView);
+    else initializeTextView();
   }
 
   function fallbackBlocks(text: string): ReaderBlock[] {
@@ -691,10 +703,8 @@
     container.dataset.readerPositionKind = "figure";
     container.dataset.figureIndex = String(figureIndex);
     const image = global.document.createElement("img");
-    image.src = figure.src;
-    image.alt = figure.alt || figure.caption || "本文画像";
-    image.loading = "lazy";
-    image.decoding = "async";
+    configureFigureImage(image, figure, true, true);
+    image.dataset.readerSource = figure.src;
     container.append(createVeiledImageSurface(image));
     if (figure.caption) {
       const caption = global.document.createElement("figcaption");
@@ -704,22 +714,139 @@
     return container;
   }
 
-  function createVeiledImageSurface(image: HTMLImageElement): HTMLElement {
-    const surface = global.document.createElement("div");
+  function configureFigureImage(
+    image: HTMLImageElement,
+    figure: ReaderFigure,
+    lazy: boolean,
+    deferSource = false,
+  ): void {
+    if (deferSource) {
+      if (figure.srcset !== undefined) image.dataset.readerSrcset = figure.srcset;
+      if (figure.sizes !== undefined) image.dataset.readerSizes = figure.sizes;
+    } else {
+      if (figure.srcset !== undefined) image.srcset = figure.srcset;
+      if (figure.sizes !== undefined) image.sizes = figure.sizes;
+    }
+    if (figure.width !== undefined) image.width = figure.width;
+    if (figure.height !== undefined) image.height = figure.height;
+    image.alt = figure.alt || figure.caption || "本文画像";
+    image.decoding = "async";
+    if (lazy) image.loading = "lazy";
+  }
+
+  function createVeiledImageSurface(image: HTMLImageElement): HTMLButtonElement {
+    const surface = global.document.createElement("button");
+    surface.type = "button";
     surface.className = "reader-image-surface";
     surface.setAttribute("data-reader-image-surface", "true");
     surface.setAttribute("data-reader-ignore-gesture", "true");
+    surface.setAttribute("aria-pressed", "false");
+    surface.setAttribute("aria-label", "画像を明るく表示");
+    surface.title = "画像を明るく表示";
+    Object.assign(surface.style, {
+      appearance: "none",
+      border: "0",
+      padding: "0",
+      background: "transparent",
+      color: "inherit",
+    });
     const veil = global.document.createElement("div");
     veil.className = "reader-image-veil";
     veil.setAttribute("data-reader-image-veil", "true");
-    const reveal = () => { veil.style.opacity = "0"; };
-    const dim = () => { veil.style.opacity = "1"; };
-    surface.addEventListener("pointerdown", reveal);
-    surface.addEventListener("pointerup", dim);
-    surface.addEventListener("pointercancel", dim);
-    surface.addEventListener("pointerleave", dim);
+    let revealed = false;
+    const updateBrightness = () => {
+      surface.setAttribute("aria-pressed", String(revealed));
+      const label = revealed ? "画像を暗く表示" : "画像を明るく表示";
+      surface.setAttribute("aria-label", label);
+      surface.title = label;
+      veil.style.opacity = revealed ? "0" : "1";
+      if (figureViewState.kind === "ready") {
+        figureViewState = {
+          ...figureViewState,
+          brightness: revealed ? "revealed" : "dimmed",
+        };
+      }
+    };
+    surface.addEventListener("click", () => {
+      revealed = !revealed;
+      updateBrightness();
+    });
     surface.append(image, veil);
     return surface;
+  }
+
+  function attachTextFigureLoadCorrection(
+    scroller: HTMLElement,
+    figureElement: HTMLElement,
+    positionMarkers: HTMLElement[],
+  ): void {
+    const surface = Array.from(figureElement.children).find((child) => child.tagName === "BUTTON");
+    const image = surface && Array.from(surface.children).find((child) => child.tagName === "IMG") as HTMLImageElement | undefined;
+    if (!image) return;
+    const source = image.dataset.readerSource;
+    const srcset = image.dataset.readerSrcset;
+    const sizes = image.dataset.readerSizes;
+    if (!source) return;
+    delete image.dataset.readerSource;
+    delete image.dataset.readerSrcset;
+    delete image.dataset.readerSizes;
+    const currentMarker = currentTextPositionMarker(positionMarkers);
+    const figureOffset = Number(figureElement.dataset.sourceStart);
+    const markerOffset = Number(currentMarker?.dataset.sourceStart);
+    const shouldCorrect = Boolean(
+      currentMarker
+      && Number.isFinite(figureOffset)
+      && Number.isFinite(markerOffset)
+      && figureOffset <= markerOffset,
+    );
+    const beforeTop = shouldCorrect && currentMarker
+      ? currentMarker.getBoundingClientRect().top
+      : 0;
+    let settled = false;
+    const adjustAfterDecode = async () => {
+      if (settled) return;
+      settled = true;
+      if (!shouldCorrect || nodes?.textScroller !== scroller) return;
+      try {
+        if (typeof image.decode === "function") await image.decode();
+      } catch {
+      }
+      if (nodes?.textScroller !== scroller) return;
+      const applyCorrection = () => {
+        if (getNodes().textScroller !== scroller) return;
+        const afterTop = (currentMarker as HTMLElement).getBoundingClientRect().top;
+        const delta = afterTop - beforeTop;
+        if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
+          scroller.scrollTop += delta;
+          getNodes().textRestoreScrollTop = scroller.scrollTop;
+        }
+      };
+      if (typeof global.requestAnimationFrame === "function") global.requestAnimationFrame(applyCorrection);
+      else applyCorrection();
+    };
+    image.addEventListener("load", () => { void adjustAfterDecode(); });
+    image.addEventListener("error", () => { void adjustAfterDecode(); });
+    if (srcset !== undefined) image.srcset = srcset;
+    if (sizes !== undefined) image.sizes = sizes;
+    image.src = source;
+    if (image.complete && image.naturalWidth > 0) void adjustAfterDecode();
+  }
+
+  function currentTextPositionMarker(positionMarkers: HTMLElement[]): HTMLElement | undefined {
+    const position = currentPosition;
+    if (position.kind === "figure") {
+      return positionMarkers.find((marker) => (
+        marker.dataset.readerPositionKind === "figure"
+        && Number(marker.dataset.figureIndex) === position.figureIndex
+      ));
+    }
+    return positionMarkers.find((marker) => (
+      marker.dataset.readerPositionKind === "text"
+      && Number(marker.dataset.sourceStart) <= position.sourceOffset
+      && Number(marker.dataset.sourceEnd) > position.sourceOffset
+    )) || [...positionMarkers].reverse().find((marker) => (
+      Number(marker.dataset.sourceStart) <= position.sourceOffset
+    ));
   }
 
   function updateTextPosition(
@@ -751,14 +878,27 @@
         firstReadableTop = rect.top;
       }
     }
-    if (preferVisualTop) firstVisible = firstReadable || firstVisible;
-    if (firstVisible) {
-      const sourceOffset = Number(firstVisible.dataset.sourceStart);
-      currentPosition = firstVisible.dataset.readerPositionKind === "figure"
+    const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
+    const lastFigureOffset = Math.max(...positionMarkers
+      .filter((marker) => marker.dataset.readerPositionKind === "figure")
+      .map((marker) => Number(marker.dataset.sourceStart))
+      .filter((offset) => Number.isFinite(offset)), -1);
+    const firstTextAfterFigure = lastFigureOffset >= 0
+      ? positionMarkers.find((marker) => (
+        marker.dataset.readerPositionKind === "text"
+        && Number(marker.dataset.sourceStart) > lastFigureOffset
+      ))
+      : undefined;
+    const selected = atBottom && firstTextAfterFigure
+      ? firstTextAfterFigure
+      : preferVisualTop ? firstReadable || firstVisible : firstVisible;
+    if (selected) {
+      const sourceOffset = Number(selected.dataset.sourceStart);
+      currentPosition = selected.dataset.readerPositionKind === "figure"
         ? {
           kind: "figure",
           sourceOffset,
-          figureIndex: Number(firstVisible.dataset.figureIndex),
+          figureIndex: Number(selected.dataset.figureIndex),
         }
         : { kind: "text", sourceOffset };
       unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
@@ -809,7 +949,7 @@
     scroller.scrollTop = Math.max(0, targetY - 72);
   }
 
-  function renderRsvpView() {
+  function renderRsvpView(autoPlay = true) {
     getNodes().textScroller = null;
     getNodes().textMarkers = [];
     getNodes().textRestoreScrollTop = null;
@@ -835,7 +975,7 @@
     Object.assign(getNodes(), { previousUnit, unit, nextUnit });
     renderRsvpControls();
     contextSentenceIndex = null;
-    if (!renderFlowItem() && global.document.visibilityState !== "hidden") play();
+    if (!renderFlowItem() && autoPlay && global.document.visibilityState !== "hidden") play();
   }
 
   function transportButton(label: string, action: () => void): HTMLButtonElement {
@@ -901,6 +1041,7 @@
     }
     figurePanel?.remove();
     figurePanel = null;
+    invalidateFigureLoad();
     if (item.kind === "unit") unitIndex = item.unitIndex;
     renderUnit();
     return false;
@@ -940,16 +1081,22 @@
   function switchMode(nextMode: ReadingMode): void {
     if (nextMode === mode) return;
     const previousFocus = readerActiveElement();
+    const wasPlaying = playing;
     clearPendingLeftTap();
-    const currentFlow = flowItems[flowIndex];
-    if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
+    if (mode === "rsvp") {
+      const currentFlow = flowItems[flowIndex];
+      if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
+    }
     figurePanel?.remove();
     figurePanel = null;
+    invalidateFigureLoad();
     if (nextMode === "rsvp") {
       const { textScroller, textMarkers, progress } = getNodes();
       const restoredScrollTop = getNodes().textRestoreScrollTop;
       const textPositionChanged = textScroller && (
-        restoredScrollTop === null || Math.abs(textScroller.scrollTop - restoredScrollTop) >= 1
+        restoredScrollTop === null
+          ? textScroller.scrollTop > 0
+          : Math.abs(textScroller.scrollTop - restoredScrollTop) >= 1
       );
       if (textScroller && textPositionChanged) captureTextPosition(textScroller, textMarkers, progress, true);
       if (currentPosition.kind === "figure") {
@@ -966,7 +1113,7 @@
       if (flowIndex < 0) flowIndex = 0;
     }
     mode = nextMode;
-    renderReader();
+    renderReader(nextMode === "rsvp" ? wasPlaying : true);
     if (!containsReaderElement(previousFocus)) {
       global.requestAnimationFrame(() => findCloseButton()?.focus());
     }
@@ -1149,6 +1296,13 @@
   function updatePlayButton() {
     const playButton = nodes?.play;
     if (!playButton) return;
+    if (figurePanel) {
+      playButton.replaceChildren(global.ReaderIcons.create(global.document, "play", 34));
+      playButton.dataset.state = "play";
+      playButton.setAttribute("aria-label", "続きを読む");
+      playButton.setAttribute("aria-pressed", "false");
+      return;
+    }
     const state = playing ? "pause" : "play";
     if (playButton.dataset.state !== state) {
       playButton.replaceChildren(global.ReaderIcons.create(global.document, state, state === "pause" ? 30 : 34));
@@ -1188,6 +1342,9 @@
 
   function showFigure(figure: ReaderFigure, figureIndex: number): void {
     pause();
+    invalidateFigureLoad();
+    const token = ++figureLoadToken;
+    figureViewState = { kind: "loading", token, figureIndex };
     figurePanel?.remove();
     currentPosition = {
       kind: "figure",
@@ -1207,21 +1364,195 @@
     panel.dataset.figureIndex = String(figureIndex);
     panel.addEventListener("pointerup", handleRsvpPointerUp);
     const image = global.document.createElement("img");
-    image.src = figure.src;
-    image.alt = figure.alt || figure.caption || "本文画像";
-    panel.append(createVeiledImageSurface(image));
+    configureFigureImage(image, figure, false, true);
+    const imageSurface = createVeiledImageSurface(image);
+    imageSurface.hidden = true;
+    imageSurface.disabled = true;
+    imageSurface.setAttribute("aria-hidden", "true");
+    const status = createFigureStatus();
+    const description = global.document.createElement("div");
+    description.setAttribute("data-reader-figure-description", "true");
+    description.textContent = figureDescription(figure);
+    description.hidden = true;
+    Object.assign(description.style, {
+      color: "var(--reader-secondary)",
+      fontSize: "14px",
+      lineHeight: "1.45",
+      textAlign: "center",
+    });
+    let caption: HTMLElement | null = null;
     if (figure.caption) {
-      const caption = global.document.createElement("figcaption");
+      caption = global.document.createElement("figcaption");
       caption.textContent = figure.caption;
-      panel.append(caption);
     }
+    image.addEventListener("load", () => {
+      void settleFigureImage(token, image, panel, status, description, imageSurface, caption);
+    });
+    image.addEventListener("error", () => {
+      failFigureImage(token, figureIndex, panel, status, description, imageSurface, caption);
+    });
+    panel.append(imageSurface, status, description);
+    if (caption) panel.append(caption);
     getNodes().content.append(panel);
     figurePanel = panel;
+    updatePlayButton();
+    scheduleFigureLoadingIndicator(token, panel, status, description, caption);
+    if (figure.srcset !== undefined) image.srcset = figure.srcset;
+    if (figure.sizes !== undefined) image.sizes = figure.sizes;
+    image.src = figure.src;
+    if (image.complete && image.naturalWidth > 0) {
+      void settleFigureImage(token, image, panel, status, description, imageSurface, caption);
+    }
+  }
+
+  function createFigureStatus(): HTMLDivElement {
+    const status = global.document.createElement("div");
+    status.setAttribute("data-reader-figure-status", "true");
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.textContent = "画像を準備しています";
+    status.hidden = true;
+    Object.assign(status.style, {
+      display: "none",
+      alignItems: "center",
+      gap: "8px",
+      color: "var(--reader-secondary)",
+      fontSize: "14px",
+      lineHeight: "1.4",
+    });
+    return status;
+  }
+
+  function figureDescription(figure: ReaderFigure): string {
+    const alt = figure.alt.trim();
+    const caption = figure.caption.trim();
+    if (alt && caption && alt !== caption) return `${alt}。${caption}`;
+    return alt || caption || "本文画像";
+  }
+
+  function scheduleFigureLoadingIndicator(
+    token: number,
+    panel: HTMLElement,
+    status: HTMLElement,
+    description: HTMLElement,
+    caption: HTMLElement | null,
+  ): void {
+    if (figureLoadRevealTimerId !== null) global.clearTimeout(figureLoadRevealTimerId);
+    figureLoadRevealTimerId = global.setTimeout(() => {
+      figureLoadRevealTimerId = null;
+      if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
+      status.hidden = false;
+      status.style.display = "flex";
+      description.hidden = false;
+      if (caption) caption.hidden = true;
+      const indicator = global.document.createElement("span");
+      indicator.setAttribute("data-reader-figure-indicator", "true");
+      indicator.setAttribute("aria-hidden", "true");
+      Object.assign(indicator.style, {
+        width: "28px",
+        height: "2px",
+        borderRadius: "999px",
+        background: "rgba(238,238,239,.24)",
+        display: "inline-block",
+        overflow: "hidden",
+      });
+      const bar = global.document.createElement("span");
+      Object.assign(bar.style, {
+        display: "block",
+        width: "100%",
+        height: "100%",
+        background: "var(--reader-text)",
+        transform: "translateX(-100%) scaleX(.35)",
+        transformOrigin: "left center",
+      });
+      indicator.append(bar);
+      if (!global.matchMedia?.("(prefers-reduced-motion: reduce)").matches) bar.animate(
+        [
+          { transform: "translateX(-100%) scaleX(.35)" },
+          { transform: "translateX(220%) scaleX(.35)" },
+        ],
+        { duration: 900, iterations: Infinity, easing: "linear" },
+      );
+      status.append(indicator);
+    }, 100);
+  }
+
+  async function settleFigureImage(
+    token: number,
+    image: HTMLImageElement,
+    panel: HTMLElement,
+    status: HTMLElement,
+    description: HTMLElement,
+    imageSurface: HTMLButtonElement,
+    caption: HTMLElement | null,
+  ): Promise<void> {
+    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
+    try {
+      if (typeof image.decode === "function") await image.decode();
+    } catch {
+      if (!(image.complete && image.naturalWidth > 0)) {
+        failFigureImage(token, figureViewState.figureIndex, panel, status, description, imageSurface, caption);
+        return;
+      }
+    }
+    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
+    if (figureLoadRevealTimerId !== null) {
+      global.clearTimeout(figureLoadRevealTimerId);
+      figureLoadRevealTimerId = null;
+    }
+    status.hidden = true;
+    status.style.display = "none";
+    description.hidden = true;
+    if (caption) caption.hidden = false;
+    figureViewState = { kind: "ready", token, figureIndex: figureViewState.figureIndex, brightness: "dimmed" };
+    imageSurface.setAttribute("aria-pressed", "false");
+    imageSurface.setAttribute("aria-label", "画像を明るく表示");
+    imageSurface.title = "画像を明るく表示";
+    imageSurface.hidden = false;
+    imageSurface.disabled = false;
+    imageSurface.removeAttribute("aria-hidden");
+    const veil = Array.from(imageSurface.children).find((child) => child.getAttribute?.("data-reader-image-veil") === "true");
+    if (veil) (veil as HTMLElement).style.opacity = "1";
+    updatePlayButton();
+  }
+
+  function failFigureImage(
+    token: number,
+    figureIndex: number,
+    panel: HTMLElement,
+    status: HTMLElement,
+    description: HTMLElement,
+    imageSurface: HTMLElement,
+    caption: HTMLElement | null,
+  ): void {
+    if (figureViewState.kind !== "loading" || figureViewState.token !== token || figurePanel !== panel) return;
+    if (figureLoadRevealTimerId !== null) {
+      global.clearTimeout(figureLoadRevealTimerId);
+      figureLoadRevealTimerId = null;
+    }
+    status.hidden = false;
+    status.style.display = "block";
+    status.textContent = "画像を読み込めませんでした";
+    description.hidden = false;
+    if (caption) caption.hidden = true;
+    imageSurface.remove();
+    figureViewState = { kind: "failed", token, figureIndex };
+    updatePlayButton();
+  }
+
+  function invalidateFigureLoad(): void {
+    figureLoadToken += 1;
+    figureViewState = { kind: "idle" };
+    if (figureLoadRevealTimerId !== null) {
+      global.clearTimeout(figureLoadRevealTimerId);
+      figureLoadRevealTimerId = null;
+    }
   }
 
   function advanceFromFigure(): void {
     figurePanel?.remove();
     figurePanel = null;
+    invalidateFigureLoad();
     if (flowIndex >= flowItems.length - 1) {
       pause();
       return;
@@ -1255,6 +1586,7 @@
       const figureOffset = Number(figurePanel.dataset.sourceStart);
       figurePanel.remove();
       figurePanel = null;
+      invalidateFigureLoad();
       const unitBeforeFigure = global.Engine.findUnitIndex(units, Math.max(0, figureOffset - 1));
       seekToUnit(global.Engine.findSentenceStart(units, unitBeforeFigure));
       renderFlowItem();
@@ -1421,6 +1753,7 @@
     flowIndex = 0;
     contextSentenceIndex = null;
     playing = false;
+    invalidateFigureLoad();
     figurePanel?.remove();
     figurePanel = null;
     currentPosition = { kind: "text", sourceOffset: 0 };

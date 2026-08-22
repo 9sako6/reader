@@ -466,15 +466,36 @@
       const sourceEnd = indexedRange
         ? toTextOffset(indexedRange.contentEnd, leadingTrim, text.length)
         : fallbackFigureEnd(sourceDocument, contentRoot, container, figureOffset, text.length, leadingTrim, caption);
-      figures.push({
+      const figure: ReaderFigure = {
         src,
         alt: (image.getAttribute?.("alt") || "").trim(),
         caption,
         sourceOffset: figureOffset,
         sourceEnd,
-      });
+      };
+      const srcset = optionalAttribute(image, "srcset");
+      const sizes = optionalAttribute(image, "sizes");
+      const width = positiveDimension(optionalAttribute(image, "width"));
+      const height = positiveDimension(optionalAttribute(image, "height"));
+      if (srcset !== undefined) figure.srcset = srcset;
+      if (sizes !== undefined) figure.sizes = sizes;
+      if (width !== undefined) figure.width = width;
+      if (height !== undefined) figure.height = height;
+      figures.push(figure);
     }
     return figures.sort((left, right) => left.sourceOffset - right.sourceOffset);
+  }
+
+  function optionalAttribute(element: Element, name: string): string | undefined {
+    if (typeof element.hasAttribute === "function" && !element.hasAttribute(name)) return undefined;
+    const value = element.getAttribute?.(name);
+    return value === null || value === undefined ? undefined : String(value);
+  }
+
+  function positiveDimension(value: string | undefined): number | undefined {
+    if (value === undefined || value.trim() === "") return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
   }
 
   function fallbackFigureEnd(

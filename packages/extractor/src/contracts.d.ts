@@ -16,6 +16,10 @@ declare global {
 
   interface ReaderFigure {
     src: string;
+    srcset?: string;
+    sizes?: string;
+    width?: number;
+    height?: number;
     alt: string;
     caption: string;
     sourceOffset: number;
