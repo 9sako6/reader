@@ -638,7 +638,7 @@ test("mobile viewer exposes touchable controls", async ({ page }) => {
   expect(playPauseBox?.height).toBeGreaterThanOrEqual(44);
 });
 
-test("mobile viewer keeps its focal point and pause state after 25 mode round trips", async ({ page }) => {
+test("mobile viewer keeps its focal point after 25 mode round trips", async ({ page }) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await loadViewer(page, "mobile");
@@ -658,7 +658,7 @@ test("mobile viewer keeps its focal point and pause state after 25 mode round tr
     await dialog.getByRole("button", { name: "RSVPで読む" }).click();
   }
 
-  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
   const finalCenter = await dialog.locator("[data-reader-unit]").evaluate((element) => {
     const rectangle = element.getBoundingClientRect();
     return { x: rectangle.left + rectangle.width / 2, y: rectangle.top + rectangle.height / 2 };
@@ -1266,7 +1266,7 @@ test("real WASM session keeps close, stale preparation, and stale tick inert", a
     stalePhase: "preparing",
     readingPhase: "reading",
     closedPhase: "ended",
-    closedGeneration: trace.closedGeneration,
+    closedGeneration: 4,
     latePhase: "ended",
     lateGeneration: trace.closedGeneration,
   });

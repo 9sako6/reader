@@ -423,8 +423,6 @@ fn resume_from_figure(state: &ReaderSessionState) -> Transition {
 fn switch_mode(state: &ReaderSessionState, mode: Mode, position: Position) -> Transition {
     let ReaderSessionState::Reading {
         content,
-        mode: current_mode,
-        playback: current_playback,
         generation,
         ..
     } = state
@@ -437,15 +435,7 @@ fn switch_mode(state: &ReaderSessionState, mode: Mode, position: Position) -> Tr
     };
     let (target_position, target_playback) = match mode {
         Mode::Text => (position, Playback::Paused),
-        Mode::Rsvp => {
-            let (target_position, inferred_playback) = position_and_playback(item, &content.units);
-            let target_playback = if matches!(current_mode, Mode::Text) {
-                current_playback.clone()
-            } else {
-                inferred_playback
-            };
-            (target_position, target_playback)
-        }
+        Mode::Rsvp => position_and_playback(item, &content.units),
     };
     let next_generation = generation.saturating_add(1);
     let mut next = state.clone();
@@ -1150,7 +1140,7 @@ mod tests {
     }
 
     #[test]
-    fn text_to_rsvp_round_trip_preserves_a_paused_unit() {
+    fn text_to_rsvp_round_trip_starts_a_unit() {
         let paused = reduce(&reading(), ReaderSessionCommand::Pause).state;
         let text = reduce(
             &paused,
@@ -1170,16 +1160,19 @@ mod tests {
             rsvp.state,
             ReaderSessionState::Reading {
                 mode: Mode::Rsvp,
-                playback: Playback::Paused,
+                playback: Playback::Playing,
                 flow_index: 0,
                 ..
             }
         ));
-        assert!(
-            rsvp.effects
-                .iter()
-                .all(|effect| matches!(effect, ReaderSessionEffect::CancelTimer))
-        );
+        assert!(matches!(
+            rsvp.effects.first(),
+            Some(ReaderSessionEffect::CancelTimer)
+        ));
+        assert!(rsvp.effects.iter().any(|effect| matches!(
+            effect,
+            ReaderSessionEffect::ScheduleTick { delay_ms: 10, .. }
+        )));
     }
 
     #[test]

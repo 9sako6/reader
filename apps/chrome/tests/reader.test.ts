@@ -265,9 +265,7 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
         const target = Math.max(0, index);
         const playback = command.type === "switchToText"
           ? "paused"
-          : previous.mode === "text"
-            ? previous.playback
-            : handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
+          : handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
         state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, target, playback);
         state = { ...state, mode: command.type === "switchToText" ? "text" : "rsvp", position: command.position, sourceOffset: command.position.sourceOffset };
         effects = [{ type: "cancelTimer" }];
@@ -1119,7 +1117,7 @@ test("reader keeps keyboard focus trapped after switching to text mode", () => {
   assert.equal(document.activeElement, launchButton);
 });
 
-test("reader restores the RSVP mode control and does not autoplay locally", () => {
+test("reader restores the RSVP mode control and follows session autoplay", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, sessionCommands } = harness;
 
@@ -1144,8 +1142,8 @@ test("reader restores the RSVP mode control and does not autoplay locally", () =
   assert.equal(sessionCommands.filter(({ type }) => type === "play").length, 0);
   assert.equal(findElement(
     document.getElementById("__rsvp-reader-root"),
-    (element) => element.attributes["aria-label"] === "再生",
-  ).attributes["aria-pressed"], "false");
+    (element) => element.attributes["aria-label"] === "一時停止",
+  ).attributes["aria-pressed"], "true");
 });
 
 test("reader keyboard controls pause and move between sentence contexts", () => {

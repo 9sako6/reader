@@ -127,9 +127,7 @@ function createSessionStub(commands, options: { init?: () => Promise<void>; read
         const target = Math.max(0, index);
         const playback = command.type === "switchToText"
           ? "paused"
-          : previous.mode === "text"
-            ? previous.playback
-            : handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
+          : handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
         state = stateForFlow({ ...previous, mode: command.type === "switchToText" ? "text" : "rsvp", generation: previous.generation + 1 }, handle.flow, target, playback);
         state = { ...state, mode: command.type === "switchToText" ? "text" : "rsvp", position: command.position, sourceOffset: command.position.sourceOffset };
         effects = [{ type: "cancelTimer" }];

@@ -35,7 +35,7 @@ run = "pnpm exec quint verify packages/session/spec/reader_session.qnt --backend
 description = "Run the ReaderSession Rust and Quint Connect tests"
 run = [
   "cargo fmt --check",
-  "PATH=\"$PWD/node_modules/.bin:$PATH\" cargo test --locked --package reader-session",
+  "RUST_TEST_THREADS=1 PATH=\"$PWD/node_modules/.bin:$PATH\" cargo test --locked --package reader-session",
   "pnpm exec quint --version | grep -F '0.32.0'",
   "mise run spec:test",
   "mise run spec:simulate",

@@ -339,23 +339,23 @@ module reader_session {
     session' = if (session.mode == "text" and session.position == session.modeAnchorPosition and position == session.modeAnchorPosition) {
       rememberWithExistingAnchor(session, { ...updateOf(session),
         mode: "rsvp", flowIndex: targetIndex, position: position,
-        playback: if (session.mode == "text" or kindForFlow(targetIndex) == "figure") "paused" else "playing",
+        playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
-        timerPending: session.mode != "text" and kindForFlow(targetIndex) == "unit",
+        timerPending: kindForFlow(targetIndex) == "unit",
       })
     } else if (position < session.flowIndex) {
       rememberWithFigureEpoch(session, { ...updateOf(session),
         mode: "rsvp", flowIndex: targetIndex, position: position,
-        playback: if (session.mode == "text" or kindForFlow(targetIndex) == "figure") "paused" else "playing",
+        playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
-        timerPending: session.mode != "text" and kindForFlow(targetIndex) == "unit",
+        timerPending: kindForFlow(targetIndex) == "unit",
       })
     } else {
       remember(session, { ...updateOf(session),
         mode: "rsvp", flowIndex: targetIndex, position: position,
-        playback: if (session.mode == "text" or kindForFlow(targetIndex) == "figure") "paused" else "playing",
+        playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
-        timerPending: session.mode != "text" and kindForFlow(targetIndex) == "unit",
+        timerPending: kindForFlow(targetIndex) == "unit",
       })
     },
     actionTaken' = SwitchToRsvp({position: position}),
