@@ -40,7 +40,6 @@
   let units: ReaderUnit[] = [];
   let flowItems: ReaderFlowItem[] = [];
   let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
-  let contextSentenceIndex: number | null = null;
   let playbackTimer: number | null = null;
   let figureViewState: FigureViewState = { kind: "idle" };
   let reactFigureBrightness: "dimmed" | "revealed" = "dimmed";
@@ -1449,7 +1448,6 @@
     viewBlocks = [];
     units = [];
     flowItems = [];
-    contextSentenceIndex = null;
     invalidateFigureLoad();
     currentPosition = { kind: "text", sourceOffset: 0 };
     opening = false;

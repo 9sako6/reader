@@ -1701,6 +1701,7 @@
     displayResizeObserver = null;
     detachDialogCancelListener();
     const dialog = root;
+    dialog?.removeEventListener("focusin", rememberReaderFocus as EventListener, true);
     if (dialog && isOpenDialog(dialog)) {
       try {
         dialog.close();

@@ -1359,6 +1359,26 @@ test("reader cancel closes the dialog once and remains safe when Escape follows"
   assert.equal(dialog.closeCalls, 1);
 });
 
+test("reader removes its focus listener when the dialog closes", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "focus-cleanup-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "focus listenerのcleanupを確認します。",
+    requestId: "focus-cleanup-request",
+  });
+
+  const host = document.getElementById("__rsvp-reader-root");
+  const dialog = findElement(host, (element) => element.tagName === "DIALOG");
+  assert.equal(dialog.listeners.get("focusin")?.length, 1);
+
+  const closeButton = findElement(host, (element) => element.attributes["aria-label"] === "readerを閉じる");
+  closeButton.dispatchEvent({ type: "click" });
+  assert.equal(dialog.listeners.get("focusin")?.length, 0);
+});
+
 test("reader does not scale controls when reduced motion is enabled", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;

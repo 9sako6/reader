@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const workflow = fs.readFileSync(path.resolve(__dirname, "../../.github/workflows/ci.yml"), "utf8");
+const performanceScript = fs.readFileSync(path.resolve(__dirname, "../../scripts/measure-performance.mjs"), "utf8");
 const chromiumJobStart = workflow.indexOf("\n  e2e:\n");
 const iosJobStart = workflow.indexOf("\n  ios:\n", chromiumJobStart);
 const chromiumJob = workflow.slice(chromiumJobStart, iosJobStart);
@@ -56,4 +57,10 @@ test("CI verifies the generated Safari package after the simulator build", () =>
 
   assert.ok(iosJobStart >= 0);
   assert.ok(build >= 0 && build < packageRuntime && packageRuntime < diagnostics);
+});
+
+test("performance measurement fails when the recorded migration budget regresses", () => {
+  assert.match(performanceScript, /performanceGatePolicy/);
+  assert.match(performanceScript, /maxRegressionPercent/);
+  assert.match(performanceScript, /Performance gate failed/);
 });
