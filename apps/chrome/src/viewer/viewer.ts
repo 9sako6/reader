@@ -37,6 +37,7 @@
   let loadingSlowTimerId: number | null = null;
   let loadingRevealRequestId: string | null = null;
   let loadingStartedAt: number | null = null;
+  let loadingSlowVisible = false;
   let loadingIndicator: HTMLDivElement | null = null;
   let loadingIndicatorAnimation: Animation | null = null;
   let loadingStatus: HTMLDivElement | null = null;
@@ -111,12 +112,15 @@
   }
 
   function mountReactViewer(dialog: HTMLDialogElement): void {
-    if (!reactViewerAvailable() || reactViewMount) return;
+    if (reactViewMount) return;
+    if (!reactViewerAvailable()) throw new Error("reader_view_unavailable");
     const host = document.createElement("div");
     host.setAttribute("data-reader-react-root", "true");
     Object.assign(host.style, { position: "absolute", inset: "0", pointerEvents: "auto" });
     dialog.append(host);
-    reactViewMount = globalThis.ReaderReactViewer?.mount(host) || null;
+    const viewer = globalThis.ReaderReactViewer;
+    if (!viewer) throw new Error("reader_view_unavailable");
+    reactViewMount = viewer.mount(host);
   }
 
   function unmountReactViewer(): void {
@@ -137,6 +141,7 @@
       resumeFigure: advanceFromFigure,
       figureLoad: (figureIndex: number) => settleReactFigure(figureIndex, true),
       figureError: (figureIndex: number) => settleReactFigure(figureIndex, false),
+      toggleFigureBrightness: (figureIndex: number) => toggleReactFigureBrightness(figureIndex),
       textScroll: (element: HTMLElement) => {
         textScroller = element;
         updateTextPosition(element, textPositionMarkers);
@@ -147,8 +152,7 @@
 
   function reactViewModel(): ReactReaderViewModel {
     if (activePreparation.kind === "preparing") {
-      const elapsed = loadingStartedAt === null ? 0 : Date.now() - loadingStartedAt;
-      return { kind: "loading", slow: elapsed >= SLOW_PREPARATION_DELAY_MS, reducedMotion: prefersReducedMotion() };
+      return { kind: "loading", slow: loadingSlowVisible, reducedMotion: prefersReducedMotion() };
     }
     if (activePreparation.kind === "failed") {
       return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: activePreparation.reason !== "session_unavailable" };
@@ -173,7 +177,13 @@
       ? figureViewState.kind
       : figure ? "loading" : null;
     const figureView = figureIndex !== null && figure && figureState
-      ? { figure, figureIndex, status: figureState }
+      ? {
+        figure,
+        figureIndex,
+        status: figureState,
+        loadingVisible: figureState === "loading" && figureLoadRevealTimerId === null,
+        brightness: figureViewState.kind === "ready" ? figureViewState.brightness : "dimmed",
+      }
       : null;
     const position = state?.position || currentPosition;
     return {
@@ -191,9 +201,22 @@
 
   function settleReactFigure(figureIndex: number, loaded: boolean): void {
     if (figureViewState.kind === "idle" || figureViewState.figureIndex !== figureIndex) return;
+    if (figureLoadRevealTimerId !== null) {
+      globalThis.clearTimeout(figureLoadRevealTimerId);
+      figureLoadRevealTimerId = null;
+    }
     figureViewState = loaded
-      ? { kind: "ready", token: figureViewState.token, figureIndex, brightness: "revealed" }
+      ? { kind: "ready", token: figureViewState.token, figureIndex, brightness: "dimmed" }
       : { kind: "failed", token: figureViewState.token, figureIndex };
+    renderReactView(reactViewModel());
+  }
+
+  function toggleReactFigureBrightness(figureIndex: number): void {
+    if (figureViewState.kind !== "ready" || figureViewState.figureIndex !== figureIndex) return;
+    figureViewState = {
+      ...figureViewState,
+      brightness: figureViewState.brightness === "revealed" ? "dimmed" : "revealed",
+    };
     renderReactView(reactViewModel());
   }
 
@@ -281,6 +304,7 @@
       : null);
     activeRequestId = requestId;
     activePreparation = { kind: "preparing", requestId, startedAt: Date.now() };
+    loadingSlowVisible = false;
     beginReaderSession(requestId);
     loadingStartedAt = Date.now();
     loadingRevealRequestId = requestId;
@@ -509,6 +533,7 @@
   function renderSessionState(): void {
     const state = sessionState;
     if (reactViewMount) {
+      prepareReactFigure(flowItems[sessionFlowIndex()]);
       renderReactView(reactViewModel());
       return;
     }
@@ -518,12 +543,12 @@
 
   function createLoadingOverlay() {
     if (loadingLayer) return;
-    root = createRoot();
     if (reactViewMount) {
       renderReactView(reactViewModel());
       attachKeydownListener();
       return;
     }
+    root = createRoot();
     loadingLayer = document.createElement("div");
     loadingLayer.setAttribute("data-reader-loading", "true");
     Object.assign(loadingLayer.style, {
@@ -574,6 +599,7 @@
   }
 
   function showSlowLoading(): void {
+    loadingSlowVisible = true;
     if (reactViewMount) {
       renderReactView(reactViewModel());
       focusAfterPaint(findCloseButton());
@@ -623,6 +649,7 @@
       globalThis.clearTimeout(loadingSlowTimerId);
       loadingSlowTimerId = null;
     }
+    loadingSlowVisible = false;
   }
 
   function cancelLoading(): void {
@@ -1523,7 +1550,6 @@
     if (!applyingSession) {
       dispatchSession({ type: "switchToText", position: currentPosition });
     }
-    pause();
     if (reactViewMount) {
       renderReactView(reactViewModel());
       attachKeydownListener();
@@ -2092,19 +2118,7 @@
     const item = flowItems[sessionFlowIndex()];
     if (!item) return true;
     if (reactViewMount) {
-      if (item.kind === "figure") {
-        const figure = figures[item.figureIndex];
-        if (figure) {
-          if (figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) {
-            figureViewState = { kind: "loading", token: ++figureLoadToken, figureIndex: item.figureIndex };
-          }
-          currentPosition = { kind: "figure", sourceOffset: figure.sourceOffset, figureIndex: item.figureIndex };
-        }
-      } else {
-        figureViewState = { kind: "idle" };
-        const unit = units[item.unitIndex];
-        if (unit) currentPosition = { kind: "text", sourceOffset: unit.start };
-      }
+      prepareReactFigure(item);
       renderReactView(reactViewModel());
       return item.kind === "figure";
     }
@@ -2119,6 +2133,27 @@
     renderCurrentUnit();
     updatePlayPauseButton();
     return false;
+  }
+
+  function prepareReactFigure(item: ReaderFlowItem | undefined): void {
+    if (!item || item.kind !== "figure") {
+      invalidateFigureLoad();
+      const unit = item?.kind === "unit" ? units[item.unitIndex] : null;
+      if (unit) currentPosition = { kind: "text", sourceOffset: unit.start };
+      return;
+    }
+    const figure = figures[item.figureIndex];
+    if (!figure) return;
+    if (figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) {
+      invalidateFigureLoad();
+      const token = ++figureLoadToken;
+      figureViewState = { kind: "loading", token, figureIndex: item.figureIndex };
+      figureLoadRevealTimerId = globalThis.setTimeout(() => {
+        figureLoadRevealTimerId = null;
+        if (figureViewState.kind === "loading" && figureViewState.token === token) renderReactView(reactViewModel());
+      }, 100);
+    }
+    currentPosition = { kind: "figure", sourceOffset: figure.sourceOffset, figureIndex: item.figureIndex };
   }
 
   function renderCurrentUnit() {
@@ -2524,7 +2559,7 @@
   }
 
   function togglePlayPause() {
-    if (figurePanel || (reactViewMount && readingSessionState()?.currentKind === "figure")) {
+    if (figurePanel || readingSessionState()?.currentKind === "figure") {
       advanceFromFigure();
       return;
     }
@@ -2741,6 +2776,7 @@
       readerShadow = null;
       rootStyle = null;
       loadingLayer = null;
+      loadingSlowVisible = false;
       loadingStatus = null;
       loadingCancelButton = null;
       previousContext = null;

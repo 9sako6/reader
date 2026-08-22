@@ -7,12 +7,16 @@ const vm = require("node:vm");
 const Engine = require("../../../.build/packages/engine/src/engine.js");
 const Extractor = require("../../../.build/packages/extractor/src/extractor.js");
 const ReaderIcons = require("../../../.build/packages/icons/src/icons.js");
+const ReaderViewBundle = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "reader-view", "reader-view.js"), "utf8");
 
 class FakeElement {
   [key: string]: any;
 
   constructor(tagName, textContent = "") {
     this.tagName = tagName.toUpperCase();
+    this.nodeType = tagName === "#shadow-root" ? 11 : tagName === "#text" ? 3 : 1;
+    this.nodeName = this.tagName;
+    this.namespaceURI = "http://www.w3.org/1999/xhtml";
     this.textContent = textContent;
     this.style = {};
     this.attributes = {};
@@ -37,6 +41,18 @@ class FakeElement {
     this.closeCalls = 0;
   }
 
+  get parentNode() {
+    return this.parent;
+  }
+
+  get childNodes() {
+    return this.children;
+  }
+
+  get isConnected() {
+    return Boolean(this.parent) || this.nodeType === 9;
+  }
+
   append(...children) {
     for (const child of children) {
       child.parent = this;
@@ -45,8 +61,34 @@ class FakeElement {
     }
   }
 
+  appendChild(child) {
+    this.append(child);
+    return child;
+  }
+
+  insertBefore(child, before) {
+    child.parent = this;
+    child.ownerDocument ||= this.ownerDocument;
+    const index = this.children.indexOf(before);
+    if (index < 0) this.children.push(child);
+    else this.children.splice(index, 0, child);
+    return child;
+  }
+
+  removeChild(child) {
+    if (!this.children.includes(child)) throw new Error("child is not attached");
+    child.remove();
+    return child;
+  }
+
   setAttribute(name, value) {
     this.attributes[name] = value;
+    if (name === "hidden") this.hidden = true;
+    if (name === "disabled") this.disabled = true;
+  }
+
+  setAttributeNS(_namespace, name, value) {
+    this.setAttribute(name, value);
   }
 
   getAttribute(name) {
@@ -55,6 +97,36 @@ class FakeElement {
 
   hasAttribute(name) {
     return Object.prototype.hasOwnProperty.call(this.attributes, name);
+  }
+
+  removeAttribute(name) {
+    delete this.attributes[name];
+    if (name === "hidden") this.hidden = false;
+    if (name === "disabled") this.disabled = false;
+  }
+
+  get firstChild() {
+    return this.children[0] || null;
+  }
+
+  get nextSibling() {
+    if (!this.parent) return null;
+    const index = this.parent.children.indexOf(this);
+    return index >= 0 ? this.parent.children[index + 1] || null : null;
+  }
+
+  querySelectorAll(selector) {
+    const selectors = selector.split(",").map((value) => value.trim());
+    return findElements(this, (element) => selectors.some((candidate) => {
+      const attribute = candidate.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/u);
+      if (attribute) return element.getAttribute(attribute[1]) === (attribute[2] === undefined ? element.getAttribute(attribute[1]) : attribute[2]);
+      if (/^[a-z]+$/iu.test(candidate)) return element.tagName.toLowerCase() === candidate.toLowerCase();
+      return false;
+    }));
+  }
+
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] || null;
   }
 
   addEventListener(type, listener) {
@@ -72,7 +144,10 @@ class FakeElement {
 
   dispatchEvent(event) {
     event.target ||= this;
+    event.bubbles ??= true;
+    event.currentTarget = this;
     for (const listener of this.listeners.get(event.type) || []) listener(event);
+    if (event.bubbles && !event.cancelBubble && this.parent) this.parent.dispatchEvent(event);
   }
 
   animate(keyframes, options) {
@@ -152,6 +227,55 @@ function findElements(root, predicate) {
   if (root.shadowRoot) matches.push(...findElements(root.shadowRoot, predicate));
   for (const child of root.children) matches.push(...findElements(child, predicate));
   return matches;
+}
+
+function loadReaderView(context, document) {
+  document.nodeType = 9;
+  document.defaultView = context;
+  document.body ||= document.documentElement;
+  document.documentElement.ownerDocument ||= document;
+  const createElement = document.createElement;
+  document.createElement = (tagName) => {
+    const element = createElement.call(document, tagName);
+    element.ownerDocument ||= document;
+    return element;
+  };
+  document.createTextNode ||= (text) => {
+    const node = new FakeElement("#text", text);
+    node.ownerDocument = document;
+    node.nodeValue = text;
+    return node;
+  };
+  const createElementNS = document.createElementNS;
+  document.createElementNS = (namespace, tagName) => {
+    const element = createElementNS.call(document, namespace, tagName);
+    element.ownerDocument = document;
+    return element;
+  };
+  context.window = context;
+  context.self = context;
+  context.Node = FakeElement;
+  context.HTMLIFrameElement = class {};
+  context.navigator ||= { userAgent: "reader-test" };
+  context.innerWidth ||= 1000;
+  context.performance ||= { now: () => 0 };
+  context.queueMicrotask ||= (callback) => callback();
+  class FakeMessageChannel {
+    port1: { onmessage: ((event: unknown) => void) | null };
+    port2: { postMessage: () => void };
+
+    constructor() {
+      this.port1 = { onmessage: null };
+      this.port2 = {
+        postMessage: () => this.port1.onmessage?.({ data: null }),
+      };
+    }
+  }
+  context.MessageChannel ||= FakeMessageChannel;
+  context.addEventListener ||= (...args) => document.addEventListener(...args);
+  context.removeEventListener ||= (...args) => document.removeEventListener(...args);
+  context.dispatchEvent ||= (...args) => document.dispatchEvent(...args);
+  vm.runInNewContext(ReaderViewBundle, context);
 }
 
 function revealLoading(timers) {
@@ -449,6 +573,7 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
   });
   context.globalThis = context;
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
+  loadReaderView(context, document);
   vm.runInNewContext(source, context);
 
   return {
@@ -1779,6 +1904,7 @@ function createTimingReaderHarness(engine = Engine) {
     },
   };
   context.globalThis = context;
+  loadReaderView(context, document);
   vm.runInNewContext(source, context);
 
   return { document, messageListener, timers };
@@ -2035,6 +2161,7 @@ function createFigureReaderHarness() {
   };
   context.globalThis = context;
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
+  loadReaderView(context, document);
   vm.runInNewContext(source, context);
 
   return {
