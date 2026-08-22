@@ -7,3 +7,5 @@ xcuserdata/
 apps/chrome/dist/
 artifacts/
 apps/ios/ReaderExtension/Resources/generated/
+playwright-report/
+test-results/

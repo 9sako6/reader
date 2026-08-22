@@ -39,9 +39,39 @@ jobs:
       - name: Test
         run: mise run test
 
+  e2e:
+    name: Chromium viewer E2E
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain
+        uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          install_args: node pnpm
+          cache: false
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install Chromium
+        run: pnpm exec playwright install chromium
+      - name: Run Chromium E2E
+        run: mise run test:e2e -- --project=chromium
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chromium-e2e-diagnostics
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+
   ios:
-    name: iOS Simulator build
-    runs-on: macos-latest
+    name: iOS build and WebKit viewer E2E
+    runs-on: macos-15
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -55,6 +85,10 @@ jobs:
           cache: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install WebKit
+        run: pnpm exec playwright install webkit
+      - name: Run generated viewer E2E in WebKit
+        run: mise run test:e2e -- --project=webkit
       - name: Build for iOS Simulator
         run: >-
           xcodebuild
@@ -65,3 +99,12 @@ jobs:
           -derivedDataPath DerivedData
           CODE_SIGNING_ALLOWED=NO
           build
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: webkit-e2e-diagnostics
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore

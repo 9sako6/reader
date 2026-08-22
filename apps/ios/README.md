@@ -22,6 +22,8 @@ mise exec -- xcodegen generate --spec apps/ios/project.yml
 
 無料のPersonal Teamで署名したアプリは有効期限が切れるため、その場合はXcodeから再度実行します。開発中の変更を実機へ反映するときはXcodeのProduct > Runを使い、完了後に対象のSafariページを再読み込みします。
 
+リリース前のSafari固有の確認項目は[Safari拡張のリリースチェックリスト](ReaderExtension/RELEASE_CHECKLIST.md)にまとめています。
+
 ## 構成
 
 - [iOSホストアプリ](ReaderApp/README.md)

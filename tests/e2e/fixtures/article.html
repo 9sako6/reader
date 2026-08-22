@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>実ブラウザ検証用の記事</title>
+    <style>
+      * { box-sizing: content-box !important; }
+      button { min-width: 180px !important; min-height: 12px !important; background: rgb(255, 0, 128) !important; color: rgb(0, 64, 0) !important; }
+      img { width: 12px !important; height: 12px !important; }
+      body { margin: 0; color: #202020; font-family: serif; }
+      article { width: min(42rem, calc(100% - 40px)); margin: 80px auto; font-size: 18px; line-height: 1.8; }
+      #launch-chrome { margin: 20px; }
+    </style>
+  </head>
+  <body>
+    <button id="launch-chrome" type="button">Chrome readerを開く</button>
+    <article>
+      <h1>実ブラウザで読む</h1>
+      <p>最初の短い文です。次の文は注視位置が動かないことを確かめます。</p>
+      <h2>画像のある節</h2>
+      <p>画像の直前にある文です。</p>
+      <figure>
+        <img src="/apps/ios/tests/fixtures/reading-flow.svg" alt="本文の読書フロー図" style="width: 600px !important; height: auto !important">
+        <figcaption>読書フローの図</figcaption>
+      </figure>
+      <blockquote>引用も本文として読み取ります。</blockquote>
+      <p>画像の後に続く文章です。最後まで操作できます。</p>
+    </article>
+    <script>
+      const parameters = new URLSearchParams(location.search);
+      const viewer = parameters.get("viewer") || "chrome";
+      const loadedScripts = [];
+
+      function loadScript(source) {
+        return new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = source;
+          script.onload = resolve;
+          script.onerror = reject;
+          document.head.append(script);
+        });
+      }
+
+      function fixtureContent() {
+        const leading = "最初の短い文です。次の文は注視位置が動かないことを確かめます。画像の直前にある文です。";
+        const caption = "読書フローの図";
+        const trailing = "画像の後に続く文章です。最後まで操作できます。";
+        const figureOffset = leading.length + 1;
+        const trailingOffset = figureOffset + caption.length + 1;
+        const text = `${leading}\n${caption}\n${trailing}`;
+        return {
+          text,
+          readingContext: {
+            title: "実ブラウザで読む",
+            blocks: [
+              { text: leading, kind: "paragraph", level: null, start: 0, end: leading.length },
+              { text: trailing, kind: "paragraph", level: null, start: trailingOffset, end: text.length },
+            ],
+            headings: [{ text: "実ブラウザで読む", level: 1 }],
+            sectionOffsets: [],
+            sectionTransitions: [],
+            initialHeadingIndex: 0,
+            figures: [{
+              src: new URL("/apps/ios/tests/fixtures/reading-flow.svg", location.href).href,
+              alt: "本文の読書フロー図",
+              caption,
+              sourceOffset: figureOffset,
+              sourceEnd: figureOffset + caption.length,
+            }],
+          },
+        };
+      }
+
+      async function installChromeViewer() {
+        const messageListeners = [];
+        const chromeGlobal = globalThis.chrome || {};
+        chromeGlobal.runtime = {
+          onMessage: {
+            addListener(listener) {
+              messageListeners.push(listener);
+            },
+          },
+        };
+        globalThis.chrome = chromeGlobal;
+        for (const source of [
+          "/apps/chrome/dist/vendor/defuddle/defuddle.js",
+          "/apps/chrome/dist/engine.js",
+          "/apps/chrome/dist/extractor.js",
+          "/apps/chrome/dist/icons.js",
+          "/apps/chrome/dist/viewer.js",
+        ]) {
+          await loadScript(source);
+          loadedScripts.push(source);
+        }
+        const open = () => {
+          const { text, readingContext } = fixtureContent();
+          for (const listener of messageListeners) listener({ type: "SHOW_RSVP_LOADING", requestId: "e2e" });
+          for (const listener of messageListeners) listener({ type: "START_RSVP", requestId: "e2e", text, readingContext });
+        };
+        document.querySelector("#launch-chrome").addEventListener("click", open);
+        return { open, extract: () => globalThis.Extractor.fromPage(document, globalThis.Defuddle) };
+      }
+
+      async function installMobileViewer() {
+        for (const source of [
+          "/apps/ios/ReaderExtension/Resources/generated/defuddle.js",
+          "/apps/ios/ReaderExtension/Resources/generated/engine.js",
+          "/apps/ios/ReaderExtension/Resources/generated/extractor.js",
+          "/apps/ios/ReaderExtension/Resources/generated/icons.js",
+          "/apps/ios/ReaderExtension/Resources/generated/viewer.js",
+          "/apps/ios/ReaderExtension/Resources/generated/bootstrap.js",
+        ]) {
+          await loadScript(source);
+          loadedScripts.push(source);
+        }
+        const extractFromPage = globalThis.Extractor.fromPage;
+        const extract = () => extractFromPage(document, globalThis.Defuddle);
+        globalThis.Extractor.fromPage = () => fixtureContent();
+        return { open: () => globalThis.MobileViewer.open(), extract };
+      }
+
+      globalThis.ReaderE2EReady = (viewer === "mobile" ? installMobileViewer() : installChromeViewer())
+        .then((api) => {
+          globalThis.ReaderE2E = {
+            ...api,
+            loadedScripts,
+          };
+        });
+    </script>
+  </body>
+</html>

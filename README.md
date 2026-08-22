@@ -11,6 +11,13 @@ mise run check
 mise run test
 ```
 
+実ブラウザのviewer E2Eを初めて実行するときは、Playwrightのブラウザをインストールします。
+
+```sh
+pnpm exec playwright install chromium webkit
+mise run test:e2e
+```
+
 ## 構成
 
 - [Chrome拡張](apps/chrome/README.md)

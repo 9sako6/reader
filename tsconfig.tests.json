@@ -8,7 +8,9 @@
   },
   "include": [
     "apps/*/tests/**/*.test.ts",
-    "packages/*/tests/**/*.test.ts"
+    "packages/*/tests/**/*.test.ts",
+    "tests/e2e/**/*.ts",
+    "playwright.config.ts"
   ],
   "exclude": []
 }

@@ -1,8 +1,8 @@
 [tools]
-gh = "2.97.0"
+gh = "2.98.0"
 jq = "1.8.2"
-node = "26.5.1"
-pnpm = "11.18.0"
+node = "26.7.0"
+pnpm = "11.22.0"
 xcodegen = "2.46.0"
 
 [tasks.compile]
@@ -87,6 +87,11 @@ run = [{ task = "typecheck" }]
 description = "Build and test reader"
 depends = ["build"]
 run = "pnpm exec vitest run"
+
+[tasks."test:e2e"]
+description = "Run the real-browser viewer tests"
+depends = ["build"]
+run = "pnpm exec playwright test"
 
 [tasks."release:chrome"]
 description = "Release the current Chrome version"

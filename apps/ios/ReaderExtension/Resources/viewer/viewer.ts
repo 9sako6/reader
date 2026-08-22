@@ -64,6 +64,7 @@
   let lastLeftTapX = 0;
   let lastLeftTapY = 0;
   let textFigureOffset: number | null = null;
+  let launchFocus: HTMLElement | null = null;
 
   function getNodes(): MobileNodes {
     if (!nodes) throw new Error("reader shell is not available");
@@ -74,7 +75,7 @@
     if (!global.document?.documentElement || global.document.getElementById(HOST_ID)) return;
     const host = global.document.createElement("div");
     host.id = HOST_ID;
-    const root = host.attachShadow({ mode: "closed" });
+    const root = host.attachShadow({ mode: "open" });
     shadow = root;
     root.append(createStyles());
     handle = createHandle();
@@ -139,8 +140,8 @@
       .rsvp-unit.quote::before { content: ""; position: absolute; z-index: -1; inset: -12px -16px; border-radius: 14px; background: rgba(255,255,255,.055); }
       .rsvp-unit.aside { color: var(--reader-secondary); }
       .rsvp-figure { position: absolute; z-index: 2; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 20px; background: var(--reader-background); touch-action: manipulation; }
-      .reader-image-surface { position: relative; width: fit-content; max-width: 100%; margin: 0 auto; overflow: hidden; border-radius: 12px; touch-action: manipulation; }
-      .reader-image-surface img { display: block; width: auto; max-width: 100%; object-fit: contain; }
+      .reader-image-surface { position: relative; width: min(100%, 720px); margin: 0 auto; overflow: hidden; border-radius: 12px; touch-action: manipulation; }
+      .reader-image-surface img { display: block; width: 100%; height: auto; object-fit: contain; }
       .reader-image-veil { position: absolute; inset: 0; background: rgba(0,0,0,.46); opacity: 1; pointer-events: none; transition: opacity 120ms ease-out; }
       .rsvp-figure .reader-image-surface img { max-height: 54vh; }
       .rsvp-figure figcaption { min-height: 1.4em; color: var(--reader-muted); font-size: 13px; line-height: 1.4; text-align: center; }
@@ -166,6 +167,7 @@
   async function open() {
     if (overlay || opening || !handle || !shadow) return;
     opening = true;
+    launchFocus = handle;
     sourceScrollY = global.scrollY || 0;
     sourceOverflow = global.document.documentElement.style.overflow;
     sourceBodyOverflow = global.document.body?.style.overflow ?? null;
@@ -197,12 +199,16 @@
     } else launchProgress.animation?.cancel?.();
     overlay = buildShell();
     shadow.append(overlay);
+    global.addEventListener("keydown", handleKeyDown);
     launchProgress.element.remove();
     lockSourcePage();
     if (preparationError) {
       showError();
       global.console?.error?.("reader could not prepare this page", preparationError);
     } else renderReader();
+    global.requestAnimationFrame(() => {
+      overlay?.querySelector?.<HTMLButtonElement>('[aria-label="readerを閉じる"]')?.focus();
+    });
     opening = false;
   }
 
@@ -282,6 +288,7 @@
     reader.className = "reader";
     reader.setAttribute("role", "dialog");
     reader.setAttribute("aria-label", "reader");
+    reader.setAttribute("aria-modal", "true");
     const topbar = global.document.createElement("header");
     topbar.className = "topbar";
     const modeButton = transportButton("", toggleMode);
@@ -609,6 +616,7 @@
     previousUnit.setAttribute("aria-hidden", "true");
     const unit = global.document.createElement("div");
     unit.className = "rsvp-unit";
+    unit.setAttribute("data-reader-unit", "true");
     const nextUnit = global.document.createElement("div");
     nextUnit.className = "context-unit next";
     nextUnit.setAttribute("aria-hidden", "true");
@@ -1056,7 +1064,29 @@
     if (global.document.body) global.document.body.style.overflow = "hidden";
   }
 
+  function handleKeyDown(event: KeyboardEvent): void {
+    if (!overlay || event.repeat) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...overlay.querySelectorAll<HTMLElement>(
+      'button:not([hidden]):not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => element.getClientRects().length > 0);
+    if (focusable.length === 0) return;
+    const currentIndex = focusable.indexOf(shadow?.activeElement as HTMLElement);
+    let nextIndex = event.shiftKey ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0) nextIndex = event.shiftKey ? focusable.length - 1 : 0;
+    if (nextIndex < 0) nextIndex = focusable.length - 1;
+    if (nextIndex >= focusable.length) nextIndex = 0;
+    event.preventDefault();
+    focusable[nextIndex]?.focus();
+  }
+
   function close() {
+    const restoreFocus = launchFocus;
     clearPendingLeftTap();
     lastLeftTapAt = 0;
     hideTransportControls();
@@ -1072,10 +1102,13 @@
     mode = "rsvp";
     nodes = null;
     opening = false;
+    global.removeEventListener?.("keydown", handleKeyDown);
     global.document.documentElement.style.overflow = sourceOverflow ?? "";
     if (global.document.body && sourceBodyOverflow !== null) global.document.body.style.overflow = sourceBodyOverflow;
     if (handle) handle.hidden = false;
     global.scrollTo({ top: sourceScrollY, left: 0, behavior: "auto" });
+    launchFocus = null;
+    restoreFocus?.focus?.();
   }
 
   function fadeHandleDuringScroll() {

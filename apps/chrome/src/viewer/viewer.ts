@@ -16,6 +16,7 @@
   let playbackState: PlaybackState = "idle";
   let timerId: number | null = null;
   let root: HTMLDivElement | null = null;
+  let rootHost: HTMLDivElement | null = null;
   let rootStyle: HTMLStyleElement | null = null;
   let loadingLayer: HTMLDivElement | null = null;
   let previousContext: HTMLDivElement | null = null;
@@ -38,6 +39,7 @@
   let sourceText = "";
   let blocks: ReaderBlock[] = [];
   let currentOffset = 0;
+  let launchFocus: HTMLElement | null = null;
 
   function isReaderMessage(value: unknown): value is ReaderMessage {
     if (typeof value !== "object" || value === null || !("type" in value)) return false;
@@ -65,7 +67,11 @@
   });
 
   function showLoading(requestId: string): void {
+    const activeElement = document.activeElement;
     close();
+    launchFocus = activeElement && typeof (activeElement as HTMLElement).focus === "function"
+      ? activeElement as HTMLElement
+      : null;
     activeRequestId = requestId;
     createLoadingOverlay();
   }
@@ -170,12 +176,13 @@
     status.append(indicator, note);
     loadingLayer.append(status, closeButton);
     root.append(loadingLayer);
-    document.documentElement.append(root);
+    if (rootHost) document.documentElement.append(rootHost);
+    globalThis.requestAnimationFrame?.(() => closeButton.focus());
   }
 
   function showError(requestId: string): void {
     if (requestId !== activeRequestId || !root) return;
-    root.replaceChildren();
+    root.replaceChildren(...(rootStyle ? [rootStyle] : []));
 
     const status = document.createElement("div");
     status.textContent = "文章を読み込めませんでした";
@@ -196,6 +203,7 @@
       transform: "translateX(-50%)",
     });
     root.append(status, closeButton);
+    globalThis.requestAnimationFrame?.(() => closeButton.focus());
   }
 
   function collectReadingContext(sourceText: string): Partial<ReadingContext> {
@@ -276,7 +284,7 @@
   function createOverlay() {
     if (!root) {
       root = createRoot();
-      document.documentElement.append(root);
+      if (rootHost) document.documentElement.append(rootHost);
     }
 
     const stage = document.createElement("div");
@@ -309,6 +317,7 @@
     previousContext = createContext("previous");
 
     display = document.createElement("div");
+    display.setAttribute("data-reader-unit", "true");
     Object.assign(display.style, {
       position: "absolute",
       left: "50%",
@@ -363,6 +372,9 @@
     stage.append(main);
     revealReader(stage);
     document.addEventListener("keydown", handleKeyDown);
+    globalThis.requestAnimationFrame?.(() => {
+      root?.querySelector?.<HTMLButtonElement>('[aria-label="readerを閉じる"]')?.focus();
+    });
 
     if (typeof globalThis.ResizeObserver === "function") {
       displayResizeObserver = new globalThis.ResizeObserver(fitDisplayText);
@@ -524,12 +536,16 @@
   }
 
   function createRoot() {
+    const host = document.createElement("div");
+    host.id = ROOT_ID;
+    rootHost = host;
     const element = document.createElement("div");
-    element.id = ROOT_ID;
+    element.setAttribute("role", "dialog");
+    element.setAttribute("aria-modal", "true");
+    element.setAttribute("aria-label", "reader");
     Object.assign(element.style, {
-      position: "fixed",
+      position: "absolute",
       inset: "0",
-      zIndex: "2147483647",
       background: "radial-gradient(circle at 68% 44%, rgba(44,44,44,0.32), transparent 38%), #090909",
       color: "#ffffff",
       fontFamily:
@@ -538,20 +554,23 @@
     });
     const style = document.createElement("style");
     style.textContent = `
-      #${ROOT_ID} nav::-webkit-scrollbar { display: none; }
-      #${ROOT_ID} nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-offset: -2px; }
+      :host { all: initial !important; position: fixed !important; inset: 0 !important; z-index: 2147483647 !important; display: block !important; }
+      nav::-webkit-scrollbar { display: none; }
+      nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-offset: -2px; }
       @media (max-width: 1080px) {
-        #${ROOT_ID} [data-reader-stage] { width: calc(100% - 32px) !important; height: calc(100% - 32px) !important; grid-template-columns: minmax(0, 1fr) !important; column-gap: 0 !important; }
-        #${ROOT_ID} [data-reader-minimap] { display: none !important; }
+        [data-reader-stage] { width: calc(100% - 32px) !important; height: calc(100% - 32px) !important; grid-template-columns: minmax(0, 1fr) !important; column-gap: 0 !important; }
+        [data-reader-minimap] { display: none !important; }
       }
       @media (max-width: 720px) {
-        #${ROOT_ID} [data-reader-stage] { width: 100% !important; height: 100% !important; }
-        #${ROOT_ID} [data-reader-text-shell] { width: 100% !important; height: 100% !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
-        #${ROOT_ID} [data-reader-text-scroller] { padding: 64px 20px 96px !important; }
+        [data-reader-stage] { width: 100% !important; height: 100% !important; }
+        [data-reader-text-shell] { width: 100% !important; height: 100% !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
+        [data-reader-text-scroller] { padding: 64px 20px 96px !important; }
       }
     `;
     rootStyle = style;
     element.append(style);
+    if (typeof host.attachShadow === "function") host.attachShadow({ mode: "open" }).append(element);
+    else host.append(element);
     return element;
   }
 
@@ -938,13 +957,14 @@
     surface.setAttribute("data-reader-image-surface", "true");
     Object.assign(surface.style, {
       position: "relative",
-      width: "fit-content",
-      maxWidth: "100%",
+      width: "min(100%, 720px)",
       margin: "0 auto",
       overflow: "hidden",
       borderRadius,
       touchAction: "manipulation",
     });
+    image.style.width = "100%";
+    image.style.height = "auto";
     image.style.maxHeight = maxHeight;
     const veil = document.createElement("div");
     veil.setAttribute("data-reader-image-veil", "true");
@@ -1326,7 +1346,17 @@
   }
 
   function handleKeyDown(event: KeyboardEvent): void {
-    if (!display || event.repeat || isEditableTarget(event.target)) return;
+    if (!root || event.repeat) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key === "Tab") {
+      trapFocus(event);
+      return;
+    }
+    if (!display || isEditableTarget(event.target)) return;
     if (event.code === "Space" || event.key === " ") {
       event.preventDefault();
       togglePlayPause();
@@ -1334,6 +1364,24 @@
       event.preventDefault();
       goBackOneSentence();
     }
+  }
+
+  function trapFocus(event: KeyboardEvent): void {
+    if (!root) return;
+    const focusable = [...root.querySelectorAll<HTMLElement>(
+      'button:not([hidden]):not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => element.getClientRects().length > 0);
+    if (focusable.length === 0) return;
+    const active = root.getRootNode() instanceof ShadowRoot
+      ? (root.getRootNode() as ShadowRoot).activeElement
+      : document.activeElement;
+    const currentIndex = focusable.indexOf(active as HTMLElement);
+    let nextIndex = event.shiftKey ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0) nextIndex = event.shiftKey ? focusable.length - 1 : 0;
+    if (nextIndex < 0) nextIndex = focusable.length - 1;
+    if (nextIndex >= focusable.length) nextIndex = 0;
+    event.preventDefault();
+    focusable[nextIndex]?.focus();
   }
 
   function isEditableTarget(target: EventTarget | null): boolean {
@@ -1380,6 +1428,7 @@
     displayResizeObserver = null;
     document.getElementById(ROOT_ID)?.remove();
     root = null;
+    rootHost = null;
     rootStyle = null;
     loadingLayer = null;
     previousContext = null;
@@ -1395,6 +1444,7 @@
   }
 
   function close() {
+    const restoreFocus = launchFocus;
     pause();
     removeOverlay();
     activeRequestId = null;
@@ -1409,5 +1459,9 @@
     sourceText = "";
     blocks = [];
     currentOffset = 0;
+    launchFocus = null;
+    if (restoreFocus && typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(() => restoreFocus.focus?.());
+    } else restoreFocus?.focus?.();
   }
 })();
