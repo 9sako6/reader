@@ -84,6 +84,21 @@
   let sessionEnabled = false;
   let applyingSession = false;
   let sessionLifecycleAttached = false;
+  let reactSpikeMount: ReaderReactMount | null = null;
+
+  function mountReactSpike(shadowRoot: ShadowRoot | null): void {
+    if (!shadowRoot || !globalThis.ReaderReactSpike || reactSpikeMount) return;
+    const host = document.createElement("div");
+    host.hidden = true;
+    host.setAttribute("data-reader-react-root", "true");
+    shadowRoot.append(host);
+    reactSpikeMount = globalThis.ReaderReactSpike.mount(host);
+  }
+
+  function unmountReactSpike(): void {
+    reactSpikeMount?.unmount();
+    reactSpikeMount = null;
+  }
 
   function readingSessionState(): ReaderSessionObservableState | null {
     return sessionState?.phase === "reading" ? sessionState : null;
@@ -1044,6 +1059,7 @@
     }
     if (readerShadow) readerShadow.append(style, dialog);
     else host.append(style, dialog);
+    mountReactSpike(readerShadow);
 
     root = dialog;
     root.addEventListener("focusin", rememberReaderFocus, true);
@@ -2555,6 +2571,7 @@
     }
     const host = rootHost;
     try {
+      unmountReactSpike();
       host?.remove();
     } finally {
       root = null;

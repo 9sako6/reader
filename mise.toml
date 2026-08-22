@@ -58,15 +58,19 @@ run = [
   "pnpm exec tsc -p tsconfig.tests.json",
 ]
 
+[tasks."build:react-spike"]
+description = "Bundle the React compatibility spike"
+run = "node scripts/build-react-spike.mjs"
+
 [tasks."build:chrome"]
 description = "Build the Chrome extension"
-depends = ["compile", "build:session-wasm", "build:session-licenses"]
+depends = ["compile", "build:react-spike", "build:session-wasm", "build:session-licenses"]
 run = '''
 rm -rf apps/chrome/dist
 install -d apps/chrome/dist/vendor/defuddle apps/chrome/dist/LICENSES
 cp apps/chrome/manifest.json apps/chrome/dist/manifest.json
 cp .build/apps/chrome/src/service-worker.js apps/chrome/dist/service-worker.js
-cp .build/packages/session-ts/src/session.js apps/chrome/dist/session.js
+node scripts/build-browser-session.mjs apps/chrome/dist/session.js
 cp .build/session-wasm/reader_session.js apps/chrome/dist/session-wasm.js
 cp .build/session-wasm/reader_session_bg.wasm apps/chrome/dist/reader_session_bg.wasm
 cp .build/apps/chrome/src/viewer/viewer.js apps/chrome/dist/viewer.js
@@ -107,13 +111,13 @@ test -f artifacts/chrome/SHA256SUMS
 
 [tasks."build:ios"]
 description = "Build the Safari extension resources"
-depends = ["compile", "build:session-wasm", "build:session-licenses"]
+depends = ["compile", "build:react-spike", "build:session-wasm", "build:session-licenses"]
 run = '''
 rm -rf apps/ios/ReaderExtension/Resources/generated
 install -d apps/ios/ReaderExtension/Resources/generated
 cp node_modules/defuddle/dist/index.js apps/ios/ReaderExtension/Resources/generated/defuddle.js
-cp .build/packages/session-ts/src/session.js apps/ios/ReaderExtension/Resources/generated/session.js
-node scripts/build-session-wasm-module.mjs
+node scripts/build-browser-session.mjs apps/ios/ReaderExtension/Resources/generated/session.js
+cp .build/session-wasm/reader_session.js apps/ios/ReaderExtension/Resources/generated/session-wasm.js
 cp .build/session-wasm/reader_session_bg.wasm apps/ios/ReaderExtension/Resources/generated/reader_session_bg.wasm
 cp .build/packages/engine/src/engine.js apps/ios/ReaderExtension/Resources/generated/engine.js
 cp .build/packages/extractor/src/extractor.js apps/ios/ReaderExtension/Resources/generated/extractor.js

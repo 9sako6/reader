@@ -88,6 +88,7 @@
   let sessionEnabled = false;
   let applyingSession = false;
   let sessionLifecycleAttached = false;
+  let reactSpikeMount: ReaderReactMount | null = null;
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
   let performanceUnitMarked = false;
@@ -117,6 +118,20 @@
 
   function markPerformance(name: string): void {
     global.performance?.mark?.(name);
+  }
+
+  function mountReactSpike(shadowRoot: ShadowRoot | null): void {
+    if (!shadowRoot || !globalThis.ReaderReactSpike || reactSpikeMount) return;
+    const root = global.document.createElement("div");
+    root.hidden = true;
+    root.setAttribute("data-reader-react-root", "true");
+    shadowRoot.append(root);
+    reactSpikeMount = globalThis.ReaderReactSpike.mount(root);
+  }
+
+  function unmountReactSpike(): void {
+    reactSpikeMount?.unmount();
+    reactSpikeMount = null;
   }
 
   function getNodes(): MobileNodes {
@@ -248,6 +263,7 @@
     activePreparation = { kind: "preparing", requestId: String(generation), startedAt: Date.now() };
     attachSessionLifecycle();
     beginReaderSession(String(generation));
+    mountReactSpike(shadow);
     launchFocus = handle;
     makeBackgroundInert(host);
     sourceScrollY = global.scrollY || 0;
@@ -1917,6 +1933,7 @@
   }
 
   function destroySessionState(): void {
+    unmountReactSpike();
     if (playbackTimer !== null) global.clearTimeout(playbackTimer);
     playbackTimer = null;
     clearPendingLeftTap();

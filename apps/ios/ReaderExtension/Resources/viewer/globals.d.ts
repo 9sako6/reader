@@ -4,6 +4,16 @@ declare global {
   var __READER_PERFORMANCE_ENABLED: boolean | undefined;
   var __READER_PERFORMANCE_LAST_METRICS: ReaderExtractionMetrics | undefined;
 
+  interface ReaderReactMount {
+    unmount(): void;
+  }
+
+  interface ReaderReactSpikeApi {
+    mount(host: Element): ReaderReactMount;
+  }
+
+  var ReaderReactSpike: ReaderReactSpikeApi | undefined;
+
   interface ReaderMobileViewer {
     install(): void;
     open(): Promise<void>;

@@ -61,9 +61,23 @@ for (const item of selectedPackages) {
   ].join("\n"));
 }
 
+for (const name of ["react", "react-dom"]) {
+  const packageRoot = join(repositoryRoot, "node_modules", name);
+  const packageJson = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
+  const licensePath = join(packageRoot, "LICENSE");
+  const text = await readFile(licensePath, "utf8");
+  if (!licenseTexts.has(text)) licenseTexts.set(text, { names: [], text });
+  licenseTexts.get(text).names.push(`${name}@${packageJson.version}/LICENSE`);
+  packageNotices.push([
+    `${name}@${packageJson.version}`,
+    `Declared license: ${packageJson.license || "not declared"}`,
+    "License files: LICENSE",
+  ].join("\n"));
+}
+
 const sections = [
-  "ReaderSession WASM dependency notices",
-  "Generated from Cargo.lock and the wasm32-unknown-unknown normal dependency tree.",
+  "ReaderSession WASM and JavaScript viewer dependency notices",
+  "Generated from Cargo.lock, the wasm32-unknown-unknown normal dependency tree, and the exact bundled React dependencies.",
   "",
   ...packageNotices,
   "",
