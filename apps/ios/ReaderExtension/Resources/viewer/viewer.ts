@@ -89,6 +89,7 @@
   let applyingSession = false;
   let sessionLifecycleAttached = false;
   let reactViewMount: ReaderReactViewerMount | null = null;
+  let reactViewHost: HTMLDivElement | null = null;
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
   let performanceUnitMarked = false;
@@ -124,14 +125,68 @@
     if (!shadowRoot || !globalThis.ReaderReactViewer || reactViewMount) return;
     const root = global.document.createElement("div");
     root.setAttribute("data-reader-react-root", "true");
+    Object.assign(root.style, { position: "absolute", inset: "0", pointerEvents: "auto" });
     shadowRoot.append(root);
     reactViewMount = globalThis.ReaderReactViewer.mount(root);
-    reactViewMount.render({ kind: "closed" }, {});
+    reactViewHost = root;
   }
 
   function unmountReactViewer(): void {
     reactViewMount?.unmount();
     reactViewMount = null;
+    reactViewHost = null;
+  }
+
+  function reactViewModel(): unknown {
+    if (activePreparation.kind === "preparing") {
+      const elapsed = Date.now() - activePreparation.startedAt;
+      return { kind: "loading", slow: elapsed >= SLOW_PREPARATION_DELAY_MS, reducedMotion: global.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true, mobile: true };
+    }
+    if (activePreparation.kind === "failed") {
+      return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: activePreparation.reason !== "session_unavailable", mobile: true };
+    }
+    const state = readingSessionState();
+    if (state?.mode === "text") {
+      return { kind: "text", blocks: content?.readingContext.blocks || fallbackBlocks(content?.text || ""), figures: content?.readingContext.figures || [], position: currentPosition, progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, title: content?.readingContext.title || global.document.title || "", mobile: true };
+    }
+    const item = state ? flowItems[state.flowIndex] : flowItems[0];
+    const unitIndex = state?.unitIndex ?? (item?.kind === "unit" ? item.unitIndex : 0);
+    const figureIndex = item?.kind === "figure" ? item.figureIndex : null;
+    const figure = figureIndex === null ? null : content?.readingContext.figures?.[figureIndex] || null;
+    const figureStatus = figure && figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.kind : figure ? "loading" : null;
+    const unit = item?.kind === "unit" ? units[unitIndex] || null : null;
+    const context = unit ? global.Engine.surroundingSentences(units, unitIndex) : { previous: "", next: "" };
+    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus } : null, playing: state?.playback === "playing", progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
+  }
+
+  function renderReactView(): void {
+    if (!reactViewMount) return;
+    reactViewMount.render(reactViewModel(), {
+      close,
+      cancel: () => close(),
+      retry,
+      switchToText: () => switchMode("text"),
+      switchToRsvp: () => switchMode("rsvp"),
+      previousSentence: goBackFromControl,
+      togglePlayback,
+      resumeFigure: advanceFromFigure,
+      figureLoad: (figureIndex: number) => settleReactFigure(figureIndex, true),
+      figureError: (figureIndex: number) => settleReactFigure(figureIndex, false),
+      textScroll: (element: HTMLElement) => {
+        if (!nodes || !content) return;
+        nodes.textScroller = element;
+        captureTextPosition(element, nodes.textMarkers, nodes.progress);
+      },
+      textPosition: () => undefined,
+    });
+  }
+
+  function settleReactFigure(figureIndex: number, loaded: boolean): void {
+    if (figureViewState.kind === "idle" || figureViewState.figureIndex !== figureIndex) return;
+    figureViewState = loaded
+      ? { kind: "ready", token: figureViewState.token, figureIndex, brightness: "revealed" }
+      : { kind: "failed", token: figureViewState.token, figureIndex };
+    renderReactView();
   }
 
   function getNodes(): MobileNodes {
@@ -264,7 +319,7 @@
     activePreparation = { kind: "preparing", requestId: String(generation), startedAt: Date.now() };
     attachSessionLifecycle();
     beginReaderSession(String(generation));
-    if (reactViewMount) reactViewMount.render({ kind: "closed" }, {});
+    renderReactView();
     launchFocus = handle;
     makeBackgroundInert(host);
     sourceScrollY = global.scrollY || 0;
@@ -347,7 +402,7 @@
       destroyLaunchProgress(progress);
       return;
     }
-    const reader = buildShell();
+    const reader = reactViewMount && reactViewHost ? reactViewHost : buildShell();
     if (!isCurrentSession(generation)) {
       reader.remove();
       destroyLaunchProgress(progress);
@@ -574,6 +629,10 @@
         reason,
       });
     }
+    if (reactViewMount) {
+      renderReactView();
+      return;
+    }
     getNodes().transport?.remove();
     getNodes().transport = null;
     getNodes().modeButton.hidden = true;
@@ -603,6 +662,14 @@
   }
 
   function renderReader(): void {
+    if (reactViewMount) {
+      renderReactView();
+      if (!performanceRenderMarked) {
+        performanceRenderMarked = true;
+        markPerformance("reader:first-render");
+      }
+      return;
+    }
     updateModeButton();
     if (sessionMode() === "rsvp") renderRsvpView();
     else renderTextView();
@@ -755,11 +822,19 @@
 
   function renderSessionState(): void {
     const state = sessionState;
+    if (reactViewMount) {
+      renderReactView();
+      return;
+    }
     if (!state || state.phase !== "reading" || state.mode !== "rsvp") return;
     renderFlowItem();
   }
 
   function renderTextView() {
+    if (reactViewMount) {
+      renderReactView();
+      return;
+    }
     if (!content) return;
     const scroller = global.document.createElement("div");
     scroller.className = "text-view";
@@ -1190,6 +1265,10 @@
   }
 
   function renderRsvpView() {
+    if (reactViewMount) {
+      renderReactView();
+      return;
+    }
     getNodes().textScroller = null;
     getNodes().textMarkers = [];
     getNodes().textRestoreScrollTop = null;
@@ -1268,6 +1347,21 @@
   function renderFlowItem(): boolean {
     const item = flowItems[sessionFlowIndex()];
     if (!item) return true;
+    if (reactViewMount) {
+      if (item.kind === "figure") {
+        const figure = content?.readingContext?.figures?.[item.figureIndex];
+        if (figure) {
+          if (figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) figureViewState = { kind: "loading", token: ++figureLoadToken, figureIndex: item.figureIndex };
+          currentPosition = { kind: "figure", sourceOffset: figure.sourceOffset, figureIndex: item.figureIndex };
+        }
+      } else {
+        figureViewState = { kind: "idle" };
+        const unit = units[item.unitIndex];
+        if (unit) currentPosition = { kind: "text", sourceOffset: unit.start };
+      }
+      renderReactView();
+      return item.kind === "figure";
+    }
     if (item.kind === "figure") {
       const figure = content?.readingContext?.figures?.[item.figureIndex];
       if (figure) {

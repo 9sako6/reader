@@ -2,8 +2,8 @@ import { createElement, type ReactElement, type ReactNode } from "react";
 
 export type ReaderViewModel =
   | { kind: "closed" }
-  | { kind: "loading"; slow: boolean; reducedMotion: boolean }
-  | { kind: "error"; message: string; canRetry: boolean }
+  | { kind: "loading"; slow: boolean; reducedMotion: boolean; mobile?: boolean }
+  | { kind: "error"; message: string; canRetry: boolean; mobile?: boolean }
   | {
     kind: "rsvp";
     previous: string;
@@ -14,6 +14,7 @@ export type ReaderViewModel =
     progress: number;
     headings: ReaderHeading[];
     activeHeadingIndex: number;
+    mobile?: boolean;
   }
   | {
     kind: "text";
@@ -22,6 +23,7 @@ export type ReaderViewModel =
     position: ReaderPosition;
     progress: number;
     title: string;
+    mobile?: boolean;
   };
 
 export type ReaderFigureView = {
@@ -96,6 +98,7 @@ function renderLoading(model: Extract<ReaderViewModel, { kind: "loading" }>, han
   const children: ReactNode[] = [
     createElement("div", {
       key: "bar",
+      className: model.mobile ? "launch-loader" : undefined,
       "data-reader-loading-bar": "true",
       "aria-hidden": "true",
       style: {
@@ -111,6 +114,7 @@ function renderLoading(model: Extract<ReaderViewModel, { kind: "loading" }>, han
         pointerEvents: "none",
       },
       children: createElement("div", {
+        className: "launch-progress-track",
         "data-reader-loading-indicator": "true",
         style: {
           width: "100%",
@@ -126,6 +130,7 @@ function renderLoading(model: Extract<ReaderViewModel, { kind: "loading" }>, han
   if (model.slow) {
     children.push(createElement("div", {
       key: "status",
+      className: model.mobile ? "launch-status" : undefined,
       "data-reader-loading-label": "true",
       role: "status",
       style: {
@@ -153,7 +158,7 @@ function renderLoading(model: Extract<ReaderViewModel, { kind: "loading" }>, han
       bottom: "24px",
     }));
   }
-  return createElement("div", { "data-reader-loading": "true", style: { position: "absolute", inset: "0", pointerEvents: model.slow ? "auto" : "none" }, children });
+  return createElement("div", { className: model.mobile ? "launch-feedback" : undefined, "data-reader-loading": "true", style: { position: "absolute", inset: "0", pointerEvents: model.slow ? "auto" : "none" }, children });
 }
 
 function renderError(model: Extract<ReaderViewModel, { kind: "error" }>, handlers: ReaderViewHandlers): ReactElement {
@@ -271,8 +276,63 @@ function renderText(model: Extract<ReaderViewModel, { kind: "text" }>, handlers:
   ] });
 }
 
+function renderMobileRsvp(model: Extract<ReaderViewModel, { kind: "rsvp" }>, handlers: ReaderViewHandlers): ReactElement {
+  const figure = model.figure
+    ? renderFigure(model.figure, handlers)
+    : createElement("div", { className: `rsvp-unit ${model.unit?.kind || "body"}`, "data-reader-unit": "true", "aria-live": "off", "aria-atomic": "false", children: model.unit?.text || "" });
+  return createElement("section", {
+    className: "reader",
+    role: "dialog",
+    "aria-label": "reader",
+    "aria-modal": "true",
+    children: [
+      createElement("header", { key: "topbar", className: "topbar", children: createElement("button", { className: "icon-button", type: "button", "aria-label": "readerを閉じる", onClick: handlers.close, children: "×" }) }),
+      createElement("footer", { key: "controlbar", className: "controlbar", children: [
+        createElement("button", { key: "mode", className: "mode-button", type: "button", onClick: handlers.switchToText, children: "文章で読む" }),
+        createElement("div", { key: "progress", className: "progress", children: `${model.progress}%` }),
+        createElement("div", { key: "transport", className: "control-dock", children: [
+          createElement("button", { key: "previous", className: "dock-button previous", type: "button", "aria-label": "1文戻る", "aria-keyshortcuts": "ArrowLeft", onClick: handlers.previousSentence, children: "1文戻る" }),
+          createElement("button", { key: "play", className: "dock-button play", type: "button", "aria-label": model.playing ? "一時停止" : "再生", "aria-pressed": String(model.playing), "aria-keyshortcuts": "Space", onClick: handlers.togglePlayback, children: model.playing ? "Ⅱ" : "▶" }),
+        ] }),
+      ] }),
+      createElement("main", { key: "content", className: "content", children: createElement("div", { className: "rsvp-view", children: createElement("div", { className: "focus-area", children: [
+        createElement("div", { key: "previous", className: "context-unit previous", "aria-hidden": "true", children: model.previous }),
+        figure,
+        createElement("div", { key: "next", className: "context-unit next", "aria-hidden": "true", children: model.next }),
+      ] }) }) }),
+    ],
+  });
+}
+
+function renderMobileText(model: Extract<ReaderViewModel, { kind: "text" }>, handlers: ReaderViewHandlers): ReactElement {
+  const blocks = model.blocks.map((block, index) => {
+    const tag = block.kind === "heading" ? `h${Math.min(6, Math.max(1, block.level || 2))}` : block.kind === "quote" ? "blockquote" : block.kind === "preformatted" ? "pre" : "p";
+    return createElement(tag, { key: `${block.start}-${index}`, className: tag === "p" ? "paragraph" : tag === "h1" ? "article-title" : undefined, "data-source-start": String(block.start), "data-source-end": String(block.end), children: block.text });
+  });
+  return createElement("section", {
+    className: "reader",
+    role: "dialog",
+    "aria-label": "reader",
+    "aria-modal": "true",
+    children: [
+      createElement("header", { key: "topbar", className: "topbar", children: createElement("button", { className: "icon-button", type: "button", "aria-label": "readerを閉じる", onClick: handlers.close, children: "×" }) }),
+      createElement("footer", { key: "controlbar", className: "controlbar", children: [createElement("button", { className: "mode-button", type: "button", onClick: handlers.switchToRsvp, children: "RSVPで読む" })] }),
+      createElement("main", { key: "content", className: "content", children: createElement("div", { className: "text-view", "data-reader-text-scroller": "true", onScroll: (event: { currentTarget: HTMLElement }) => handlers.textScroll(event.currentTarget), children: createElement("article", { className: "article", children: [model.title ? createElement("h1", { key: "title", className: "article-title", children: model.title }) : null, ...blocks] }) }) }),
+    ],
+  });
+}
+
+function renderMobile(model: ReaderViewModel, handlers: ReaderViewHandlers): ReactElement | null {
+  if (model.kind === "closed") return null;
+  if (model.kind === "loading") return renderLoading(model, handlers);
+  if (model.kind === "error") return renderError(model, handlers);
+  if (model.kind === "rsvp") return renderMobileRsvp(model, handlers);
+  return renderMobileText(model, handlers);
+}
+
 export function ReaderView({ model, handlers }: { model: ReaderViewModel; handlers: ReaderViewHandlers }): ReactElement | null {
   if (model.kind === "closed") return null;
+  if ("mobile" in model && model.mobile) return renderMobile(model, handlers);
   if (model.kind === "loading") return renderLoading(model, handlers);
   if (model.kind === "error") return renderError(model, handlers);
   if (model.kind === "rsvp") return renderRsvp(model, handlers);
