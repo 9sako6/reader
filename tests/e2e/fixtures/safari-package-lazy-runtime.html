@@ -23,7 +23,13 @@
         },
       };
     </script>
-    <script src="/apps/ios/ReaderExtension/Resources/generated/bootstrap.js"></script>
+    <script>
+      if (!new URLSearchParams(location.search).has("passive-control")) {
+        const bootstrap = document.createElement("script");
+        bootstrap.src = "/apps/ios/ReaderExtension/Resources/generated/bootstrap.js";
+        document.head.append(bootstrap);
+      }
+    </script>
   </head>
   <body>
     <article>
