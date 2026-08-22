@@ -139,6 +139,11 @@ description = "Record browser extraction and startup baselines"
 depends = ["build"]
 run = "node scripts/measure-performance.mjs"
 
+[tasks."measure:timing"]
+description = "Generate the Reader timing corpus report"
+depends = ["compile"]
+run = "node --experimental-strip-types scripts/report-reader-timing.mjs"
+
 [tasks.check]
 description = "Run static checks"
 run = [

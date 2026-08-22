@@ -13,13 +13,16 @@
   const QUOTE_PAIRS = new Map([["「","」"],["『","』"]]);
   const ASIDE_PAIRS = new Map([["（","）"],["(",")"]]);
   const SENTENCE_LEADING_OPENERS = new Set(["「", "『", "（", "(", "【", "〈", "《"]);
-  const BASE_UNIT_MS = 180;
-  const MS_PER_GRAPHEME = 24;
-  const MIN_UNIT_MS = 240;
-  const MAX_UNIT_MS = 600;
-  const CLAUSE_PAUSE_MS = 120;
-  const SENTENCE_PAUSE_MS = 360;
-  const SECTION_PAUSE_MS = 240;
+  const DEFAULT_TIMING_PROFILE: Readonly<ReaderTimingProfile> = Object.freeze({
+    baseUnitMs: 180,
+    msPerGrapheme: 24,
+    minUnitMs: 240,
+    maxUnitMs: 600,
+    clausePauseMs: 120,
+    sentencePauseMs: 360,
+    sectionPauseMs: 240,
+    speedMultiplier: 1,
+  });
 
   function graphemeCount(text: string, locale = "ja"): number {
     return [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(text)].length;
@@ -416,17 +419,57 @@
     };
   }
 
+  function normalizeTimingProfile(profile?: Partial<ReaderTimingProfile>): ReaderTimingProfile {
+    const candidate = profile && typeof profile === "object" ? profile : {};
+    const nonNegativeFinite = (value: unknown, fallback: number): number => (
+      typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback
+    );
+    const speedMultiplier = (
+      typeof candidate.speedMultiplier === "number"
+      && Number.isFinite(candidate.speedMultiplier)
+      && candidate.speedMultiplier > 0
+    )
+      ? candidate.speedMultiplier
+      : DEFAULT_TIMING_PROFILE.speedMultiplier;
+    const minUnitMs = nonNegativeFinite(candidate.minUnitMs, DEFAULT_TIMING_PROFILE.minUnitMs);
+    const maxUnitMs = nonNegativeFinite(candidate.maxUnitMs, DEFAULT_TIMING_PROFILE.maxUnitMs);
+    const boundedUnitRange = minUnitMs <= maxUnitMs
+      ? { minUnitMs, maxUnitMs }
+      : {
+        minUnitMs: DEFAULT_TIMING_PROFILE.minUnitMs,
+        maxUnitMs: DEFAULT_TIMING_PROFILE.maxUnitMs,
+      };
+    return {
+      baseUnitMs: nonNegativeFinite(candidate.baseUnitMs, DEFAULT_TIMING_PROFILE.baseUnitMs),
+      msPerGrapheme: nonNegativeFinite(candidate.msPerGrapheme, DEFAULT_TIMING_PROFILE.msPerGrapheme),
+      minUnitMs: boundedUnitRange.minUnitMs,
+      maxUnitMs: boundedUnitRange.maxUnitMs,
+      clausePauseMs: nonNegativeFinite(candidate.clausePauseMs, DEFAULT_TIMING_PROFILE.clausePauseMs),
+      sentencePauseMs: nonNegativeFinite(candidate.sentencePauseMs, DEFAULT_TIMING_PROFILE.sentencePauseMs),
+      sectionPauseMs: nonNegativeFinite(candidate.sectionPauseMs, DEFAULT_TIMING_PROFILE.sectionPauseMs),
+      speedMultiplier,
+    };
+  }
+
   function displayDuration(
     unit: Pick<ReaderUnit, "text" | "sentenceIndex">,
     nextUnit?: Pick<ReaderUnit, "sentenceIndex">,
     sectionBreak = false,
+    profile?: ReaderTimingProfile,
   ): number {
+    const timing = normalizeTimingProfile(profile);
     const graphemes = graphemeCount(unit?.text || "");
-    let duration = Math.min(MAX_UNIT_MS, Math.max(MIN_UNIT_MS, BASE_UNIT_MS + graphemes * MS_PER_GRAPHEME));
-    if (/[、，;；:：]\s*$/u.test(unit?.text || "")) duration += CLAUSE_PAUSE_MS;
-    if (nextUnit?.sentenceIndex !== undefined && nextUnit.sentenceIndex !== unit?.sentenceIndex) duration += SENTENCE_PAUSE_MS;
-    if (sectionBreak) duration += SECTION_PAUSE_MS;
-    return duration;
+    const base = Math.min(
+      timing.maxUnitMs,
+      Math.max(timing.minUnitMs, timing.baseUnitMs + graphemes * timing.msPerGrapheme),
+    );
+    let total = base;
+    if (/[、，;；:：]\s*$/u.test(unit?.text || "")) total += timing.clausePauseMs;
+    if (nextUnit?.sentenceIndex !== undefined && nextUnit.sentenceIndex !== unit?.sentenceIndex) {
+      total += timing.sentencePauseMs;
+    }
+    if (sectionBreak) total += timing.sectionPauseMs;
+    return Math.max(1, Math.round(total / timing.speedMultiplier));
   }
 
   function sourceOffsetAtViewportCenter(blocks: ReaderOffsetBlock[], viewportCenter: number): number {
@@ -466,6 +509,7 @@
   return {
     MAX_WORDS_PER_UNIT,
     MAX_GRAPHEMES_PER_UNIT,
+    DEFAULT_TIMING_PROFILE,
     segmentText,
     splitSentenceSpans,
     splitLongUnits,

@@ -25,6 +25,7 @@ declare global {
     clausePauseMs?: number;
     sentencePauseMs?: number;
     sectionPauseMs?: number;
+    speedMultiplier?: number;
   }
 
   type ReaderPosition =
@@ -50,6 +51,7 @@ declare global {
   interface ReaderEngine {
     readonly MAX_WORDS_PER_UNIT: number;
     readonly MAX_GRAPHEMES_PER_UNIT: number;
+    readonly DEFAULT_TIMING_PROFILE: Readonly<ReaderTimingProfile>;
     segmentText(text: string, locale?: string, boundaries?: number[]): ReaderUnit[];
     splitLongUnits(units: ReaderUnit[], locale?: string, maxGraphemes?: number): ReaderUnit[];
     splitSentenceSpans(text: string, locale?: string): SentenceSpan[];
@@ -63,7 +65,12 @@ declare global {
     calculateReadingProgress(currentEnd: number, sourceLength: number): number;
     findUnitIndex(units: ReaderUnit[], offset: number): number;
     surroundingSentences(units: ReaderUnit[], currentIndex: number): { previous: string; next: string };
-    displayDuration(unit: Pick<ReaderUnit, "text" | "sentenceIndex">, nextUnit?: Pick<ReaderUnit, "sentenceIndex">, sectionBreak?: boolean): number;
+    displayDuration(
+      unit: Pick<ReaderUnit, "text" | "sentenceIndex">,
+      nextUnit?: Pick<ReaderUnit, "sentenceIndex">,
+      sectionBreak?: boolean,
+      profile?: ReaderTimingProfile,
+    ): number;
     sourceOffsetAtViewportCenter(blocks: ReaderOffsetBlock[], viewportCenter: number): number;
     findBlockIndexForOffset(blocks: ReaderOffsetBlock[], offset: number): number;
   }
