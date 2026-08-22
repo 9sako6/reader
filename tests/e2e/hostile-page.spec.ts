@@ -9,6 +9,11 @@ async function loadChromeViewer(page: Page): Promise<void> {
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
 }
 
+async function loadMobileViewer(page: Page): Promise<void> {
+  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&pageHost=true");
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+}
+
 async function openChromeViewer(page: Page, options: ChromeOpenOptions = {}): Promise<void> {
   await page.evaluate((openOptions) => {
     (globalThis as typeof globalThis & {
@@ -135,4 +140,85 @@ test("Chrome reader preserves a page-owned root id and does not duplicate its ho
   await reopenedReader.getByRole("button", { name: "readerを閉じる" }).click();
   await expect(page.locator('[data-reader-owned="true"]')).toHaveCount(0);
   await expect(page.locator("#__rsvp-reader-root")).toHaveText("元ページの要素");
+});
+
+test("Safari reader isolates hostile page styles and preserves a page-owned host across reopen", async ({ page }) => {
+  await loadMobileViewer(page);
+  await page.evaluate(() => {
+    const style = document.createElement("style");
+    style.textContent = `
+      * { box-sizing: content-box !important; }
+      button { font-size: 2px !important; padding: 100px !important; }
+      img { width: 1px !important; filter: invert(1) !important; }
+      svg { position: fixed !important; }
+      html { writing-mode: vertical-rl; color-scheme: light; }
+    `;
+    document.head.append(style);
+
+    (globalThis as typeof globalThis & { hostileCaptureClicks: number }).hostileCaptureClicks = 0;
+    document.addEventListener("click", (event) => {
+      (globalThis as typeof globalThis & { hostileCaptureClicks: number }).hostileCaptureClicks += 1;
+      event.preventDefault();
+    }, true);
+  });
+
+  const launchButton = page.getByRole("button", { name: "readerで読む" });
+  await launchButton.click();
+  const reader = page.getByRole("dialog", { name: "reader" });
+  await expect(reader).toBeVisible();
+
+  const isolation = await page.evaluate(() => {
+    const host = document.querySelector('[data-reader-owned="true"]');
+    const readerElement = host?.shadowRoot?.querySelector<HTMLElement>(".reader");
+    const closeButton = readerElement?.querySelector<HTMLElement>('[aria-label="readerを閉じる"]');
+    const pageOwnedHost = document.querySelector("#__reader-host");
+    if (!host || !readerElement || !closeButton || !pageOwnedHost) {
+      throw new Error("Safari hostile-page fixture did not mount the expected nodes");
+    }
+    const buttonStyle = getComputedStyle(closeButton);
+    const readerStyle = getComputedStyle(readerElement);
+    return {
+      ownedHostCount: document.querySelectorAll('[data-reader-owned="true"]').length,
+      hostPointerEvents: getComputedStyle(host).pointerEvents,
+      readerPointerEvents: readerStyle.pointerEvents,
+      readerWritingMode: readerStyle.writingMode,
+      closeButtonFontSize: buttonStyle.fontSize,
+      closeButtonPaddingTop: buttonStyle.paddingTop,
+      closeButtonWidth: closeButton.getBoundingClientRect().width,
+      closeButtonHeight: closeButton.getBoundingClientRect().height,
+      pageOwnedHostText: pageOwnedHost.textContent,
+    };
+  });
+
+  expect(isolation.ownedHostCount).toBe(1);
+  expect(isolation.hostPointerEvents).toBe("none");
+  expect(isolation.readerPointerEvents).toBe("auto");
+  expect(isolation.readerWritingMode).toBe("horizontal-tb");
+  expect(isolation.closeButtonFontSize).not.toBe("2px");
+  expect(isolation.closeButtonPaddingTop).not.toBe("100px");
+  expect(isolation.closeButtonWidth).toBeGreaterThanOrEqual(44);
+  expect(isolation.closeButtonHeight).toBeGreaterThanOrEqual(44);
+  expect(isolation.pageOwnedHostText).toBe("ページ側の要素");
+
+  await reader.getByRole("button", { name: "文章で読む" }).click();
+  await expect(reader.locator(".text-view")).toBeVisible();
+  const imageStyle = await reader.locator("img").first().evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { width: element.getBoundingClientRect().width, filter: style.filter };
+  });
+  expect(imageStyle.width).toBeGreaterThan(1);
+  expect(imageStyle.filter).toBe("none");
+  expect(await page.evaluate(() => (globalThis as typeof globalThis & { hostileCaptureClicks: number }).hostileCaptureClicks)).toBeGreaterThan(0);
+
+  await reader.getByRole("button", { name: "readerを閉じる" }).click();
+  await expect(page.locator('[data-reader-owned="true"]')).toHaveCount(1);
+  await expect(page.locator("#__reader-host")).toHaveText("ページ側の要素");
+  await expect(reader).toBeHidden();
+
+  await launchButton.click();
+  const reopenedReader = page.getByRole("dialog", { name: "reader" });
+  await expect(reopenedReader).toBeVisible();
+  await expect(page.locator('[data-reader-owned="true"]')).toHaveCount(1);
+  await expect(page.locator('[data-reader-owned="true"] .reader')).toHaveCount(1);
+  await expect(page.locator("#__reader-host")).toHaveText("ページ側の要素");
 });
