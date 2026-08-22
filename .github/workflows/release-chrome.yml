@@ -26,12 +26,22 @@ jobs:
         with:
           install_args: gh jq node pnpm
           cache: false
+      - name: Install Rust session toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
+          rustup override set 1.97.1
+          cargo install wasm-bindgen-cli --version 0.2.127 --locked
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y openjdk-21-jre-headless
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check
         run: mise run check
       - name: Test
         run: mise run test
+      - name: Measure session runtime
+        run: mise run measure:session
       - name: Verify release package
         env:
           RELEASE_TAG: ${{ github.ref_name }}

@@ -30,6 +30,9 @@
     <script>
       const parameters = new URLSearchParams(location.search);
       const viewer = parameters.get("viewer") || "chrome";
+      const wasmFailure = parameters.get("wasm") === "fail";
+      globalThis.__READER_WASM_FAILURE = wasmFailure;
+      globalThis.__READER_WASM_RETRY = false;
       const pageHost = parameters.get("pageHost") === "true";
       const imageFixture = parameters.get("image") || "default";
       const figureFirst = parameters.get("figure") === "first";
@@ -136,6 +139,12 @@
         let requestSequence = 0;
         const chromeGlobal = globalThis.chrome || {};
         chromeGlobal.runtime = {
+          getURL(path) {
+            if (globalThis.__READER_WASM_FAILURE && !globalThis.__READER_WASM_RETRY && path.endsWith(".wasm")) {
+              return "/missing/reader_session_bg.wasm";
+            }
+            return `/apps/chrome/dist/${path}`;
+          },
           onMessage: {
             addListener(listener) {
               messageListeners.push(listener);
@@ -154,6 +163,8 @@
         globalThis.chrome = chromeGlobal;
         for (const source of [
           "/apps/chrome/dist/vendor/defuddle/defuddle.js",
+          "/apps/chrome/dist/session-wasm.js",
+          "/apps/chrome/dist/session.js",
           "/apps/chrome/dist/engine.js",
           "/apps/chrome/dist/extractor.js",
           "/apps/chrome/dist/icons.js",
@@ -198,9 +209,13 @@
             }
             for (const listener of messageListeners) listener({ type: "START_RSVP", requestId, text, readingContext });
             if (options.paused === true) {
-              const host = readerHost();
-              const pauseButton = host?.shadowRoot?.querySelector('[aria-label="一時停止"]');
-              pauseButton?.click();
+              const pauseWhenReady = () => {
+                const host = readerHost();
+                const pauseButton = host?.shadowRoot?.querySelector('[aria-label="一時停止"]');
+                if (pauseButton) pauseButton.click();
+                else setTimeout(pauseWhenReady, 0);
+              };
+              pauseWhenReady();
             }
           };
           if (delay === 0) start();
@@ -233,8 +248,20 @@
       }
 
       async function installMobileViewer() {
+        globalThis.browser = {
+          runtime: {
+            getURL(path) {
+              if (globalThis.__READER_WASM_FAILURE && !globalThis.__READER_WASM_RETRY && path.endsWith(".wasm")) {
+                return "/missing/reader_session_bg.wasm";
+              }
+              return `/apps/ios/ReaderExtension/Resources/generated/${path}`;
+            },
+          },
+        };
         for (const source of [
           "/apps/ios/ReaderExtension/Resources/generated/defuddle.js",
+          "/apps/ios/ReaderExtension/Resources/generated/session-wasm.js",
+          "/apps/ios/ReaderExtension/Resources/generated/session.js",
           "/apps/ios/ReaderExtension/Resources/generated/engine.js",
           "/apps/ios/ReaderExtension/Resources/generated/extractor.js",
           "/apps/ios/ReaderExtension/Resources/generated/icons.js",

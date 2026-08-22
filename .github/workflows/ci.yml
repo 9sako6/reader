@@ -32,12 +32,25 @@ jobs:
         with:
           install_args: node pnpm
           cache: false
+      - name: Install Rust session toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
+          rustup override set 1.97.1
+          cargo install wasm-bindgen-cli --version 0.2.127 --locked
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y openjdk-21-jre-headless
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Type-check
         run: mise run check
       - name: Test
         run: mise run test
+      - name: Verify session model and measure WASM
+        run: |
+          cargo clippy --locked --all-targets --all-features -- -D warnings
+          mise run spec:verify
+          mise run measure:session
       - name: Measure extension bundles
         run: mise run measure:bundle
       - name: Upload bundle baseline
@@ -61,6 +74,12 @@ jobs:
         with:
           install_args: node pnpm
           cache: false
+      - name: Install Rust session toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target wasm32-unknown-unknown
+          rustup override set 1.97.1
+          cargo install wasm-bindgen-cli --version 0.2.127 --locked
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install Chromium
@@ -75,6 +94,8 @@ jobs:
           if-no-files-found: error
       - name: Run Chromium E2E
         run: mise run test:e2e -- --project=chromium
+      - name: Run generated Chrome extension smoke
+        run: mise run test:chrome-extension
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -99,6 +120,12 @@ jobs:
         with:
           install_args: node pnpm xcodegen
           cache: false
+      - name: Install Rust session toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target wasm32-unknown-unknown
+          rustup override set 1.97.1
+          cargo install wasm-bindgen-cli --version 0.2.127 --locked
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install WebKit
@@ -115,6 +142,8 @@ jobs:
           -derivedDataPath DerivedData
           CODE_SIGNING_ALLOWED=NO
           build
+      - name: Verify generated Safari package runtime
+        run: READER_REQUIRE_IOS_EXTENSION_BUNDLE=1 mise run test:safari-package-runtime
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

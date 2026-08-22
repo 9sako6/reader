@@ -161,7 +161,139 @@ function revealLoading(timers) {
   entry[1].callback();
 }
 
-function createOutlineReaderHarness() {
+function createSessionStub(commands, options: { initFails?: boolean } = {}) {
+  let nextId = 1;
+  const initialState = () => ({
+    phase: "idle",
+    mode: "rsvp",
+    playback: "paused",
+    flowIndex: 0,
+    flowLength: 0,
+    generation: 0,
+    sourceOffset: 0,
+    currentKind: "none",
+    requestId: "",
+    timerPending: false,
+    contentPresent: false,
+    preparationHidden: false,
+  });
+  const stateForFlow = (state, flow, index, playback) => {
+    const item = flow.flow[index];
+    if (!item) return { ...state, flowIndex: index, currentKind: "none", playback, timerPending: false };
+    const position = item.kind === "figure"
+      ? { kind: "figure", sourceOffset: item.sourceOffset, figureIndex: item.figureIndex }
+      : { kind: "text", sourceOffset: flow.units[item.unitIndex]?.start ?? item.sourceOffset };
+    return {
+      ...state,
+      phase: "reading",
+      playback,
+      flowIndex: index,
+      flowLength: flow.flow.length,
+      sourceOffset: position.sourceOffset,
+      currentKind: item.kind,
+      position,
+      unitIndex: item.kind === "unit" ? item.unitIndex : undefined,
+      figureIndex: item.kind === "figure" ? item.figureIndex : undefined,
+      timerPending: playback === "playing",
+      contentPresent: true,
+    };
+  };
+  const flowIndexForPosition = (flow, position) => {
+    if (position.kind === "figure") return flow.flow.findIndex((item) => item.kind === "figure" && item.figureIndex === position.figureIndex);
+    const unitIndex = flow.units.findIndex((unit) => unit.start <= position.sourceOffset && position.sourceOffset < unit.end);
+    return flow.flow.findIndex((item) => item.kind === "unit" && item.unitIndex === Math.max(0, unitIndex));
+  };
+  return {
+    async init() {
+      if (options.initFails) throw new Error("wasm unavailable");
+    },
+    ready: () => !options.initFails,
+    create() {
+      return { id: nextId++, state: initialState(), destroyed: false, flow: null };
+    },
+    dispatch(handle, command) {
+      if (handle.destroyed) throw new Error("destroyed");
+      commands.push(command);
+      const previous = handle.state;
+      let state = previous;
+      let effects = [];
+      if (command.type === "open" && previous.phase !== "ended") {
+        state = { ...initialState(), phase: "preparing", requestId: command.requestId, generation: previous.generation + 1 };
+        if (previous.phase === "reading") effects = [{ type: "cancelTimer" }];
+      } else if (command.type === "prepareSucceeded" && previous.phase === "preparing" && previous.requestId === command.requestId) {
+        handle.flow = command.flow;
+        const playback = previous.preparationHidden ? "paused" : "playing";
+        state = stateForFlow({ ...previous, generation: previous.generation + 1, preparationHidden: false }, command.flow, 0, playback);
+        effects = playback === "playing"
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.units[command.flow.flow[0]?.unitIndex || 0]?.durationMs || 1 }]
+          : [{ type: "cancelTimer" }];
+      } else if (command.type === "prepareFailed" && previous.phase === "preparing" && previous.requestId === command.requestId) {
+        state = { ...previous, phase: "error", reason: command.reason, generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      } else if (command.type === "cancel" && previous.phase === "preparing" && previous.requestId === command.requestId) {
+        state = { ...initialState(), generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      } else if (command.type === "close") {
+        state = { ...initialState(), phase: "ended", generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      } else if (command.type === "play" && previous.phase === "reading" && previous.currentKind === "unit") {
+        state = { ...previous, playback: "playing", timerPending: true, generation: previous.generation + 1 };
+        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[previous.unitIndex]?.durationMs || 1 }];
+      } else if (command.type === "pause" && previous.phase === "reading") {
+        state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      } else if (command.type === "tick" && previous.phase === "reading" && previous.playback === "playing" && previous.generation === command.generation) {
+        const nextIndex = previous.flowIndex + 1;
+        const nextItem = handle.flow?.flow[nextIndex];
+        if (!nextItem) {
+          state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
+          effects = [{ type: "cancelTimer" }];
+        } else {
+          state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, nextItem.kind === "figure" ? "paused" : "playing");
+          effects = nextItem.kind === "figure"
+            ? [{ type: "cancelTimer" }]
+            : [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[nextItem.unitIndex]?.durationMs || 1 }];
+        }
+      } else if (command.type === "previousSentence" && previous.phase === "reading") {
+        const target = handle.flow.flow.findIndex((item) => item.kind === "unit");
+        const playback = previous.playback === "playing" ? "playing" : "paused";
+        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, Math.max(0, target), playback);
+        effects = [{ type: "cancelTimer" }];
+        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
+      } else if ((command.type === "switchToText" || command.type === "switchToRsvp") && previous.phase === "reading") {
+        const index = flowIndexForPosition(handle.flow, command.position);
+        const target = Math.max(0, index);
+        const playback = command.type === "switchToText"
+          ? "paused"
+          : handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
+        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, target, playback);
+        state = { ...state, mode: command.type === "switchToText" ? "text" : "rsvp", position: command.position, sourceOffset: command.position.sourceOffset };
+        effects = [{ type: "cancelTimer" }];
+        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
+      } else if (command.type === "resumeFromFigure" && previous.phase === "reading" && previous.currentKind === "figure") {
+        const nextIndex = previous.flowIndex + 1;
+        const nextItem = handle.flow.flow[nextIndex];
+        const playback = nextItem?.kind === "figure" ? "paused" : "playing";
+        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, playback);
+        effects = playback === "playing"
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }]
+          : [{ type: "cancelTimer" }];
+      } else if (command.type === "visibilityHidden" && previous.phase === "preparing" && !previous.preparationHidden) {
+        state = { ...previous, preparationHidden: true, generation: previous.generation + 1 };
+      } else if (command.type === "visibilityHidden" && previous.phase === "reading") {
+        state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      }
+      handle.state = state;
+      return { state, effects };
+    },
+    destroy(handle) {
+      handle.destroyed = true;
+    },
+  };
+}
+
+function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
   const headingBeforeSelection = new FakeElement("h1", "記事タイトル");
   const headingInSelection = new FakeElement("h2", "次の節");
   const documentElement = new FakeElement("html");
@@ -233,6 +365,7 @@ function createOutlineReaderHarness() {
   let currentScrollY = 0;
   let reduceMotion = false;
   const runtimeMessages = [];
+  const sessionCommands = [];
   const context: any = {
     chrome: {
       runtime: {
@@ -270,6 +403,7 @@ function createOutlineReaderHarness() {
     Engine,
     Extractor,
     ReaderIcons,
+    ReaderSession: createSessionStub(sessionCommands, options),
     Intl,
     console,
     scrollTo(position) {
@@ -326,6 +460,7 @@ function createOutlineReaderHarness() {
       return { left: currentScrollX, top: currentScrollY };
     },
     runtimeMessages,
+    sessionCommands,
   };
 }
 
@@ -436,7 +571,7 @@ test("reader adds slow preparation status and a cancel action at 400ms", () => {
 
 test("reader cancel closes loading and sends the request id to the service worker", () => {
   const harness = createOutlineReaderHarness();
-  const { document, messageListener, timers, runtimeMessages } = harness;
+  const { document, messageListener, timers, runtimeMessages, sessionCommands } = harness;
 
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "cancel-request" });
   revealLoading(timers);
@@ -448,6 +583,7 @@ test("reader cancel closes loading and sends the request id to the service worke
   assert.equal(runtimeMessages.length, 1);
   assert.equal(runtimeMessages[0].type, "CANCEL_RSVP");
   assert.equal(runtimeMessages[0].requestId, "cancel-request");
+  assert.deepEqual(sessionCommands.map(({ type }) => type), ["open", "cancel", "close"]);
   assert.equal(document.getElementById("__rsvp-reader-root"), null);
 });
 
@@ -490,6 +626,26 @@ test("reader renders extraction-failed errors with retry and return actions", ()
   assert.ok(findElement(overlay, (element) => element.textContent === "文章を準備できませんでした"));
   assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
   assert.ok(findElement(overlay, (element) => element.textContent === "元に戻る"));
+});
+
+test("reader rejects a delayed start after session initialization fails", async () => {
+  const harness = createOutlineReaderHarness({ initFails: true });
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "failed-session-request" });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(findElement(overlay, (element) => element.textContent === "文章を準備できませんでした"));
+  messageListener({
+    type: "START_RSVP",
+    text: "遅延して届いた本文です。",
+    requestId: "failed-session-request",
+  });
+
+  assert.equal(findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true"), null);
+  assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
 });
 
 test("reader retries a classified error without replacing its launch focus", () => {
@@ -961,6 +1117,41 @@ test("reader keeps keyboard focus trapped after switching to text mode", () => {
   assert.equal(document.activeElement, launchButton);
 });
 
+test("reader restores the RSVP mode control and follows session autoplay", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener, sessionCommands } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mode-focus-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "mode-focus-request",
+  });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textOverlay = document.getElementById("__rsvp-reader-root");
+  const textModeButton = findElement(textOverlay, (element) => element.textContent === "RSVPで読む");
+  textModeButton.focus();
+  textModeButton.dispatchEvent({ type: "click" });
+
+  const rsvpModeButton = findElement(
+    document.getElementById("__rsvp-reader-root"),
+    (element) => element.textContent === "文章で読む",
+  );
+  assert.equal(document.activeElement, rsvpModeButton);
+  assert.deepEqual(
+    sessionCommands
+      .filter(({ type }) => type === "switchToText" || type === "switchToRsvp" || type === "pause")
+      .map(({ type }) => type),
+    ["switchToText", "switchToRsvp"],
+  );
+  assert.equal(sessionCommands.filter(({ type }) => type === "play").length, 0);
+  assert.equal(findElement(
+    document.getElementById("__rsvp-reader-root"),
+    (element) => element.attributes["aria-label"] === "一時停止",
+  ).attributes["aria-pressed"], "true");
+});
+
 test("reader keyboard controls pause and move between sentence contexts", () => {
   const harness = createOutlineReaderHarness();
   const { document, documentElement, timers, messageListener } = harness;
@@ -1145,6 +1336,54 @@ test("reader uses sentence and figure markers to preserve a shared position", ()
   assert.equal(figurePanel.dataset.sourceStart, String(figureOffset));
 });
 
+test("reader keeps the current figure anchor ahead of earlier readable text", () => {
+  const { document, messageListener, timers } = createFigureReaderHarness();
+  const text = "前の文です。\n図1\n後の文です。";
+  const readingContext = {
+    language: "ja",
+    title: "",
+    blocks: [
+      { text: "前の文です。", kind: "paragraph", level: null, start: 0, end: 6 },
+      { text: "後の文です。", kind: "paragraph", level: null, start: 9, end: text.length },
+    ],
+    sectionOffsets: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [{
+      src: "https://example.com/figure.png",
+      alt: "図1",
+      caption: "図1",
+      sourceOffset: 7,
+      sourceEnd: 9,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-anchor-request" });
+  messageListener({ type: "START_RSVP", text, requestId: "figure-anchor-request", readingContext });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  while (!findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像")) {
+    const entry = [...timers.entries()][0];
+    assert.ok(entry);
+    timers.delete(entry[0]);
+    entry[1].callback();
+  }
+
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
+  const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
+  const figureMarker = findElement(textShell, (element) => element.dataset.readerPositionKind === "figure");
+  scroller.rect = { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
+  textMarkers[0].rect = { top: 80, bottom: 120, left: 0, right: 300, width: 300, height: 40 };
+  figureMarker.rect = { top: 180, bottom: 320, left: 0, right: 300, width: 300, height: 140 };
+  textMarkers[1].rect = { top: 360, bottom: 400, left: 0, right: 300, width: 300, height: 40 };
+
+  findElement(textShell, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+
+  const figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  assert.ok(figurePanel);
+  assert.equal(figurePanel.dataset.figureIndex, "0");
+});
+
 test("reader ignores a clipped figure even when its center is readable", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
@@ -1284,6 +1523,7 @@ function createTimingReaderHarness(engine = Engine) {
     Engine: engine,
     Extractor,
     ReaderIcons,
+    ReaderSession: createSessionStub([]),
     Intl,
     console,
     setTimeout(callback, delay) {
@@ -1474,6 +1714,7 @@ function createFigureReaderHarness() {
     Engine,
     Extractor,
     ReaderIcons,
+    ReaderSession: createSessionStub([]),
     Intl,
     console,
     setTimeout(callback, delay) {
@@ -1694,7 +1935,7 @@ test("reader preserves the order of figures that share one source offset", () =>
   assert.ok(findElement(secondPanel, (element) => element.textContent === "図B"));
 });
 
-test("reader returns from an image to the previous sentence and resumes after the image", async () => {
+test("reader returns from an image to the previous sentence and stays paused", async () => {
   const { document, documentElement, messageListener, timers } = createFigureReaderHarness();
   const readingContext = {
     blocks: [
@@ -1743,6 +1984,9 @@ test("reader returns from an image to the previous sentence and resumes after th
   await Promise.resolve();
   assert.equal(findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像"), null);
   assert.match(display.textContent, /結果を/);
+  assert.ok(findElement(overlay, (element) => element.attributes["aria-label"] === "再生"));
+  assert.equal(timers.size, 0);
+  findElement(overlay, (element) => element.attributes["aria-label"] === "再生").dispatchEvent({ type: "click" });
   assert.ok(findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.ok(timers.size > 0);
   const [returnFirstTimerId, returnFirstTimer] = [...timers.entries()][0];

@@ -36,9 +36,16 @@ targets:
         excludes:
           - Resources
           - README.md
+          - RELEASE_CHECKLIST.md
       - path: ReaderExtension/Resources/manifest.json
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/defuddle.js
+        buildPhase: resources
+      - path: ReaderExtension/Resources/generated/session-wasm.js
+        buildPhase: resources
+      - path: ReaderExtension/Resources/generated/session.js
+        buildPhase: resources
+      - path: ReaderExtension/Resources/generated/reader_session_bg.wasm
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/engine.js
         buildPhase: resources
@@ -53,6 +60,8 @@ targets:
       - path: ReaderExtension/Resources/generated/defuddle-LICENSE.txt
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/lucide-LICENSE.txt
+        buildPhase: resources
+      - path: ReaderExtension/Resources/generated/reader-session-dependencies.txt
         buildPhase: resources
     preBuildScripts:
       - name: Build web resources

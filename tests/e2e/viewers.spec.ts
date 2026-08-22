@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-async function loadViewer(page: Page, viewer: "chrome" | "mobile"): Promise<void> {
-  await page.goto(`/tests/e2e/fixtures/article.html?viewer=${viewer}`);
+async function loadViewer(page: Page, viewer: "chrome" | "mobile", query = ""): Promise<void> {
+  await page.goto(`/tests/e2e/fixtures/article.html?viewer=${viewer}${query}`);
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
 }
 
@@ -638,7 +638,7 @@ test("mobile viewer exposes touchable controls", async ({ page }) => {
   expect(playPauseBox?.height).toBeGreaterThanOrEqual(44);
 });
 
-test("mobile viewer keeps its focal point and pause state after 25 mode round trips", async ({ page }) => {
+test("mobile viewer keeps its focal point after 25 mode round trips", async ({ page }) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await loadViewer(page, "mobile");
@@ -658,7 +658,7 @@ test("mobile viewer keeps its focal point and pause state after 25 mode round tr
     await dialog.getByRole("button", { name: "RSVPで読む" }).click();
   }
 
-  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
   const finalCenter = await dialog.locator("[data-reader-unit]").evaluate((element) => {
     const rectangle = element.getBoundingClientRect();
     return { x: rectangle.left + rectangle.width / 2, y: rectangle.top + rectangle.height / 2 };
@@ -1221,6 +1221,81 @@ test("generated assets extract the real fixture article", async ({ page }) => {
 
   expect(extraction.text).toContain("画像の後に続く文章です");
   expect(extraction.figureAlts).toContain("本文の読書フロー図");
+});
+
+test("real WASM session keeps close, stale preparation, and stale tick inert", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  const trace = await page.evaluate(() => {
+    const api = (globalThis as typeof globalThis & {
+      ReaderSession: {
+        init(): Promise<void>;
+        create(): { id: number; state: unknown; destroyed: boolean };
+        dispatch(
+          handle: { id: number; state: unknown; destroyed: boolean },
+          command: Record<string, unknown> & { type: string },
+        ): { state: { phase: string; generation: number }; effects: unknown[] };
+        destroy(handle: { id: number; state: unknown; destroyed: boolean }): void;
+      };
+    }).ReaderSession;
+    return api.init().then(() => {
+      const handle = api.create();
+      const prep = {
+        textLength: 4,
+        units: [{ sentenceIndex: 0, kind: "body" as const, start: 0, end: 4, durationMs: 1 }],
+        figures: [],
+        flow: [{ kind: "unit" as const, sourceOffset: 0, unitIndex: 0 }],
+      };
+      api.dispatch(handle, { type: "open", requestId: "A" });
+      api.dispatch(handle, { type: "open", requestId: "B" });
+      const stalePreparation = api.dispatch(handle, { type: "prepareSucceeded", requestId: "A", flow: prep });
+      const reading = api.dispatch(handle, { type: "prepareSucceeded", requestId: "B", flow: prep });
+      const closed = api.dispatch(handle, { type: "close" });
+      const lateTick = api.dispatch(handle, { type: "tick", generation: reading.state.generation });
+      api.destroy(handle);
+      return {
+        stalePhase: stalePreparation.state.phase,
+        readingPhase: reading.state.phase,
+        closedPhase: closed.state.phase,
+        closedGeneration: closed.state.generation,
+        latePhase: lateTick.state.phase,
+        lateGeneration: lateTick.state.generation,
+      };
+    });
+  });
+  expect(trace).toEqual({
+    stalePhase: "preparing",
+    readingPhase: "reading",
+    closedPhase: "ended",
+    closedGeneration: 4,
+    latePhase: "ended",
+    lateGeneration: trace.closedGeneration,
+  });
+  expect(trace.lateGeneration).toBe(trace.closedGeneration);
+});
+
+test("Chrome WASM initialization failure is recoverable and retry loads the real module", async ({ page }) => {
+  await loadViewer(page, "chrome", "&wasm=fail");
+  await openChrome(page, {});
+  await expect(page.getByText("文章を準備できませんでした")).toBeVisible();
+  await page.evaluate(() => { (globalThis as typeof globalThis & { __READER_WASM_RETRY: boolean }).__READER_WASM_RETRY = true; });
+  await page.getByRole("button", { name: "やり直す" }).click();
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+});
+
+test("mobile WASM initialization failure is recoverable and retry loads the real module", async ({ page }) => {
+  await loadViewer(page, "mobile", "&wasm=fail");
+  await openMobile(page);
+  await expect(page.getByText("文章を準備できませんでした")).toBeVisible();
+  await page.evaluate(() => { (globalThis as typeof globalThis & { __READER_WASM_RETRY: boolean }).__READER_WASM_RETRY = true; });
+  await page.getByRole("button", { name: "やり直す" }).click();
+  await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+});
+
+test("WASM is lazy until the viewer is opened", async ({ page }) => {
+  await loadViewer(page, "mobile");
+  expect(await page.evaluate(() => performance.getEntriesByType("resource").filter((entry) => entry.name.endsWith("reader_session_bg.wasm")).length)).toBe(0);
+  await openMobile(page);
+  await expect.poll(() => page.evaluate(() => performance.getEntriesByType("resource").filter((entry) => entry.name.endsWith("reader_session_bg.wasm")).length)).toBeGreaterThan(0);
 });
 
 test("Chrome viewer RSVP state matches its visual baseline", async ({ page }) => {

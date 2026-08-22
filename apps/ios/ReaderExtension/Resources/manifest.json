@@ -9,6 +9,8 @@
       "matches": ["<all_urls>"],
       "js": [
         "defuddle.js",
+        "session-wasm.js",
+        "session.js",
         "engine.js",
         "extractor.js",
         "icons.js",
@@ -16,6 +18,12 @@
         "bootstrap.js"
       ],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["reader_session_bg.wasm"],
+      "matches": ["<all_urls>"]
     }
   ]
 }

@@ -45,7 +45,8 @@ declare global {
   type PreparationFailure =
     | "content_not_found"
     | "unsupported_page"
-    | "extraction_failed";
+    | "extraction_failed"
+    | "session_unavailable";
 
   type PreparationState =
     | { kind: "idle" }

@@ -8,6 +8,155 @@ const path = require("node:path");
 const vm = require("node:vm");
 const Engine = require("../../../.build/packages/engine/src/engine.js");
 
+function createSessionStub(commands, options: { init?: () => Promise<void>; ready?: () => boolean } = {}) {
+  let nextId = 1;
+  const handles = new Map();
+  const initialState = () => ({
+    phase: "idle",
+    mode: "rsvp",
+    playback: "paused",
+    flowIndex: 0,
+    flowLength: 0,
+    generation: 0,
+    sourceOffset: 0,
+    currentKind: "none",
+    requestId: "",
+    timerPending: false,
+    contentPresent: false,
+    preparationHidden: false,
+  });
+  const stateForFlow = (state, flow, index, playback) => {
+    const item = flow.flow[index];
+    if (!item) return { ...state, flowIndex: index, currentKind: "none", playback, timerPending: false };
+    const position = item.kind === "figure"
+      ? { kind: "figure", sourceOffset: item.sourceOffset, figureIndex: item.figureIndex }
+      : {
+        kind: "text",
+        sourceOffset: flow.units[item.unitIndex]?.start ?? item.sourceOffset,
+      };
+    return {
+      ...state,
+      phase: "reading",
+      mode: state.mode || "rsvp",
+      playback,
+      flowIndex: index,
+      flowLength: flow.flow.length,
+      sourceOffset: position.sourceOffset,
+      currentKind: item.kind,
+      position,
+      unitIndex: item.kind === "unit" ? item.unitIndex : undefined,
+      figureIndex: item.kind === "figure" ? item.figureIndex : undefined,
+      timerPending: playback === "playing",
+      contentPresent: true,
+    };
+  };
+  const flowIndexForPosition = (flow, position) => {
+    if (position.kind === "figure") {
+      return flow.flow.findIndex((item) => item.kind === "figure" && item.figureIndex === position.figureIndex);
+    }
+    const unitIndex = flow.units.findIndex((unit) => unit.start <= position.sourceOffset && position.sourceOffset < unit.end);
+    return flow.flow.findIndex((item) => item.kind === "unit" && item.unitIndex === Math.max(0, unitIndex));
+  };
+  const api = {
+    async init() {
+      if (options.init) await options.init();
+    },
+    ready: () => options.ready?.() ?? true,
+    create() {
+      const handle = { id: nextId++, state: initialState(), destroyed: false, flow: null };
+      handles.set(handle.id, handle);
+      return handle;
+    },
+    dispatch(handle, command) {
+      if (handle.destroyed) throw new Error("destroyed");
+      commands.push(command);
+      const previous = handle.state;
+      let state = previous;
+      let effects = [];
+      if (command.type === "open" && previous.phase !== "ended") {
+        state = { ...initialState(), phase: "preparing", requestId: command.requestId, generation: previous.generation + 1 };
+        if (previous.phase === "reading") effects = [{ type: "cancelTimer" }];
+      } else if (command.type === "prepareSucceeded") {
+        if (previous.phase === "preparing" && previous.requestId === command.requestId) {
+          handle.flow = command.flow;
+          const playback = previous.preparationHidden ? "paused" : "playing";
+          state = stateForFlow({ ...previous, generation: previous.generation + 1, preparationHidden: false }, command.flow, 0, playback);
+          effects = playback === "playing"
+            ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.units[command.flow.flow[0]?.unitIndex || 0]?.durationMs || 1 }]
+            : [{ type: "cancelTimer" }];
+        }
+      } else if (command.type === "prepareFailed") {
+        if (previous.phase === "preparing" && previous.requestId === command.requestId) {
+          state = { ...previous, phase: "error", reason: command.reason, generation: previous.generation + 1 };
+          effects = [{ type: "cancelTimer" }];
+        }
+      } else if (command.type === "cancel") {
+        if (previous.phase === "preparing" && previous.requestId === command.requestId) {
+          state = { ...initialState(), generation: previous.generation + 1 };
+          effects = [{ type: "cancelTimer" }];
+        }
+      } else if (command.type === "close") {
+        state = { ...initialState(), phase: "ended", generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      } else if (command.type === "play" && previous.phase === "reading" && previous.currentKind === "unit") {
+        state = { ...previous, playback: "playing", timerPending: true, generation: previous.generation + 1 };
+        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[previous.unitIndex]?.durationMs || 1 }];
+      } else if (command.type === "pause" && previous.phase === "reading") {
+        state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      } else if (command.type === "tick" && previous.phase === "reading" && previous.playback === "playing" && previous.generation === command.generation) {
+        const nextIndex = previous.flowIndex + 1;
+        const nextItem = handle.flow?.flow[nextIndex];
+        if (!nextItem) {
+          state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
+          effects = [{ type: "cancelTimer" }];
+        } else {
+          state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, nextItem.kind === "figure" ? "paused" : "playing");
+          effects = nextItem.kind === "figure"
+            ? [{ type: "cancelTimer" }]
+            : [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[nextItem.unitIndex]?.durationMs || 1 }];
+        }
+      } else if (command.type === "previousSentence" && previous.phase === "reading") {
+        const target = handle.flow.flow.findIndex((item) => item.kind === "unit");
+        const playback = previous.playback === "playing" ? "playing" : "paused";
+        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, Math.max(0, target), playback);
+        effects = [{ type: "cancelTimer" }];
+        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
+      } else if ((command.type === "switchToText" || command.type === "switchToRsvp") && previous.phase === "reading") {
+        const index = flowIndexForPosition(handle.flow, command.position);
+        const target = Math.max(0, index);
+        const playback = command.type === "switchToText"
+          ? "paused"
+          : handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
+        state = stateForFlow({ ...previous, mode: command.type === "switchToText" ? "text" : "rsvp", generation: previous.generation + 1 }, handle.flow, target, playback);
+        state = { ...state, mode: command.type === "switchToText" ? "text" : "rsvp", position: command.position, sourceOffset: command.position.sourceOffset };
+        effects = [{ type: "cancelTimer" }];
+        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
+      } else if (command.type === "resumeFromFigure" && previous.phase === "reading" && previous.currentKind === "figure") {
+        const nextIndex = previous.flowIndex + 1;
+        const nextItem = handle.flow.flow[nextIndex];
+        const playback = nextItem?.kind === "figure" ? "paused" : "playing";
+        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, playback);
+        effects = playback === "playing"
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }]
+          : [{ type: "cancelTimer" }];
+      } else if (command.type === "visibilityHidden" && previous.phase === "preparing" && !previous.preparationHidden) {
+        state = { ...previous, preparationHidden: true, generation: previous.generation + 1 };
+      } else if (command.type === "visibilityHidden" && previous.phase === "reading") {
+        state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
+        effects = [{ type: "cancelTimer" }];
+      }
+      handle.state = state;
+      return { state, effects };
+    },
+    destroy(handle) {
+      handles.delete(handle.id);
+      handle.destroyed = true;
+    },
+  };
+  return api;
+}
+
 const root = path.join(__dirname, "..");
 const manifestPath = path.join(root, "ReaderExtension", "Resources", "manifest.json");
 
@@ -29,8 +178,14 @@ test("Safari extension loads reader resources in dependency order", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.permissions, undefined);
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);
+  assert.deepEqual(manifest.web_accessible_resources, [{
+    resources: ["reader_session_bg.wasm"],
+    matches: ["<all_urls>"],
+  }]);
   assert.deepEqual(manifest.content_scripts[0].js, [
     "defuddle.js",
+    "session-wasm.js",
+    "session.js",
     "engine.js",
     "extractor.js",
     "icons.js",
@@ -42,18 +197,23 @@ test("Safari extension loads reader resources in dependency order", () => {
 test("Xcode project embeds every manifest script in the extension", () => {
   const project = fs.readFileSync(path.join(root, "reader.xcodeproj", "project.pbxproj"), "utf8");
   assert.match(project, /defuddle\.js in Resources/);
+  assert.match(project, /session-wasm\.js in Resources/);
+  assert.match(project, /session\.js in Resources/);
+  assert.match(project, /reader_session_bg\.wasm in Resources/);
+  assert.match(project, /reader-session-dependencies\.txt in Resources/);
   assert.match(project, /engine\.js in Resources/);
   assert.match(project, /extractor\.js in Resources/);
   assert.match(project, /icons\.js in Resources/);
   assert.match(project, /viewer\.js in Resources/);
   assert.match(project, /bootstrap\.js in Resources/);
   assert.match(project, /reader-extension\.appex in Embed Foundation Extensions/);
+  assert.equal(project.includes("RELEASE_CHECKLIST.md"), false);
 });
 
 function createSafariReaderHarness(
   engine = Engine,
   language = "ja",
-  options: { pageOwnedHost?: boolean } = {},
+  options: { pageOwnedHost?: boolean; init?: () => Promise<void>; ready?: () => boolean } = {},
 ) {
   const documentElement = new FakeElement("html");
   documentElement.lang = language;
@@ -137,6 +297,7 @@ function createSafariReaderHarness(
   let extractionCount = 0;
   let now = 0;
   const performanceMarks = [];
+  const sessionCommands = [];
   const globalListeners = new Map();
   const animationFrames = [];
   const context: any = {
@@ -155,6 +316,7 @@ function createSafariReaderHarness(
       },
     },
     ReaderIcons: { create: () => new FakeElement("svg") },
+    ReaderSession: createSessionStub(sessionCommands, options),
     Defuddle: class {},
     innerWidth: 390,
     innerHeight: 844,
@@ -221,6 +383,9 @@ function createSafariReaderHarness(
     performanceMarks() {
       return performanceMarks;
     },
+    sessionCommands() {
+      return sessionCommands;
+    },
     setActiveContent(content) {
       activeContent = content;
     },
@@ -278,6 +443,7 @@ test("Safari reader marks startup phases without including page content", async 
     "reader:extraction-end",
     "reader:segmentation-end",
     "reader:controls-ready",
+    "reader:first-unit",
     "reader:first-render",
   ]);
 });
@@ -362,6 +528,65 @@ test("Safari reader keeps RSVP controls visible and preserves the paused state",
   assert.equal(playButton.attributes["aria-label"], "再生");
   rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1700 });
   assert.equal(backButton.parent.hidden, false);
+});
+
+test("Safari reader completes hidden preparation without starting playback", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  let resolveExtraction: (value: unknown) => void = () => {};
+  context.Extractor.fromPage = () => new Promise((resolve) => {
+    resolveExtraction = resolve;
+  });
+
+  const opening = context.MobileViewer.open();
+  await Promise.resolve();
+  harness.setVisibilityState("hidden");
+  resolveExtraction(harness.activeContent());
+  await opening;
+
+  const playButton = findElement(
+    documentElement,
+    (element) => element.attributes["aria-label"] === "再生",
+  );
+  assert.ok(playButton);
+  assert.equal(timers.size, 0);
+  assert.deepEqual(harness.sessionCommands().map(({ type }) => type), [
+    "open",
+    "visibilityHidden",
+    "rebuildUnits",
+    "prepareSucceeded",
+  ]);
+});
+
+test("Safari reader applies queued mode changes after session initialization", async () => {
+  let resolveInit: () => void = () => {};
+  const initPromise = new Promise<void>((resolve) => {
+    resolveInit = resolve;
+  });
+  const harness = createSafariReaderHarness(Engine, "ja", {
+    ready: () => false,
+    init: () => initPromise,
+  });
+
+  await harness.context.MobileViewer.open();
+  const { documentElement } = harness;
+  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  assert.ok(modeButton);
+  modeButton.dispatchEvent({ type: "click" });
+  resolveInit();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const resolvedModeButton = findElement(documentElement, (element) => element.className === "mode-button");
+  assert.equal(resolvedModeButton.textContent, "RSVPで読む");
+  assert.ok(findElement(documentElement, (element) => element.className === "text-view"));
+  assert.deepEqual(harness.sessionCommands().map(({ type }) => type), [
+    "open",
+    "rebuildUnits",
+    "prepareSucceeded",
+    "switchToText",
+  ]);
 });
 
 test("Safari viewer segments with the ReaderContent language", async () => {
@@ -469,7 +694,7 @@ test("Safari reader shows rewind feedback without changing pause state", async (
   assert.equal(timers.size, 1);
 });
 
-test("Safari reader pauses on an image and can return to the previous sentence", async () => {
+test("Safari reader pauses after returning from an image to the previous sentence", async () => {
   const { context, documentElement, timers } = createSafariReaderHarness();
   await context.MobileViewer.open();
   const backButton = findElement(
@@ -493,8 +718,11 @@ test("Safari reader pauses on an image and can return to the previous sentence",
   firstFigure.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 3900 });
   assert.equal(backButton.parent.hidden, false);
   backButton.dispatchEvent({ type: "click" });
-  assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
+  assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "再生"));
   assert.equal(backButton.parent.hidden, false);
+  assert.equal(timers.size, 0);
+  findElement(documentElement, (element) => element.attributes["aria-label"] === "再生").dispatchEvent({ type: "click" });
+  assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.ok(timers.size > 0);
 
   fireNextTimer(timers);
@@ -539,7 +767,7 @@ test("Safari figure surface is keyboard accessible and keeps a failed image reco
 });
 
 test("Safari reader maps text viewport positions back to RSVP content", async () => {
-  const { context, documentElement, timers } = createSafariReaderHarness();
+  const { context, documentElement, timers, createdElements } = createSafariReaderHarness();
   await context.MobileViewer.open();
   const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
   fireNextTimer(timers);
@@ -568,9 +796,15 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   const textFigure = findElement(scroller, (element) => element.className === "article-figure");
   assert.ok(textFigure);
   textFigure.rect = { top: -24, bottom: 276, left: 20, right: 370, width: 350, height: 300 };
+  const imageCountBeforeRsvp = createdElements.filter((element) => element.tagName === "IMG" && element.src === "https://example.com/figure.png").length;
   scroller.dispatchEvent({ type: "pointerdown" });
   modeButton.dispatchEvent({ type: "click" });
   assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像"));
+  assert.equal(
+    createdElements.filter((element) => element.tagName === "IMG" && element.src === "https://example.com/figure.png").length,
+    imageCountBeforeRsvp + 1,
+  );
+  assert.equal(findElements(documentElement, (element) => element.className === "rsvp-figure").length, 1);
 
   const imagePlayButton = findElement(
     documentElement,
@@ -984,4 +1218,5 @@ test("Safari reader exposes a cancel action only for slow preparation", async ()
   assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
   assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
   assert.equal(context.document.documentElement.style.overflow, "");
+  assert.deepEqual(harness.sessionCommands().map(({ type }) => type), ["open", "cancel", "close"]);
 });

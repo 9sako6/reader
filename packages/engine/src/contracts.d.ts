@@ -17,6 +17,16 @@ declare global {
     end: number;
   }
 
+  interface ReaderTimingProfile {
+    baseUnitMs?: number;
+    msPerGrapheme?: number;
+    minUnitMs?: number;
+    maxUnitMs?: number;
+    clausePauseMs?: number;
+    sentencePauseMs?: number;
+    sectionPauseMs?: number;
+  }
+
   type ReaderPosition =
     | { kind: "text"; sourceOffset: number }
     | { kind: "figure"; sourceOffset: number; figureIndex: number };

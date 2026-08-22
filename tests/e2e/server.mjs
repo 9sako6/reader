@@ -8,6 +8,7 @@ const port = Number(process.env.READER_E2E_PORT) || 4173;
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
+  [".wasm", "application/wasm"],
   [".svg", "image/svg+xml"],
 ]);
 const immediateImage = Buffer.from(
