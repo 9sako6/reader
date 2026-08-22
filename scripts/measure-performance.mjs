@@ -10,7 +10,7 @@ const baseUrl = `http://127.0.0.1:${webPort}`;
 const generatedRoot = resolve(repositoryRoot, "apps/ios/ReaderExtension/Resources/generated");
 const scripts = ["session-wasm-module.js", "session.js", "defuddle.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]
   .map((name) => resolve(generatedRoot, name));
-const nodeCounts = [1000, 10_000, 50_000];
+const nodeCounts = [1000, 10_000, 50_000, 100_000];
 const runsPerCase = Number(process.env.READER_PERFORMANCE_RUNS) || 10;
 const budgetMargin = 0.25;
 const baseline = {
@@ -296,8 +296,9 @@ try {
     const runs = [];
     for (let run = 0; run < runsPerCase; run += 1) runs.push(await measurePage(browser, fixture));
     const median = medianReport(runs);
+    const p50 = percentileReport(runs, 0.5);
     const p90 = percentileReport(runs, 0.9);
-    fixtureReports[fixture.name] = { runs, median, p50: median, p90, retainedHeap: retainedHeapReport(runs), budget: budgetReport(fixture.name, p90) };
+    fixtureReports[fixture.name] = { runs, median, p50, p90, retainedHeap: retainedHeapReport(runs), budget: budgetReport(fixture.name, p90) };
   }
 
   const nodeReports = {};
@@ -307,8 +308,9 @@ try {
       runs.push(await measurePage(browser, { name: `nodes-${nodeCount}`, nodeCount, extraction: "dominant" }));
     }
     const median = medianReport(runs);
+    const p50 = percentileReport(runs, 0.5);
     const p90 = percentileReport(runs, 0.9);
-    nodeReports[String(nodeCount)] = { runs, median, p50: median, p90, retainedHeap: retainedHeapReport(runs), budget: budgetReport(String(nodeCount), p90) };
+    nodeReports[String(nodeCount)] = { runs, median, p50, p90, retainedHeap: retainedHeapReport(runs), budget: budgetReport(String(nodeCount), p90) };
   }
 
   const passiveWithBootstrap = await measurePassivePage(browser);
