@@ -409,6 +409,59 @@ test("extractPage returns article text and heading offsets", () => {
   assert.equal(readerOverlayRemoved, true);
 });
 
+test("extractPage removes an owned reader node before considering a colliding root id", () => {
+  let ownedRemoved = false;
+  let collidingIdRemoved = false;
+  const text = "本文です。";
+  const textNode = { nodeType: 3, nodeValue: text, childNodes: [] };
+  const paragraph = {
+    nodeType: 1,
+    tagName: "P",
+    childNodes: [textNode],
+    parentElement: { closest() { return null; } },
+    textContent: text,
+  };
+  const contentRoot = {
+    nodeType: 11,
+    childNodes: [paragraph],
+    querySelector(selector) {
+      if (selector === '[data-reader-owned="true"]') {
+        return { remove() { ownedRemoved = true; } };
+      }
+      if (selector === "#__rsvp-reader-root") {
+        return { remove() { collidingIdRemoved = true; } };
+      }
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === "h1, h2, h3, h4, h5, h6" || selector === "img") return [];
+      return [paragraph];
+    },
+  };
+  const document = {
+    documentElement: { lang: "ja" },
+    body: null,
+    querySelectorAll() { return []; },
+    createElement() { return contentRoot; },
+    createRange() {
+      return {
+        selectNodeContents() {},
+        setEndBefore() {},
+        toString() { return text; },
+      };
+    },
+  };
+  class FakeDefuddle {
+    parse() { return { content: `<p>${text}</p>` }; }
+  }
+
+  const result = extractPage(document, FakeDefuddle);
+
+  assert.equal(result.text, text);
+  assert.equal(ownedRemoved, true);
+  assert.equal(collidingIdRemoved, false);
+});
+
 test("fromPage falls back to Japanese when html lang is empty", () => {
   const { document, Defuddle } = createLanguagePageFixture("");
   const result = extractPage(document, Defuddle);
