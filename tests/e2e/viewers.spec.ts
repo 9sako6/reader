@@ -1238,17 +1238,12 @@ test("mobile RSVP viewer does not capture Space or ArrowLeft from editable contr
     editor.contentEditable = "true";
     editor.setAttribute("aria-label", "Reader内の編集領域");
     editor.textContent = "編集";
-    const referenceEditor = document.createElement("div");
-    referenceEditor.id = "reader-editable-reference";
-    referenceEditor.contentEditable = "true";
-    referenceEditor.setAttribute("aria-label", "編集動作の正常対照");
-    referenceEditor.textContent = "編集";
-    for (const element of [input, textarea, select, editor]) {
+    for (const element of [input, textarea, select]) {
       Object.assign(element.style, { position: "fixed", left: "8px", top: "8px", zIndex: "10" });
       content.append(element);
     }
-    Object.assign(referenceEditor.style, { position: "fixed", left: "8px", top: "40px", zIndex: "10" });
-    content.append(referenceEditor);
+    Object.assign(editor.style, { position: "fixed", left: "8px", top: "8px", zIndex: "10" });
+    content.append(editor);
   });
 
   await page.locator("#reader-editable-input").focus();
@@ -1277,77 +1272,26 @@ test("mobile RSVP viewer does not capture Space or ArrowLeft from editable contr
   await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
   await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("data-source-start", initialUnit!);
 
-  const referenceEditor = page.locator("#reader-editable-reference");
-  await referenceEditor.focus();
-  await expect(referenceEditor).toBeFocused();
-  await referenceEditor.evaluate((element) => {
-    const textNode = element.firstChild;
-    if (!(textNode instanceof Text)) throw new Error("Reference contenteditable text node is missing");
-    const range = document.createRange();
-    range.setStart(textNode, textNode.length);
-    range.collapse(true);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+  await page.evaluate(() => {
+    const keyEvents: Array<{ key: string; defaultPrevented: boolean }> = [];
+    window.addEventListener("keydown", (event) => {
+      if (event.key === " " || event.key === "ArrowLeft") {
+        keyEvents.push({ key: event.key, defaultPrevented: event.defaultPrevented });
+      }
+    });
+    (window as typeof window & { readerEditableKeyEvents?: typeof keyEvents }).readerEditableKeyEvents = keyEvents;
   });
-  await referenceEditor.press("Space");
-  const referenceAfterSpace = await referenceEditor.evaluate((element) => {
-    const selection = window.getSelection();
-    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-    return { text: element.textContent, offset: range?.startOffset };
-  });
-  await referenceEditor.press("ArrowLeft");
-  const referenceAfterArrow = await referenceEditor.evaluate((element) => {
-    const selection = window.getSelection();
-    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-    return { text: element.textContent, collapsed: range?.collapsed, offset: range?.startOffset };
-  });
-
   await page.locator("#reader-editable-content").focus();
   await expect(page.locator("#reader-editable-content")).toBeFocused();
-  await page.locator("#reader-editable-content").evaluate((element) => {
-    const textNode = element.firstChild;
-    if (!(textNode instanceof Text)) throw new Error("Contenteditable text node is missing");
-    const range = document.createRange();
-    range.setStart(textNode, textNode.length);
-    range.collapse(true);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  });
   await page.locator("#reader-editable-content").press("Space");
-  const editorAfterSpace = await page.locator("#reader-editable-content").evaluate((element) => {
-    const selection = window.getSelection();
-    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-    return {
-      text: element.textContent,
-      offset: range?.startOffset,
-    };
-  });
   await page.locator("#reader-editable-content").press("ArrowLeft");
-  const editorState = await page.locator("#reader-editable-content").evaluate((element) => {
-    const selection = window.getSelection();
-    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-    return {
-      text: element.textContent,
-      collapsed: range?.collapsed,
-      offset: range?.startOffset,
-    };
-  });
-  expect(editorAfterSpace.text).toBe(referenceAfterSpace.text);
-  expect(editorState.text).toBe(referenceAfterArrow.text);
-  if (
-    typeof referenceAfterSpace.offset === "number"
-    && typeof referenceAfterArrow.offset === "number"
-    && typeof editorAfterSpace.offset === "number"
-    && typeof editorState.offset === "number"
-  ) {
-    expect(editorAfterSpace.offset).toBe(referenceAfterSpace.offset);
-    expect(editorState.collapsed).toBe(referenceAfterArrow.collapsed);
-    expect(editorState.offset).toBe(referenceAfterArrow.offset);
-  } else {
-    await expect(page.locator("#reader-editable-content")).toBeFocused();
-  }
+  const keyEvents = await page.evaluate(() => (window as typeof window & {
+    readerEditableKeyEvents?: Array<{ key: string; defaultPrevented: boolean }>;
+  }).readerEditableKeyEvents);
+  expect(keyEvents).toEqual([
+    { key: " ", defaultPrevented: false },
+    { key: "ArrowLeft", defaultPrevented: false },
+  ]);
   await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
   await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("data-source-start", initialUnit!);
 });
