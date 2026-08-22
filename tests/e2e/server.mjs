@@ -39,12 +39,12 @@ createServer(async (request, response) => {
     "/image/horizontal.png",
     "/image/transparent.png",
     "/image/huge.png",
-  ].includes(pathname)) {
+  ].includes(pathname) || pathname.startsWith("/image/delayed/")) {
     const configuredDelayValue = requestUrl.searchParams.get("delay");
     const configuredDelay = configuredDelayValue === null ? Number.NaN : Number(configuredDelayValue);
     const delay = Number.isFinite(configuredDelay) && configuredDelay >= 0
       ? configuredDelay
-      : pathname.endsWith("delayed.png") ? 500 : 0;
+      : (pathname.endsWith("delayed.png") || pathname.startsWith("/image/delayed/")) ? 500 : 0;
     if (delay > 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
     const intrinsicImage = intrinsicImages.get(pathname);
     if (intrinsicImage !== undefined) {

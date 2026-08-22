@@ -64,6 +64,7 @@ type ChromeOpenOptions = {
   cacheKey?: string;
   srcset?: string;
   sizes?: string;
+  imageDelay?: number;
   requestId?: string;
   paused?: boolean;
   error?: boolean;
@@ -78,6 +79,7 @@ type MobileOpenOptions = {
   cacheKey?: string;
   srcset?: string;
   sizes?: string;
+  imageDelay?: number;
   error?: boolean;
   reason?: "content_not_found" | "unsupported_page" | "extraction_failed";
 };
@@ -833,9 +835,7 @@ test.describe("mobile viewer touch controls", () => {
 });
 
 test("Chrome viewer shows delayed figure loading and resumes after a 404", async ({ page }) => {
-  await page.goto("/tests/e2e/fixtures/article.html?viewer=chrome&image=delayed&figure=first");
-  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
-  await openChrome(page, { paused: true, figureFirst: true, image: "delayed", cacheKey: "chrome-delayed-figure" });
+  const releaseImage = await openFigureViewer(page, "chrome", { paused: true, cacheKey: "chrome-delayed-figure" });
 
   const dialog = page.getByRole("dialog", { name: "reader" });
   const figure = dialog.getByRole("figure", { name: "本文画像" });
@@ -848,6 +848,7 @@ test("Chrome viewer shows delayed figure loading and resumes after a 404", async
   await expect(figure.locator("[data-reader-image-surface]")).toBeDisabled();
   await expect(figure.locator("[data-reader-image-surface]")).toHaveAttribute("aria-hidden", "true");
   await expect(figure.locator("[data-reader-figure-description]")).toHaveText("本文の読書フロー図。先頭画像");
+  await releaseImage();
   await expect(figure.locator("[data-reader-figure-status]")).toBeHidden({ timeout: 5_000 });
   await dialog.getByRole("button", { name: "続きを読む" }).click();
   await expect(dialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
@@ -873,9 +874,7 @@ for (const image of ["missing", "broken"] as const) {
 }
 
 test("mobile viewer shows delayed figure loading and resumes after a 404", async ({ page }) => {
-  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&image=delayed&figure=first");
-  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
-  await openMobile(page, { cacheKey: "mobile-delayed-figure" });
+  const releaseImage = await openFigureViewer(page, "mobile", { cacheKey: "mobile-delayed-figure" });
 
   const dialog = page.getByRole("dialog", { name: "reader" });
   const figure = dialog.getByRole("figure", { name: "本文画像" });
@@ -888,6 +887,7 @@ test("mobile viewer shows delayed figure loading and resumes after a 404", async
   await expect(figure.locator("[data-reader-image-surface]")).toBeDisabled();
   await expect(figure.locator("[data-reader-image-surface]")).toHaveAttribute("aria-hidden", "true");
   await expect(figure.locator("[data-reader-figure-description]")).toHaveText("本文の読書フロー図。先頭画像");
+  await releaseImage();
   await expect(figure.locator("[data-reader-figure-status]")).toBeHidden({ timeout: 5_000 });
 
   await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&image=missing&figure=first");
@@ -907,12 +907,61 @@ async function openFigureViewer(
   page: Page,
   viewer: "chrome" | "mobile",
   options: ChromeOpenOptions & MobileOpenOptions,
-): Promise<void> {
+): Promise<() => Promise<void>> {
+  const baseCacheKey = options.cacheKey || `${viewer}-${options.alt || "default-alt"}-${options.caption || "default-caption"}`;
+  const cacheKey = `${baseCacheKey}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const delayedImagePattern = "**/image/delayed/**";
+  let requestStartedResolve: () => void = () => {};
+  let releaseImageResolve: () => void = () => {};
+  const requestStarted = new Promise<void>((resolve) => {
+    requestStartedResolve = resolve;
+  });
+  const releaseImagePromise = new Promise<void>((resolve) => {
+    releaseImageResolve = resolve;
+  });
+  await page.route(delayedImagePattern, async (route) => {
+    requestStartedResolve();
+    await releaseImagePromise;
+    await route.continue();
+  });
   await page.goto(`/tests/e2e/fixtures/article.html?viewer=${viewer}&image=delayed&figure=first`);
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
-  const cacheKey = options.cacheKey || `${viewer}-${options.alt || "default-alt"}-${options.caption || "default-caption"}`;
-  if (viewer === "chrome") await openChrome(page, { ...options, paused: true, figureFirst: true, image: "delayed", cacheKey });
-  else await openMobile(page, { ...options, figureFirst: true, image: "delayed", cacheKey });
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().includes("/image/delayed/"),
+    { timeout: 5_000 },
+  );
+  if (viewer === "chrome") {
+    await openChrome(page, {
+      ...options,
+      paused: true,
+      figureFirst: true,
+      image: "delayed",
+      cacheKey,
+      imageDelay: 500,
+    });
+  } else {
+    await openMobile(page, {
+      ...options,
+      figureFirst: true,
+      image: "delayed",
+      cacheKey,
+      imageDelay: 500,
+    });
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("delayed figure image request did not start")), 5_000);
+    requestStarted.then(() => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    releaseImageResolve();
+    await responsePromise;
+  };
 }
 
 const FIGURE_DESCRIPTION_CASES = [
@@ -924,7 +973,7 @@ const FIGURE_DESCRIPTION_CASES = [
 for (const viewer of ["chrome", "mobile"] as const) {
   for (const figureCase of FIGURE_DESCRIPTION_CASES) {
     test(`${viewer} viewer describes a delayed figure with ${figureCase.name}`, async ({ page }) => {
-      await openFigureViewer(page, viewer, figureCase);
+      const releaseImage = await openFigureViewer(page, viewer, figureCase);
       const dialog = page.getByRole("dialog", { name: "reader" });
       const figure = dialog.getByRole("figure", { name: "本文画像" });
       const status = figure.locator("[data-reader-figure-status]");
@@ -935,6 +984,7 @@ for (const viewer of ["chrome", "mobile"] as const) {
       await expect(description).toHaveText(figureCase.description);
       await expect(figure.locator("figcaption")).toHaveCount(figureCase.captionCount);
 
+      await releaseImage();
       await expect(status).toBeHidden({ timeout: 5_000 });
       await expect(description).toBeHidden();
     });
@@ -943,11 +993,12 @@ for (const viewer of ["chrome", "mobile"] as const) {
 
 for (const viewer of ["chrome", "mobile"] as const) {
   test(`${viewer} viewer ignores a delayed figure completion after close`, async ({ page }) => {
-    await openFigureViewer(page, viewer, {});
+    const releaseImage = await openFigureViewer(page, viewer, {});
     const dialog = page.getByRole("dialog", { name: "reader" });
     await expect(dialog.getByRole("figure", { name: "本文画像" })).toBeVisible();
     await dialog.getByRole("button", { name: "readerを閉じる" }).click();
     await expect(dialog).toBeHidden();
+    await releaseImage();
     await page.waitForTimeout(750);
     await expect(page.locator("[data-reader-figure-status]")).toHaveCount(0);
   });
