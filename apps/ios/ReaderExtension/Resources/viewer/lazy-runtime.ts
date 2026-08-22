@@ -5,12 +5,18 @@ export interface LazyRuntimeController {
 }
 
 export type ExtensionRuntimeImporter = (runtimeURL: string) => Promise<unknown>;
+export type ExtensionRuntimeInstaller = () => void;
 
-export function createExtensionRuntimeController(
+export function createExtensionRuntimeLoader(
+  assets: readonly string[],
   getRuntimeURL: (resourceName: string) => string,
   importRuntime: ExtensionRuntimeImporter,
-): LazyRuntimeController {
-  return createLazyRuntimeController(() => importRuntime(getRuntimeURL("reader-runtime.js")).then(() => undefined));
+  installRuntime: ExtensionRuntimeInstaller,
+): () => Promise<void> {
+  return async () => {
+    for (const asset of assets) await importRuntime(getRuntimeURL(asset));
+    installRuntime();
+  };
 }
 
 export function createLazyRuntimeController(loadRuntime: () => Promise<void>): LazyRuntimeController {

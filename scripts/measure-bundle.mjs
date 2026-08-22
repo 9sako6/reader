@@ -10,7 +10,11 @@ const assets = {
   },
   "session-wasm.js": {
     chrome: "apps/chrome/dist/session-wasm.js",
-    safari: "apps/ios/ReaderExtension/Resources/generated/session-wasm.js",
+    safari: null,
+  },
+  "session-wasm-module.js": {
+    chrome: null,
+    safari: "apps/ios/ReaderExtension/Resources/generated/session-wasm-module.js",
   },
   "reader_session_bg.wasm": {
     chrome: "apps/chrome/dist/reader_session_bg.wasm",

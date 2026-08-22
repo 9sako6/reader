@@ -8,7 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		05E8EBD9E498545A695C7E80 /* defuddle.js in Resources */ = {isa = PBXBuildFile; fileRef = D679207F5BA5AB4542A4897B /* defuddle.js */; };
-		07F53AA916D106B4A3FE7EDD /* session-wasm.js in Resources */ = {isa = PBXBuildFile; fileRef = 5BEAF8E6AB6A2FAFE47FE444 /* session-wasm.js */; };
+		11A4E8C7F0D34B3A9B2D6C5E1F708294 /* session-wasm-module.js in Resources */ = {isa = PBXBuildFile; fileRef = 12B5F9D8E1C245A0AC3E7D6F208194B5 /* session-wasm-module.js */; };
 		0C32A8C405E61CDCE7B86FE4 /* reader-extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 698C10DA0C7A78B067BE2850 /* reader-extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		225A2A7F815F94F004BD042E /* viewer.js in Resources */ = {isa = PBXBuildFile; fileRef = 804F66AD5D44EA4C13F377E2 /* viewer.js */; };
 		22E7AB9133695AC561788F91 /* reader-session-dependencies.txt in Resources */ = {isa = PBXBuildFile; fileRef = A829055828EAA2B7AC82C1EF /* reader-session-dependencies.txt */; };
@@ -59,7 +59,7 @@
 		4833FBB175EE4595A6290FED /* ReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderApp.swift; sourceTree = "<group>"; };
 		4AE4DB483CAD20FA58AE5489 /* engine.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = engine.js; sourceTree = "<group>"; };
 		53C87B3DEBE3AAB7738B8AE9 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		5BEAF8E6AB6A2FAFE47FE444 /* session-wasm.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "session-wasm.js"; sourceTree = "<group>"; };
+		12B5F9D8E1C245A0AC3E7D6F208194B5 /* session-wasm-module.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "session-wasm-module.js"; sourceTree = "<group>"; };
 		698C10DA0C7A78B067BE2850 /* reader-extension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = "reader-extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		6C16DB3F3DDA1601212E620E /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
 		804F66AD5D44EA4C13F377E2 /* viewer.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = viewer.js; sourceTree = "<group>"; };
@@ -86,7 +86,7 @@
 				C575FFC2EA1FAC083341E08B /* lucide-LICENSE.txt */,
 				2F28EBA4661DB5BB689F12CA /* reader_session_bg.wasm */,
 				A829055828EAA2B7AC82C1EF /* reader-session-dependencies.txt */,
-				5BEAF8E6AB6A2FAFE47FE444 /* session-wasm.js */,
+				12B5F9D8E1C245A0AC3E7D6F208194B5 /* session-wasm-module.js */,
 				8D9F83A789E8397C77DD2819 /* session.js */,
 				804F66AD5D44EA4C13F377E2 /* viewer.js */,
 			);
@@ -235,7 +235,7 @@
 				A9791ED60F43406AE8E6C965 /* manifest.json in Resources */,
 				22E7AB9133695AC561788F91 /* reader-session-dependencies.txt in Resources */,
 				3ACCB890D822655239A2CE08 /* reader_session_bg.wasm in Resources */,
-				07F53AA916D106B4A3FE7EDD /* session-wasm.js in Resources */,
+				11A4E8C7F0D34B3A9B2D6C5E1F708294 /* session-wasm-module.js in Resources */,
 				BFAD4667FE95EAE2DD8C0F06 /* session.js in Resources */,
 				225A2A7F815F94F004BD042E /* viewer.js in Resources */,
 			);

@@ -191,25 +191,25 @@ test("Safari extension loads reader resources in dependency order", () => {
   assert.equal(manifest.permissions, undefined);
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);
   assert.deepEqual(manifest.web_accessible_resources, [{
-    resources: ["reader_session_bg.wasm"],
+    resources: [
+      "defuddle.js",
+      "session-wasm-module.js",
+      "session.js",
+      "engine.js",
+      "extractor.js",
+      "icons.js",
+      "viewer.js",
+      "reader_session_bg.wasm",
+    ],
     matches: ["<all_urls>"],
   }]);
-  assert.deepEqual(manifest.content_scripts[0].js, [
-    "defuddle.js",
-    "session-wasm.js",
-    "session.js",
-    "engine.js",
-    "extractor.js",
-    "icons.js",
-    "viewer.js",
-    "bootstrap.js",
-  ]);
+  assert.deepEqual(manifest.content_scripts[0].js, ["bootstrap.js"]);
 });
 
 test("Xcode project embeds every manifest script in the extension", () => {
   const project = fs.readFileSync(path.join(root, "reader.xcodeproj", "project.pbxproj"), "utf8");
   assert.match(project, /defuddle\.js in Resources/);
-  assert.match(project, /session-wasm\.js in Resources/);
+  assert.match(project, /session-wasm-module\.js in Resources/);
   assert.match(project, /session\.js in Resources/);
   assert.match(project, /reader_session_bg\.wasm in Resources/);
   assert.match(project, /reader-session-dependencies\.txt in Resources/);

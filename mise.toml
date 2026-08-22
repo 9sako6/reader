@@ -113,13 +113,13 @@ rm -rf apps/ios/ReaderExtension/Resources/generated
 install -d apps/ios/ReaderExtension/Resources/generated
 cp node_modules/defuddle/dist/index.js apps/ios/ReaderExtension/Resources/generated/defuddle.js
 cp .build/packages/session-ts/src/session.js apps/ios/ReaderExtension/Resources/generated/session.js
-cp .build/session-wasm/reader_session.js apps/ios/ReaderExtension/Resources/generated/session-wasm.js
+node scripts/build-session-wasm-module.mjs
 cp .build/session-wasm/reader_session_bg.wasm apps/ios/ReaderExtension/Resources/generated/reader_session_bg.wasm
 cp .build/packages/engine/src/engine.js apps/ios/ReaderExtension/Resources/generated/engine.js
 cp .build/packages/extractor/src/extractor.js apps/ios/ReaderExtension/Resources/generated/extractor.js
 cp .build/packages/icons/src/icons.js apps/ios/ReaderExtension/Resources/generated/icons.js
 cp .build/apps/ios/ReaderExtension/Resources/viewer/viewer.js apps/ios/ReaderExtension/Resources/generated/viewer.js
-cp .build/apps/ios/ReaderExtension/Resources/viewer/bootstrap.js apps/ios/ReaderExtension/Resources/generated/bootstrap.js
+node scripts/build-safari-bootstrap.mjs
 cp node_modules/defuddle/LICENSE apps/ios/ReaderExtension/Resources/generated/defuddle-LICENSE.txt
 cp LICENSES/lucide.txt apps/ios/ReaderExtension/Resources/generated/lucide-LICENSE.txt
 cp .build/session-licenses/reader-session-dependencies.txt apps/ios/ReaderExtension/Resources/generated/reader-session-dependencies.txt

@@ -47,10 +47,11 @@
         document.body.prepend(pageOwnedHost);
       }
 
-      function loadScript(source) {
+      function loadScript(source, type = "text/javascript") {
         return new Promise((resolve, reject) => {
           const script = document.createElement("script");
           script.src = source;
+          script.type = type;
           script.onload = resolve;
           script.onerror = reject;
           document.head.append(script);
@@ -260,7 +261,7 @@
         };
         for (const source of [
           "/apps/ios/ReaderExtension/Resources/generated/defuddle.js",
-          "/apps/ios/ReaderExtension/Resources/generated/session-wasm.js",
+          "/apps/ios/ReaderExtension/Resources/generated/session-wasm-module.js",
           "/apps/ios/ReaderExtension/Resources/generated/session.js",
           "/apps/ios/ReaderExtension/Resources/generated/engine.js",
           "/apps/ios/ReaderExtension/Resources/generated/extractor.js",
@@ -268,7 +269,7 @@
           "/apps/ios/ReaderExtension/Resources/generated/viewer.js",
           "/apps/ios/ReaderExtension/Resources/generated/bootstrap.js",
         ]) {
-          await loadScript(source);
+          await loadScript(source, source.endsWith("session-wasm-module.js") ? "module" : "text/javascript");
           loadedScripts.push(source);
         }
         const extractFromPage = globalThis.Extractor.fromPage;

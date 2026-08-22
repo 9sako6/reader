@@ -6,7 +6,7 @@ import { chromium } from "@playwright/test";
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const outputPath = resolve(repositoryRoot, "test-results/performance/reader.json");
 const generatedRoot = resolve(repositoryRoot, "apps/ios/ReaderExtension/Resources/generated");
-const scripts = ["session-wasm.js", "session.js", "defuddle.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]
+const scripts = ["session-wasm-module.js", "session.js", "defuddle.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]
   .map((name) => resolve(generatedRoot, name));
 const nodeCounts = [1000, 10_000, 50_000];
 const fixtures = [
@@ -70,7 +70,12 @@ async function measurePage(browser, fixture) {
         },
       };
     });
-    for (const script of scripts) await page.addScriptTag({ path: script });
+    for (const script of scripts) {
+      await page.addScriptTag({
+        path: script,
+        type: script.endsWith("session-wasm-module.js") ? "module" : "text/javascript",
+      });
+    }
     return await page.evaluate(({ nodeCount, extraction }) => {
       const sourceMarkup = (() => {
         const rootTag = extraction === "dominant" ? "article" : "main";
