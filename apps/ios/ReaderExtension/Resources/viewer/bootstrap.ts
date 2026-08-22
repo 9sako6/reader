@@ -128,6 +128,17 @@
   );
 
   const controller = globalThis.ReaderLazyRuntime.createLazyRuntimeController(loadRuntime);
+  let pagehideHandler: (() => void) | null = null;
+
+  const cleanupBootstrap = (): void => {
+    clearLoadingTimers();
+    globalThis.removeEventListener("scroll", fadeHandleDuringScroll);
+    clearScrollFade();
+    if (pagehideHandler) {
+      globalThis.removeEventListener("pagehide", pagehideHandler);
+      pagehideHandler = null;
+    }
+  };
 
   const open = async (): Promise<void> => {
     if (loading) return;
@@ -156,9 +167,7 @@
       const current = await controller.open();
       if (!current) return;
       globalThis.MobileViewer.install();
-      clearLoadingTimers();
-      globalThis.removeEventListener("scroll", fadeHandleDuringScroll);
-      clearScrollFade();
+      cleanupBootstrap();
       loading = false;
       host.remove();
       await globalThis.MobileViewer.open();
@@ -185,10 +194,11 @@
   cancel.addEventListener("click", cancelLoad);
   retry.addEventListener("click", open);
   globalThis.addEventListener("scroll", fadeHandleDuringScroll, { passive: true });
-  globalThis.addEventListener("pagehide", () => {
+  pagehideHandler = () => {
     controller.navigate();
-    globalThis.removeEventListener("scroll", fadeHandleDuringScroll);
-    clearScrollFade();
     if (loading) hideFeedback();
-  }, { once: true });
+    cleanupBootstrap();
+    host.remove();
+  };
+  globalThis.addEventListener("pagehide", pagehideHandler, { once: true });
 })();

@@ -27,7 +27,7 @@
     if (!runtimePromise) {
       runtimePromise = (async () => {
         const scope = globalThis as typeof globalThis & {
-          wasm_bindgen?: (moduleOrPath?: string | ArrayBuffer) => Promise<WasmSessionExports>;
+          wasm_bindgen?: (moduleOrPath?: string | ArrayBuffer | Uint8Array) => Promise<WasmSessionExports>;
           ReaderSessionWasm?: WasmSessionExports;
         };
         if (scope.ReaderSessionWasm) {
@@ -35,7 +35,7 @@
           return;
         }
         const wasmBindgen = (typeof wasm_bindgen === "function" ? wasm_bindgen : scope.wasm_bindgen) as
-          | ((moduleOrPath?: string | ArrayBuffer) => Promise<WasmSessionExports>)
+          | ((moduleOrPath?: string | ArrayBuffer | Uint8Array) => Promise<WasmSessionExports>)
           | undefined;
         if (typeof wasmBindgen !== "function") {
           throw new Error("ReaderSession WASM glue is not loaded");
@@ -46,7 +46,7 @@
         } else {
           const response = await fetch(url);
           if (!response.ok) throw new Error(`ReaderSession WASM fetch failed: ${response.status}`);
-          await wasmBindgen(await response.arrayBuffer());
+          await wasmBindgen(new Uint8Array(await response.arrayBuffer()).buffer);
         }
         runtime = wasmBindgen as unknown as WasmSessionExports;
       })().catch((error) => {
