@@ -44,8 +44,6 @@
   let sourceOverflow: string | null = null;
   let sourceBodyOverflow: string | null = null;
   let content: ReaderContent | null = null;
-  let cachedContent: ReaderContent | null = null;
-  let cachedPageUrl: string | null = null;
   let units: ReaderUnit[] = [];
   let unitIndex = 0;
   let flowItems: ReadingFlowItem[] = [];
@@ -65,6 +63,8 @@
   let lastLeftTapY = 0;
   let textFigureOffset: number | null = null;
   let launchFocus: HTMLElement | null = null;
+  let launchProgress: LaunchProgress | null = null;
+  let sessionGeneration = 0;
 
   function getNodes(): MobileNodes {
     if (!nodes) throw new Error("reader shell is not available");
@@ -83,6 +83,7 @@
     global.document.documentElement.append(host);
     global.addEventListener("scroll", fadeHandleDuringScroll, { passive: true });
     global.addEventListener("resize", handleViewportChange, { passive: true });
+    global.document.addEventListener?.("visibilitychange", handleVisibilityChange);
   }
 
   function createStyles() {
@@ -164,52 +165,97 @@
     return button;
   }
 
+  function isCurrentSession(generation: number): boolean {
+    return generation === sessionGeneration;
+  }
+
+  function destroyLaunchProgress(progress: LaunchProgress): void {
+    progress.animation?.cancel?.();
+    progress.element.remove();
+    if (launchProgress === progress) launchProgress = null;
+  }
+
   async function open() {
     if (overlay || opening || !handle || !shadow) return;
+    const generation = ++sessionGeneration;
     opening = true;
+    controlsVisible = false;
     launchFocus = handle;
     sourceScrollY = global.scrollY || 0;
     sourceOverflow = global.document.documentElement.style.overflow;
     sourceBodyOverflow = global.document.body?.style.overflow ?? null;
     handle.hidden = true;
-    const launchProgress = createLaunchFeedback();
-    shadow.append(launchProgress.element);
+    const progress = createLaunchFeedback();
+    launchProgress = progress;
+    if (!isCurrentSession(generation)) {
+      destroyLaunchProgress(progress);
+      return;
+    }
+    shadow.append(progress.element);
     await nextPaint();
+    if (!isCurrentSession(generation)) {
+      destroyLaunchProgress(progress);
+      return;
+    }
     let preparationError: unknown = null;
     try {
-      const pageUrl = global.location.href;
-      content = cachedContent && cachedPageUrl === pageUrl
-        ? cachedContent
-        : global.Extractor.fromPage(global.document, global.Defuddle);
+      const extractedContent = await global.Extractor.fromPage(global.document, global.Defuddle);
+      if (!isCurrentSession(generation)) {
+        destroyLaunchProgress(progress);
+        return;
+      }
+      content = extractedContent;
       if (!content?.text) throw new Error("content_not_found");
       rebuildUnits();
       if (units.length === 0) throw new Error("units_not_found");
-      cachedContent = content;
-      cachedPageUrl = pageUrl;
       currentOffset = 0;
       seekToUnit(0);
     } catch (error) {
+      if (!isCurrentSession(generation)) {
+        destroyLaunchProgress(progress);
+        return;
+      }
       preparationError = error;
     }
-    if (Date.now() - launchProgress.startedAt >= LAUNCH_PROGRESS_REVEAL_DELAY_MS) {
+    if (!isCurrentSession(generation)) {
+      destroyLaunchProgress(progress);
+      return;
+    }
+    if (Date.now() - progress.startedAt >= LAUNCH_PROGRESS_REVEAL_DELAY_MS) {
       await Promise.all([
-        completeLaunchProgress(launchProgress),
-        coverSourcePage(launchProgress.element),
+        completeLaunchProgress(progress, generation),
+        coverSourcePage(progress.element),
       ]);
-    } else launchProgress.animation?.cancel?.();
-    overlay = buildShell();
-    shadow.append(overlay);
+      if (!isCurrentSession(generation)) {
+        destroyLaunchProgress(progress);
+        return;
+      }
+    } else progress.animation?.cancel?.();
+    if (!isCurrentSession(generation)) {
+      destroyLaunchProgress(progress);
+      return;
+    }
+    const reader = buildShell();
+    if (!isCurrentSession(generation)) {
+      reader.remove();
+      destroyLaunchProgress(progress);
+      return;
+    }
+    overlay = reader;
+    shadow.append(reader);
     global.addEventListener("keydown", handleKeyDown);
-    launchProgress.element.remove();
+    destroyLaunchProgress(progress);
     lockSourcePage();
+    if (!isCurrentSession(generation)) return;
     if (preparationError) {
       showError();
       global.console?.error?.("reader could not prepare this page", preparationError);
     } else renderReader();
     global.requestAnimationFrame(() => {
+      if (!isCurrentSession(generation)) return;
       overlay?.querySelector?.<HTMLButtonElement>('[aria-label="readerを閉じる"]')?.focus();
     });
-    opening = false;
+    if (isCurrentSession(generation)) opening = false;
   }
 
   function createLaunchFeedback(): LaunchProgress {
@@ -234,7 +280,7 @@
     return { element: feedback, loader, indicator, animation, startedAt: Date.now() };
   }
 
-  async function completeLaunchProgress(progress: LaunchProgress): Promise<void> {
+  async function completeLaunchProgress(progress: LaunchProgress, generation: number): Promise<void> {
     progress.loader.style.animation = "none";
     progress.loader.style.opacity = "1";
     const reducedMotion = global.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -263,7 +309,7 @@
     try {
       await completion.finished;
     } catch {
-      progress.indicator.style.transform = "scaleX(1)";
+      if (isCurrentSession(generation)) progress.indicator.style.transform = "scaleX(1)";
     }
   }
 
@@ -349,8 +395,6 @@
   }
 
   function retry() {
-    cachedContent = null;
-    cachedPageUrl = null;
     close();
     open();
   }
@@ -392,11 +436,16 @@
     getNodes().content.replaceChildren(scroller);
     renderTextControls();
     getNodes().textRestoreScrollTop = null;
-    const updatePosition = () => captureTextPosition(scroller, positionMarkers, getNodes().progress);
+    const generation = sessionGeneration;
+    const updatePosition = () => {
+      if (!isCurrentSession(generation) || !nodes || !content) return;
+      captureTextPosition(scroller, positionMarkers, getNodes().progress);
+    };
     scroller.addEventListener("scroll", updatePosition, { passive: true });
     getNodes().textScroller = scroller;
     getNodes().textMarkers = positionMarkers;
     global.requestAnimationFrame(() => {
+      if (!isCurrentSession(generation) || !nodes || !content) return;
       restoreTextPosition(scroller, positionMarkers);
       getNodes().textRestoreScrollTop = scroller.scrollTop;
     });
@@ -627,7 +676,7 @@
     Object.assign(getNodes(), { previousUnit, unit, nextUnit });
     renderRsvpControls();
     contextSentenceIndex = null;
-    if (!renderFlowItem()) play();
+    if (!renderFlowItem() && global.document.visibilityState !== "hidden") play();
   }
 
   function transportButton(label: string, action: () => void): HTMLButtonElement {
@@ -849,7 +898,9 @@
     lastLeftTapAt = tapAt;
     lastLeftTapX = clientX;
     lastLeftTapY = clientY;
+    const generation = sessionGeneration;
     pendingLeftTap = global.setTimeout(() => {
+      if (!isCurrentSession(generation)) return;
       pendingLeftTap = null;
       lastLeftTapAt = 0;
       toggleTransportControls();
@@ -932,8 +983,12 @@
     updatePlayButton();
   }
 
+  function handleVisibilityChange(): void {
+    if (global.document.visibilityState === "hidden") pause();
+  }
+
   function updatePlayButton() {
-    const playButton = getNodes().play;
+    const playButton = nodes?.play;
     updateTransportVisibility();
     if (!playButton) return;
     const state = playing ? "pause" : "play";
@@ -945,7 +1000,7 @@
   }
 
   function updateTransportVisibility(): void {
-    const transport = getNodes().transport;
+    const transport = nodes?.transport;
     if (transport) transport.hidden = !controlsVisible;
   }
 
@@ -973,7 +1028,9 @@
     }
     const nextFlow = flowItems[flowIndex + 1];
     const nextUnit = nextFlow?.kind === "unit" ? units[nextFlow.unitIndex] : undefined;
+    const generation = sessionGeneration;
     playbackTimer = global.setTimeout(() => {
+      if (!isCurrentSession(generation)) return;
       playbackTimer = null;
       if (flowIndex >= flowItems.length - 1) {
         pause();
@@ -1085,30 +1142,67 @@
     focusable[nextIndex]?.focus();
   }
 
-  function close() {
-    const restoreFocus = launchFocus;
+  function destroySessionState(): void {
+    if (playbackTimer !== null) global.clearTimeout(playbackTimer);
+    playbackTimer = null;
     clearPendingLeftTap();
-    lastLeftTapAt = 0;
-    hideTransportControls();
-    pause();
-    overlay?.remove();
-    overlay = null;
     content = null;
     units = [];
+    unitIndex = 0;
     flowItems = [];
     flowIndex = 0;
+    currentOffset = 0;
+    contextSentenceIndex = null;
+    playing = false;
+    figurePanel?.remove();
     figurePanel = null;
-    textFigureOffset = null;
     mode = "rsvp";
     nodes = null;
     opening = false;
-    global.removeEventListener?.("keydown", handleKeyDown);
+    textFigureOffset = null;
+    controlsVisible = true;
+    lastLeftTapAt = 0;
+    lastLeftTapX = 0;
+    lastLeftTapY = 0;
+    destroyLaunchProgressIfPresent();
+    launchFocus = null;
+  }
+
+  function destroyLaunchProgressIfPresent(): void {
+    const progress = launchProgress;
+    launchProgress = null;
+    if (!progress) return;
+    progress.animation?.cancel?.();
+    progress.element.remove();
+  }
+
+  function restoreSourcePage(): void {
+    if (sourceOverflow === null && sourceBodyOverflow === null && sourceScrollY === 0) return;
     global.document.documentElement.style.overflow = sourceOverflow ?? "";
     if (global.document.body && sourceBodyOverflow !== null) global.document.body.style.overflow = sourceBodyOverflow;
-    if (handle) handle.hidden = false;
     global.scrollTo({ top: sourceScrollY, left: 0, behavior: "auto" });
-    launchFocus = null;
-    restoreFocus?.focus?.();
+    sourceScrollY = 0;
+    sourceOverflow = null;
+    sourceBodyOverflow = null;
+  }
+
+  function close(): void {
+    sessionGeneration += 1;
+    const restoreFocus = launchFocus;
+    const currentOverlay = overlay;
+    overlay = null;
+    try {
+      clearPendingLeftTap();
+      lastLeftTapAt = 0;
+      pause();
+      currentOverlay?.remove();
+      global.removeEventListener?.("keydown", handleKeyDown);
+      destroySessionState();
+    } finally {
+      restoreSourcePage();
+      if (handle) handle.hidden = false;
+      restoreFocus?.focus?.();
+    }
   }
 
   function fadeHandleDuringScroll() {

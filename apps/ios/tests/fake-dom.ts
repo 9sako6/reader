@@ -69,6 +69,10 @@ export class FakeElement {
     this.append(...children);
   }
 
+  focus() {
+    this.focused = true;
+  }
+
   getBoundingClientRect() {
     return this.rect || { top: 0, bottom: 100, left: 0, right: 390, width: 390, height: 100 };
   }
