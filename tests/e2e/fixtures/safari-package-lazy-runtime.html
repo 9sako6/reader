@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Safari lazy package runtime</title>
+    <script>
+      globalThis.browser = {
+        runtime: {
+          getURL(path) {
+            const params = new URLSearchParams(location.search);
+            const query = new URLSearchParams();
+            if (params.has("slow")) query.set("delay", "250");
+            if (params.has("slow-extraction")) query.set("slow-extraction", "900");
+            if (params.has("retry")) {
+              query.set("fail-once", "extractor.js");
+              query.set("token", params.get("runtime") || "retry");
+            }
+            const suffix = query.toString() ? `?${query}` : "";
+            return `/apps/ios/ReaderExtension/Resources/generated/${path}${suffix}`;
+          },
+        },
+      };
+    </script>
+    <script src="/apps/ios/ReaderExtension/Resources/generated/bootstrap.js"></script>
+  </head>
+  <body>
+    <article>
+      <h1>Safariの遅延生成パッケージを検証します</h1>
+      <p>tap後にReaderSessionと最初のunitが準備されます。</p>
+    </article>
+  </body>
+</html>

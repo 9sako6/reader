@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
-  createExtensionRuntimeController,
+  createExtensionRuntimeLoader,
   createLazyRuntimeController,
 } from "../ReaderExtension/Resources/viewer/lazy-runtime";
 
@@ -35,27 +35,22 @@ test("lazy runtime loads once for concurrent opens", async () => {
   assert.equal(loadCount, 1);
 });
 
-test("extension runtime imports the module URL once for concurrent opens", async () => {
-  const runtime = deferred<unknown>();
+test("extension runtime loader imports each heavy asset in order", async () => {
   const importedURLs: string[] = [];
-  const controller = createExtensionRuntimeController(
-    (resourceName) => `safari-extension://reader/${resourceName}`,
+  const loadRuntime = createExtensionRuntimeLoader(
+    ["defuddle.js", "session-wasm-module.js", "session.js"],
+    (asset) => `safari-extension://reader/${asset}`,
     async (runtimeURL) => {
       importedURLs.push(runtimeURL);
-      return runtime.promise;
     },
   );
 
-  assert.deepEqual(importedURLs, []);
-  const firstOpen = controller.open();
-  const secondOpen = controller.open();
-  assert.deepEqual(importedURLs, ["safari-extension://reader/reader-runtime.js"]);
-
-  runtime.resolve({});
-  assert.equal(await firstOpen, true);
-  assert.equal(await secondOpen, true);
-  assert.equal(await controller.open(), true);
-  assert.deepEqual(importedURLs, ["safari-extension://reader/reader-runtime.js"]);
+  await loadRuntime();
+  assert.deepEqual(importedURLs, [
+    "safari-extension://reader/defuddle.js?readerAttempt=1",
+    "safari-extension://reader/session-wasm-module.js?readerAttempt=1",
+    "safari-extension://reader/session.js?readerAttempt=1",
+  ]);
 });
 
 test("lazy runtime resets after a failed load so retry can succeed", async () => {

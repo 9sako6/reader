@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 
@@ -21,10 +21,23 @@ const intrinsicImages = new Map([
   ["/image/transparent.png", '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480"/>'],
   ["/image/huge.png", '<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="3000" viewBox="0 0 4000 3000"><rect width="4000" height="3000" fill="#4ba9c7"/></svg>'],
 ]);
+const failedRuntimeRequests = new Set();
 
 createServer(async (request, response) => {
   const requestUrl = new URL(request.url || "/", "http://localhost");
   const pathname = decodeURIComponent(requestUrl.pathname);
+  if (requestUrl.searchParams.has("delay") && pathname.startsWith("/apps/ios/ReaderExtension/Resources/generated/")) {
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, Number(requestUrl.searchParams.get("delay")) || 250));
+  }
+  if (requestUrl.searchParams.has("fail-once")
+    && pathname.endsWith(`/apps/ios/ReaderExtension/Resources/generated/${requestUrl.searchParams.get("fail-once")}`)) {
+    const failureKey = `${pathname}:${requestUrl.searchParams.get("token") || ""}`;
+    if (!failedRuntimeRequests.has(failureKey)) {
+      failedRuntimeRequests.add(failureKey);
+      response.writeHead(503).end();
+      return;
+    }
+  }
   if (pathname === "/image/missing.png") {
     response.writeHead(404).end();
     return;
@@ -63,6 +76,16 @@ createServer(async (request, response) => {
   try {
     const metadata = await stat(filePath);
     if (!metadata.isFile()) throw new Error("not a file");
+    if (requestUrl.searchParams.has("slow-extraction") && pathname.endsWith("/generated/extractor.js")) {
+      const source = await readFile(filePath, "utf8");
+      const delay = Number(requestUrl.searchParams.get("slow-extraction")) || 900;
+      const delayedExtractor = `${source}\nconst readerOriginalFromPageAsync = globalThis.Extractor?.fromPageAsync;\nif (readerOriginalFromPageAsync) globalThis.Extractor.fromPageAsync = async (...args) => { await new Promise((resolveDelay) => setTimeout(resolveDelay, ${delay})); return readerOriginalFromPageAsync(...args); };\n`;
+      response.writeHead(200, {
+        "content-type": mimeTypes.get(extname(filePath)) || "application/octet-stream",
+        "cache-control": "no-store",
+      }).end(delayedExtractor);
+      return;
+    }
     response.writeHead(200, {
       "content-type": mimeTypes.get(extname(filePath)) || "application/octet-stream",
       "cache-control": "no-store",

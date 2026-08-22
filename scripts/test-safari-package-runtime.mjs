@@ -11,6 +11,7 @@ const webPort = Number(process.env.READER_SAFARI_SMOKE_PORT) || 4174;
 let driverPort = Number(process.env.READER_SAFARI_DRIVER_PORT) || 0;
 const baseUrl = `http://127.0.0.1:${webPort}`;
 const pageUrl = `${baseUrl}/tests/e2e/fixtures/safari-package-runtime.html`;
+const lazyPageUrl = `${baseUrl}/tests/e2e/fixtures/safari-package-lazy-runtime.html`;
 const generatedRoot = resolve(repositoryRoot, "apps/ios/ReaderExtension/Resources/generated");
 const manifestPath = resolve(repositoryRoot, "apps/ios/ReaderExtension/Resources/manifest.json");
 let fixtureServer = null;
@@ -73,15 +74,28 @@ function sha256(bytes) {
 async function verifyPackage() {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   assert.deepEqual(manifest.web_accessible_resources, [{
-    resources: ["reader_session_bg.wasm"],
+    resources: [
+      "defuddle.js",
+      "session-wasm-module.js",
+      "session.js",
+      "engine.js",
+      "extractor.js",
+      "icons.js",
+      "viewer.js",
+      "reader_session_bg.wasm",
+    ],
     matches: ["<all_urls>"],
   }]);
+  assert.deepEqual(manifest.content_scripts[0].js, ["bootstrap.js"]);
   const requiredAssets = [
     ...new Set([
       ...manifest.content_scripts.flatMap((contentScript) => contentScript.js),
       ...manifest.web_accessible_resources.flatMap((resource) => resource.resources),
     ]),
   ];
+  const generatedBootstrap = await readFile(join(generatedRoot, "bootstrap.js"), "utf8");
+  assert.equal(generatedBootstrap.includes("require("), false);
+  assert.match(generatedBootstrap, /import\(runtimeURL\)/);
   const generatedAssets = new Map();
   for (const asset of requiredAssets) {
     const bytes = await readFile(join(generatedRoot, asset));
@@ -287,6 +301,168 @@ async function verifyGeneratedRuntimeInWebKit() {
   }
 }
 
+async function verifyGeneratedLazyRuntimeInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const assetRequests = new Map();
+    page.on("request", (request) => {
+      const asset = new URL(request.url()).pathname.match(/generated\/([^/]+)$/)?.[1];
+      if (asset) assetRequests.set(asset, (assetRequests.get(asset) || 0) + 1);
+    });
+    await page.goto(`${lazyPageUrl}?runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    const passiveState = await page.evaluate(() => ({
+      defuddle: typeof globalThis.Defuddle,
+      engine: typeof globalThis.Engine,
+      extractor: typeof globalThis.Extractor,
+      mobileViewer: typeof globalThis.MobileViewer,
+      readerSession: typeof globalThis.ReaderSession,
+      wasm: typeof globalThis.wasm_bindgen,
+      bootstrapHost: Boolean(document.getElementById("__reader-bootstrap")),
+      entryStyle: (() => {
+        const entry = document.getElementById("__reader-bootstrap")?.shadowRoot?.querySelector(".handle");
+        if (!entry) return null;
+        const style = getComputedStyle(entry, "::after");
+        return { opacity: style.opacity, transitionDuration: style.transitionDuration, touchAction: getComputedStyle(entry).touchAction };
+      })(),
+    }));
+    assert.deepEqual(passiveState, {
+      defuddle: "undefined",
+      engine: "undefined",
+      extractor: "undefined",
+      mobileViewer: "undefined",
+      readerSession: "undefined",
+      wasm: "undefined",
+      bootstrapHost: true,
+      entryStyle: { opacity: "0.82", transitionDuration: "0.16s, 0.16s", touchAction: "manipulation" },
+    });
+    for (const asset of ["defuddle.js", "session-wasm-module.js", "session.js", "engine.js", "extractor.js", "icons.js", "viewer.js", "reader_session_bg.wasm"]) {
+      assert.equal(assetRequests.get(asset) || 0, 0, `${asset} must not load before tap`);
+    }
+    await page.evaluate(() => window.dispatchEvent(new Event("scroll")));
+    assert.equal(await page.evaluate(() => document.getElementById("__reader-bootstrap")?.shadowRoot?.querySelector(".handle")?.classList.contains("scrolling")), true);
+    await page.waitForTimeout(350);
+    assert.equal(await page.evaluate(() => document.getElementById("__reader-bootstrap")?.shadowRoot?.querySelector(".handle")?.classList.contains("scrolling")), false);
+    await page.locator("#__reader-bootstrap").getByRole("button", { name: "readerで読む" }).click();
+    const result = await page.evaluate(async () => {
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const host = document.getElementById("__reader-host");
+        const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+        if (globalThis.ReaderSession?.ready?.() === true && unit?.textContent?.trim()) {
+          return { unitText: unit.textContent.trim(), initialized: true };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 16));
+      }
+      return {
+        initialized: globalThis.ReaderSession?.ready?.() === true,
+        unitText: document.getElementById("__reader-host")?.shadowRoot?.querySelector('[data-reader-unit="true"]')?.textContent?.trim() || "",
+      };
+    });
+    assert.equal(result.initialized, true);
+    assert.notEqual(result.unitText, "");
+    for (const asset of ["defuddle.js", "session-wasm-module.js", "session.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]) {
+      assert.equal(assetRequests.get(asset), 1, `${asset} should load once`);
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+async function verifyGeneratedLazyRuntimeRetryInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.goto(`${lazyPageUrl}?retry=1&runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    const requestedAssets = new Map();
+    page.on("request", (request) => {
+      const asset = new URL(request.url()).pathname.match(/generated\/([^/]+)$/)?.[1];
+      if (asset) requestedAssets.set(asset, (requestedAssets.get(asset) || 0) + 1);
+    });
+    const bootstrap = page.locator("#__reader-bootstrap");
+    await bootstrap.getByRole("button", { name: "readerで読む" }).click();
+    await bootstrap.getByRole("button", { name: "再試行" }).waitFor();
+    await bootstrap.getByRole("button", { name: "再試行" }).click();
+    const result = await page.evaluate(async () => {
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const host = document.getElementById("__reader-host");
+        const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+        if (globalThis.ReaderSession?.ready?.() === true && unit?.textContent?.trim()) {
+          return { initialized: true, unitText: unit.textContent.trim() };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 16));
+      }
+      return {
+        initialized: globalThis.ReaderSession?.ready?.() === true,
+        unitText: "",
+        mobileViewer: typeof globalThis.MobileViewer,
+        readerSession: typeof globalThis.ReaderSession,
+        host: Boolean(document.getElementById("__reader-host")),
+      };
+    });
+    assert.equal(result.initialized, true, JSON.stringify({ ...result, requestedAssets: Object.fromEntries(requestedAssets), pageErrors }));
+    assert.notEqual(result.unitText, "");
+    for (const asset of ["defuddle.js", "session-wasm-module.js", "session.js", "engine.js", "extractor.js"]) {
+      assert.equal(requestedAssets.get(asset), 2, `${asset} should reload after the intermediate failure`);
+    }
+    for (const asset of ["icons.js", "viewer.js"]) {
+      assert.equal(requestedAssets.get(asset), 1, `${asset} should load once after retry`);
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+async function verifyGeneratedLazyRuntimeCancelInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${lazyPageUrl}?slow=1&runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    const bootstrap = page.locator("#__reader-bootstrap");
+    await bootstrap.getByRole("button", { name: "readerで読む" }).click();
+    await bootstrap.getByRole("button", { name: "キャンセル" }).click();
+    await page.waitForTimeout(2200);
+    const state = await page.evaluate(() => ({
+      bootstrapHost: Boolean(document.getElementById("__reader-bootstrap")),
+      readerHost: Boolean(document.getElementById("__reader-host")),
+      mobileViewer: typeof globalThis.MobileViewer,
+      bootstrapHandleCount: document.getElementById("__reader-bootstrap")?.shadowRoot?.querySelectorAll(".handle").length || 0,
+    }));
+    assert.deepEqual(state, { bootstrapHost: true, readerHost: false, mobileViewer: "object", bootstrapHandleCount: 1 });
+  } finally {
+    await browser.close();
+  }
+}
+
+async function verifyGeneratedLazyRuntimeHandoffCancelInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${lazyPageUrl}?slow-extraction=1&runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
+    const bootstrap = page.locator("#__reader-bootstrap");
+    await bootstrap.getByRole("button", { name: "readerで読む" }).click();
+    const reader = page.locator("#__reader-host");
+    await reader.getByRole("button", { name: "中止" }).waitFor();
+    await reader.getByRole("button", { name: "中止" }).click();
+    await page.waitForTimeout(1100);
+    const state = await page.evaluate(() => {
+      const host = document.getElementById("__reader-host");
+      return {
+        bootstrapHost: Boolean(document.getElementById("__reader-bootstrap")),
+        readerHost: Boolean(host),
+        readerOverlay: Boolean(host?.shadowRoot?.querySelector(".reader")),
+        readerHandleCount: host?.shadowRoot?.querySelectorAll(".entry").length || 0,
+      };
+    });
+    assert.deepEqual(state, { bootstrapHost: false, readerHost: true, readerOverlay: false, readerHandleCount: 1 });
+  } finally {
+    await browser.close();
+  }
+}
+
 try {
   if (driverPort === 0) driverPort = await findFreePort();
   fixtureServer = spawn(process.execPath, ["tests/e2e/server.mjs"], {
@@ -297,6 +473,10 @@ try {
   await waitFor(pageUrl);
   await verifyPackage();
   await verifyGeneratedRuntimeInWebKit();
+  await verifyGeneratedLazyRuntimeInWebKit();
+  await verifyGeneratedLazyRuntimeRetryInWebKit();
+  await verifyGeneratedLazyRuntimeCancelInWebKit();
+  await verifyGeneratedLazyRuntimeHandoffCancelInWebKit();
   process.stdout.write("Generated Safari resources initialized ReaderSession in WebKit\n");
   try {
     await verifySafariRuntime();
