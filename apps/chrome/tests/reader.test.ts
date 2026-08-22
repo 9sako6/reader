@@ -937,3 +937,37 @@ test("reader keeps the article image and veil in text mode", () => {
   assert.equal(textVeil.style.background, "rgba(0,0,0,0.46)");
   assert.ok(findElement(textFigure, (element) => element.textContent === "図1 処理時間"));
 });
+
+test("reader removes closed content, ignores a saved timer, and reopens fresh content", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener, timers } = harness;
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "cleanup-first" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の本文です。次の文です。",
+    requestId: "cleanup-first",
+  });
+
+  const firstOverlay = document.getElementById("__rsvp-reader-root");
+  const savedTimerCallback = [...timers.values()][0].callback;
+  const closeButton = findElement(firstOverlay, (element) => element.attributes["aria-label"] === "readerを閉じる");
+  closeButton.dispatchEvent({ type: "click" });
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+
+  savedTimerCallback();
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "cleanup-second" });
+  messageListener({
+    type: "START_RSVP",
+    text: "新しい本文です。",
+    requestId: "cleanup-second",
+  });
+  const secondOverlay = document.getElementById("__rsvp-reader-root");
+  const secondDisplay = findElement(
+    secondOverlay,
+    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+  );
+  assert.match(secondDisplay.textContent, /新しい本文/u);
+  assert.equal(findElement(secondOverlay, (element) => /最初の本文/u.test(element.textContent)), null);
+});

@@ -900,8 +900,8 @@
     lastLeftTapY = clientY;
     const generation = sessionGeneration;
     pendingLeftTap = global.setTimeout(() => {
-      pendingLeftTap = null;
       if (!isCurrentSession(generation)) return;
+      pendingLeftTap = null;
       lastLeftTapAt = 0;
       toggleTransportControls();
     }, 260);
@@ -1030,8 +1030,8 @@
     const nextUnit = nextFlow?.kind === "unit" ? units[nextFlow.unitIndex] : undefined;
     const generation = sessionGeneration;
     playbackTimer = global.setTimeout(() => {
-      playbackTimer = null;
       if (!isCurrentSession(generation)) return;
+      playbackTimer = null;
       if (flowIndex >= flowItems.length - 1) {
         pause();
         renderUnit();

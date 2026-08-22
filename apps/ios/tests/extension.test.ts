@@ -113,6 +113,7 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
   let launchFeedbackDuringExtraction = null;
   let extractionCount = 0;
   let now = 0;
+  const animationFrames = [];
   const context: any = {
     document,
     location: { href: "https://example.com/articles/first" },
@@ -138,6 +139,7 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     matchMedia: () => ({ matches: false }),
     addEventListener() {},
     requestAnimationFrame(callback) {
+      animationFrames.push(callback);
       callback();
       return 1;
     },
@@ -164,6 +166,7 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     context,
     documentElement,
     createdElements,
+    animationFrames,
     timers,
     launchFeedbackDuringExtraction() {
       return launchFeedbackDuringExtraction;
@@ -512,6 +515,40 @@ test("Safari reader destroys autoplay state when closed", async () => {
   assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
   assert.equal(timers.size, 0);
   assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
+});
+
+test("Safari reader ignores a saved playback timer after close and reopen", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  await context.MobileViewer.open();
+  const savedPlaybackCallback = [...timers.values()][0].callback;
+
+  context.MobileViewer.close();
+  await context.MobileViewer.open();
+  const unit = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
+  const progress = findElement(documentElement, (element) => element.className === "progress");
+  const unitText = unit.textContent;
+  const progressText = progress.textContent;
+  savedPlaybackCallback();
+
+  assert.equal(unit.textContent, unitText);
+  assert.equal(progress.textContent, progressText);
+  assert.equal(timers.size, 1);
+  context.MobileViewer.close();
+  assert.equal(timers.size, 0);
+});
+
+test("Safari reader ignores a saved text restore frame after close", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, animationFrames } = harness;
+  await context.MobileViewer.open();
+  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  modeButton.dispatchEvent({ type: "click" });
+  const savedRestoreFrame = animationFrames.at(-1);
+
+  context.MobileViewer.close();
+  assert.doesNotThrow(() => savedRestoreFrame());
+  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
 });
 
 test("Safari reader restores source page state when closed repeatedly", async () => {
