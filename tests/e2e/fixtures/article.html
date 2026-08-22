@@ -99,6 +99,10 @@
         };
       }
 
+      function readerHost() {
+        return document.querySelector('[data-reader-owned="true"]');
+      }
+
       async function installChromeViewer() {
         const messageListeners = [];
         const loadingBarRevealEvents = [];
@@ -159,7 +163,7 @@
             }
             for (const listener of messageListeners) listener({ type: "START_RSVP", requestId, text, readingContext });
             if (options.paused === true) {
-              const host = document.querySelector("#__rsvp-reader-root");
+              const host = readerHost();
               const pauseButton = host?.shadowRoot?.querySelector('[aria-label="一時停止"]');
               pauseButton?.click();
             }
@@ -169,7 +173,7 @@
           return requestId;
         };
         const loadingObserver = new MutationObserver(() => {
-          const host = document.querySelector("#__rsvp-reader-root");
+          const host = readerHost();
           const bar = host?.shadowRoot?.querySelector("[data-reader-loading-bar]");
           if (bar && loadingBarRevealEvents.length === 0) {
             const style = getComputedStyle(bar);

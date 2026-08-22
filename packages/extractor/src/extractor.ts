@@ -121,8 +121,13 @@
       : sourceDocument.createElement("article");
     if (usesTemplate) stagingRoot.innerHTML = result.content;
     else (contentRoot as HTMLElement).innerHTML = result.content;
-    contentRoot.querySelector?.("#__reader-host")?.remove();
-    contentRoot.querySelector?.("#__rsvp-reader-root")?.remove();
+    const ownedReader = contentRoot.querySelector?.('[data-reader-owned="true"]');
+    if (ownedReader) {
+      ownedReader.remove();
+    } else {
+      contentRoot.querySelector?.("#__reader-host")?.remove();
+      contentRoot.querySelector?.("#__rsvp-reader-root")?.remove();
+    }
 
     const indexedSource = indexSourceOffsets(contentRoot);
     let rawText = indexedSource.rawText;
