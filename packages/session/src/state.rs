@@ -142,6 +142,7 @@ pub enum ReaderSessionState {
     Preparing {
         request_id: String,
         generation: u64,
+        visibility_hidden: bool,
     },
     Reading {
         mode: Mode,
@@ -220,6 +221,7 @@ impl ReaderSessionState {
             Self::Preparing {
                 request_id,
                 generation,
+                ..
             } => empty("preparing", *generation, request_id.clone()),
             Self::Reading {
                 mode,

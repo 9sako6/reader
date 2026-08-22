@@ -161,7 +161,7 @@ function revealLoading(timers) {
   entry[1].callback();
 }
 
-function createSessionStub(commands) {
+function createSessionStub(commands, options: { initFails?: boolean } = {}) {
   let nextId = 1;
   const initialState = () => ({
     phase: "idle",
@@ -175,6 +175,7 @@ function createSessionStub(commands) {
     requestId: "",
     timerPending: false,
     contentPresent: false,
+    preparationHidden: false,
   });
   const stateForFlow = (state, flow, index, playback) => {
     const item = flow.flow[index];
@@ -203,8 +204,10 @@ function createSessionStub(commands) {
     return flow.flow.findIndex((item) => item.kind === "unit" && item.unitIndex === Math.max(0, unitIndex));
   };
   return {
-    async init() {},
-    ready: () => true,
+    async init() {
+      if (options.initFails) throw new Error("wasm unavailable");
+    },
+    ready: () => !options.initFails,
     create() {
       return { id: nextId++, state: initialState(), destroyed: false, flow: null };
     },
@@ -214,12 +217,16 @@ function createSessionStub(commands) {
       const previous = handle.state;
       let state = previous;
       let effects = [];
-      if (command.type === "open") {
+      if (command.type === "open" && previous.phase !== "ended") {
         state = { ...initialState(), phase: "preparing", requestId: command.requestId, generation: previous.generation + 1 };
+        if (previous.phase === "reading") effects = [{ type: "cancelTimer" }];
       } else if (command.type === "prepareSucceeded" && previous.phase === "preparing" && previous.requestId === command.requestId) {
         handle.flow = command.flow;
-        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, command.flow, 0, "playing");
-        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.units[command.flow.flow[0]?.unitIndex || 0]?.durationMs || 1 }];
+        const playback = previous.preparationHidden ? "paused" : "playing";
+        state = stateForFlow({ ...previous, generation: previous.generation + 1, preparationHidden: false }, command.flow, 0, playback);
+        effects = playback === "playing"
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.units[command.flow.flow[0]?.unitIndex || 0]?.durationMs || 1 }]
+          : [{ type: "cancelTimer" }];
       } else if (command.type === "prepareFailed" && previous.phase === "preparing" && previous.requestId === command.requestId) {
         state = { ...previous, phase: "error", reason: command.reason, generation: previous.generation + 1 };
         effects = [{ type: "cancelTimer" }];
@@ -256,15 +263,25 @@ function createSessionStub(commands) {
       } else if ((command.type === "switchToText" || command.type === "switchToRsvp") && previous.phase === "reading") {
         const index = flowIndexForPosition(handle.flow, command.position);
         const target = Math.max(0, index);
-        const playback = command.type === "switchToText" || handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
+        const playback = command.type === "switchToText"
+          ? "paused"
+          : previous.mode === "text"
+            ? previous.playback
+            : handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
         state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, target, playback);
         state = { ...state, mode: command.type === "switchToText" ? "text" : "rsvp", position: command.position, sourceOffset: command.position.sourceOffset };
         effects = [{ type: "cancelTimer" }];
         if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
       } else if (command.type === "resumeFromFigure" && previous.phase === "reading" && previous.currentKind === "figure") {
         const nextIndex = previous.flowIndex + 1;
-        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, "playing");
-        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }];
+        const nextItem = handle.flow.flow[nextIndex];
+        const playback = nextItem?.kind === "figure" ? "paused" : "playing";
+        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, playback);
+        effects = playback === "playing"
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }]
+          : [{ type: "cancelTimer" }];
+      } else if (command.type === "visibilityHidden" && previous.phase === "preparing" && !previous.preparationHidden) {
+        state = { ...previous, preparationHidden: true, generation: previous.generation + 1 };
       } else if (command.type === "visibilityHidden" && previous.phase === "reading") {
         state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
         effects = [{ type: "cancelTimer" }];
@@ -278,7 +295,7 @@ function createSessionStub(commands) {
   };
 }
 
-function createOutlineReaderHarness() {
+function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
   const headingBeforeSelection = new FakeElement("h1", "記事タイトル");
   const headingInSelection = new FakeElement("h2", "次の節");
   const documentElement = new FakeElement("html");
@@ -388,7 +405,7 @@ function createOutlineReaderHarness() {
     Engine,
     Extractor,
     ReaderIcons,
-    ReaderSession: createSessionStub(sessionCommands),
+    ReaderSession: createSessionStub(sessionCommands, options),
     Intl,
     console,
     scrollTo(position) {
@@ -611,6 +628,26 @@ test("reader renders extraction-failed errors with retry and return actions", ()
   assert.ok(findElement(overlay, (element) => element.textContent === "文章を準備できませんでした"));
   assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
   assert.ok(findElement(overlay, (element) => element.textContent === "元に戻る"));
+});
+
+test("reader rejects a delayed start after session initialization fails", async () => {
+  const harness = createOutlineReaderHarness({ initFails: true });
+  const { document, messageListener } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "failed-session-request" });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  assert.ok(findElement(overlay, (element) => element.textContent === "文章を準備できませんでした"));
+  messageListener({
+    type: "START_RSVP",
+    text: "遅延して届いた本文です。",
+    requestId: "failed-session-request",
+  });
+
+  assert.equal(findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true"), null);
+  assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
 });
 
 test("reader retries a classified error without replacing its launch focus", () => {
@@ -1080,6 +1117,35 @@ test("reader keeps keyboard focus trapped after switching to text mode", () => {
   assert.equal(body.inert, false);
   assert.equal(head.inert, true);
   assert.equal(document.activeElement, launchButton);
+});
+
+test("reader restores the RSVP mode control and does not autoplay locally", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener, sessionCommands } = harness;
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mode-focus-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "mode-focus-request",
+  });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textOverlay = document.getElementById("__rsvp-reader-root");
+  const textModeButton = findElement(textOverlay, (element) => element.textContent === "RSVPで読む");
+  textModeButton.focus();
+  textModeButton.dispatchEvent({ type: "click" });
+
+  const rsvpModeButton = findElement(
+    document.getElementById("__rsvp-reader-root"),
+    (element) => element.textContent === "文章で読む",
+  );
+  assert.equal(document.activeElement, rsvpModeButton);
+  assert.equal(sessionCommands.filter(({ type }) => type === "play").length, 0);
+  assert.equal(findElement(
+    document.getElementById("__rsvp-reader-root"),
+    (element) => element.attributes["aria-label"] === "再生",
+  ).attributes["aria-pressed"], "false");
 });
 
 test("reader keyboard controls pause and move between sentence contexts", () => {

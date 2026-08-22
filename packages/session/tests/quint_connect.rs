@@ -307,6 +307,30 @@ fn visibility_hidden_pauses() -> impl Driver {
     SessionDriver::default()
 }
 
+#[quint_connect::quint_test(
+    spec = "spec/reader_session.qnt",
+    test = "visibilityHiddenDuringPreparation"
+)]
+fn visibility_hidden_during_preparation() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(
+    spec = "spec/reader_session.qnt",
+    test = "visibilityHiddenDuringPreparationThenFailure"
+)]
+fn visibility_hidden_during_preparation_then_failure() -> impl Driver {
+    SessionDriver::default()
+}
+
+#[quint_connect::quint_test(
+    spec = "spec/reader_session.qnt",
+    test = "visibilityHiddenDuringPreparationIsIdempotent"
+)]
+fn visibility_hidden_during_preparation_is_idempotent() -> impl Driver {
+    SessionDriver::default()
+}
+
 #[quint_connect::quint_run(
     spec = "spec/reader_session.qnt",
     max_samples = 1000,

@@ -8,7 +8,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const Engine = require("../../../.build/packages/engine/src/engine.js");
 
-function createSessionStub(commands) {
+function createSessionStub(commands, options: { init?: () => Promise<void>; ready?: () => boolean } = {}) {
   let nextId = 1;
   const handles = new Map();
   const initialState = () => ({
@@ -23,6 +23,7 @@ function createSessionStub(commands) {
     requestId: "",
     timerPending: false,
     contentPresent: false,
+    preparationHidden: false,
   });
   const stateForFlow = (state, flow, index, playback) => {
     const item = flow.flow[index];
@@ -57,8 +58,10 @@ function createSessionStub(commands) {
     return flow.flow.findIndex((item) => item.kind === "unit" && item.unitIndex === Math.max(0, unitIndex));
   };
   const api = {
-    async init() {},
-    ready: () => true,
+    async init() {
+      if (options.init) await options.init();
+    },
+    ready: () => options.ready?.() ?? true,
     create() {
       const handle = { id: nextId++, state: initialState(), destroyed: false, flow: null };
       handles.set(handle.id, handle);
@@ -70,13 +73,17 @@ function createSessionStub(commands) {
       const previous = handle.state;
       let state = previous;
       let effects = [];
-      if (command.type === "open") {
+      if (command.type === "open" && previous.phase !== "ended") {
         state = { ...initialState(), phase: "preparing", requestId: command.requestId, generation: previous.generation + 1 };
+        if (previous.phase === "reading") effects = [{ type: "cancelTimer" }];
       } else if (command.type === "prepareSucceeded") {
         if (previous.phase === "preparing" && previous.requestId === command.requestId) {
           handle.flow = command.flow;
-          state = stateForFlow({ ...previous, generation: previous.generation + 1 }, command.flow, 0, "playing");
-          effects = [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.units[command.flow.flow[0]?.unitIndex || 0]?.durationMs || 1 }];
+          const playback = previous.preparationHidden ? "paused" : "playing";
+          state = stateForFlow({ ...previous, generation: previous.generation + 1, preparationHidden: false }, command.flow, 0, playback);
+          effects = playback === "playing"
+            ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.units[command.flow.flow[0]?.unitIndex || 0]?.durationMs || 1 }]
+            : [{ type: "cancelTimer" }];
         }
       } else if (command.type === "prepareFailed") {
         if (previous.phase === "preparing" && previous.requestId === command.requestId) {
@@ -118,15 +125,25 @@ function createSessionStub(commands) {
       } else if ((command.type === "switchToText" || command.type === "switchToRsvp") && previous.phase === "reading") {
         const index = flowIndexForPosition(handle.flow, command.position);
         const target = Math.max(0, index);
-        const playback = command.type === "switchToText" || handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
+        const playback = command.type === "switchToText"
+          ? "paused"
+          : previous.mode === "text"
+            ? previous.playback
+            : handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
         state = stateForFlow({ ...previous, mode: command.type === "switchToText" ? "text" : "rsvp", generation: previous.generation + 1 }, handle.flow, target, playback);
         state = { ...state, mode: command.type === "switchToText" ? "text" : "rsvp", position: command.position, sourceOffset: command.position.sourceOffset };
         effects = [{ type: "cancelTimer" }];
         if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
       } else if (command.type === "resumeFromFigure" && previous.phase === "reading" && previous.currentKind === "figure") {
         const nextIndex = previous.flowIndex + 1;
-        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, "playing");
-        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }];
+        const nextItem = handle.flow.flow[nextIndex];
+        const playback = nextItem?.kind === "figure" ? "paused" : "playing";
+        state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, playback);
+        effects = playback === "playing"
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }]
+          : [{ type: "cancelTimer" }];
+      } else if (command.type === "visibilityHidden" && previous.phase === "preparing" && !previous.preparationHidden) {
+        state = { ...previous, preparationHidden: true, generation: previous.generation + 1 };
       } else if (command.type === "visibilityHidden" && previous.phase === "reading") {
         state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
         effects = [{ type: "cancelTimer" }];
@@ -191,7 +208,7 @@ test("Xcode project embeds every manifest script in the extension", () => {
   assert.equal(project.includes("RELEASE_CHECKLIST.md"), false);
 });
 
-function createSafariReaderHarness(engine = Engine, language = "ja") {
+function createSafariReaderHarness(engine = Engine, language = "ja", sessionOptions = {}) {
   const documentElement = new FakeElement("html");
   documentElement.lang = language;
   const body = new FakeElement("body");
@@ -287,7 +304,7 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
       },
     },
     ReaderIcons: { create: () => new FakeElement("svg") },
-    ReaderSession: createSessionStub(sessionCommands),
+    ReaderSession: createSessionStub(sessionCommands, sessionOptions),
     Defuddle: class {},
     innerWidth: 390,
     innerHeight: 844,
@@ -469,6 +486,65 @@ test("Safari reader keeps RSVP controls visible and preserves the paused state",
   assert.equal(backButton.parent.hidden, false);
 });
 
+test("Safari reader completes hidden preparation without starting playback", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement, timers } = harness;
+  let resolveExtraction: (value: unknown) => void = () => {};
+  context.Extractor.fromPage = () => new Promise((resolve) => {
+    resolveExtraction = resolve;
+  });
+
+  const opening = context.MobileViewer.open();
+  await Promise.resolve();
+  harness.setVisibilityState("hidden");
+  resolveExtraction(harness.activeContent());
+  await opening;
+
+  const playButton = findElement(
+    documentElement,
+    (element) => element.attributes["aria-label"] === "再生",
+  );
+  assert.ok(playButton);
+  assert.equal(timers.size, 0);
+  assert.deepEqual(harness.sessionCommands().map(({ type }) => type), [
+    "open",
+    "visibilityHidden",
+    "rebuildUnits",
+    "prepareSucceeded",
+  ]);
+});
+
+test("Safari reader applies queued mode changes after session initialization", async () => {
+  let resolveInit: () => void = () => {};
+  const initPromise = new Promise<void>((resolve) => {
+    resolveInit = resolve;
+  });
+  const harness = createSafariReaderHarness(Engine, "ja", {
+    ready: () => false,
+    init: () => initPromise,
+  });
+
+  await harness.context.MobileViewer.open();
+  const { documentElement } = harness;
+  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  assert.ok(modeButton);
+  modeButton.dispatchEvent({ type: "click" });
+  resolveInit();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const resolvedModeButton = findElement(documentElement, (element) => element.className === "mode-button");
+  assert.equal(resolvedModeButton.textContent, "RSVPで読む");
+  assert.ok(findElement(documentElement, (element) => element.className === "text-view"));
+  assert.deepEqual(harness.sessionCommands().map(({ type }) => type), [
+    "open",
+    "rebuildUnits",
+    "prepareSucceeded",
+    "switchToText",
+  ]);
+});
+
 test("Safari viewer segments with the ReaderContent language", async () => {
   const locales: string[] = [];
   const engine = {
@@ -644,7 +720,7 @@ test("Safari figure surface is keyboard accessible and keeps a failed image reco
 });
 
 test("Safari reader maps text viewport positions back to RSVP content", async () => {
-  const { context, documentElement, timers } = createSafariReaderHarness();
+  const { context, documentElement, timers, createdElements } = createSafariReaderHarness();
   await context.MobileViewer.open();
   const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
   fireNextTimer(timers);
@@ -673,9 +749,15 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   const textFigure = findElement(scroller, (element) => element.className === "article-figure");
   assert.ok(textFigure);
   textFigure.rect = { top: -24, bottom: 276, left: 20, right: 370, width: 350, height: 300 };
+  const imageCountBeforeRsvp = createdElements.filter((element) => element.tagName === "IMG" && element.src === "https://example.com/figure.png").length;
   scroller.dispatchEvent({ type: "pointerdown" });
   modeButton.dispatchEvent({ type: "click" });
   assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像"));
+  assert.equal(
+    createdElements.filter((element) => element.tagName === "IMG" && element.src === "https://example.com/figure.png").length,
+    imageCountBeforeRsvp + 1,
+  );
+  assert.equal(findElements(documentElement, (element) => element.className === "rsvp-figure").length, 1);
 
   const imagePlayButton = findElement(
     documentElement,

@@ -20,6 +20,8 @@ module reader_session {
     previousFlowLength: int,
     previousTimerPending: bool,
     previousContentPresent: bool,
+    preparationHidden: bool,
+    previousPreparationHidden: bool,
     figure0Visits: int,
     figure1Visits: int,
     figure0Consumes: int,
@@ -43,6 +45,7 @@ module reader_session {
     timerGeneration: int,
     timerPending: bool,
     contentPresent: bool,
+    preparationHidden: bool,
   }
 
   type ActionTaken =
@@ -84,6 +87,7 @@ module reader_session {
     timerGeneration: after.timerGeneration,
     timerPending: after.timerPending,
     contentPresent: after.contentPresent,
+    preparationHidden: after.preparationHidden,
     previousFlowIndex: before.flowIndex,
     previousPosition: before.position,
     previousGeneration: before.timerGeneration,
@@ -94,6 +98,7 @@ module reader_session {
     previousFlowLength: before.flowLength,
     previousTimerPending: before.timerPending,
     previousContentPresent: before.contentPresent,
+    previousPreparationHidden: before.preparationHidden,
     figure0Visits: if (after.phase == "reading") before.figure0Visits + figureVisitIncrement(before, after, 0) else 0,
     figure1Visits: if (after.phase == "reading") before.figure1Visits + figureVisitIncrement(before, after, 1) else 0,
     figure0Consumes: if (after.phase == "reading") before.figure0Consumes else 0,
@@ -116,6 +121,7 @@ module reader_session {
     timerGeneration: state.timerGeneration,
     timerPending: state.timerPending,
     contentPresent: state.contentPresent,
+    preparationHidden: state.preparationHidden,
   }
 
   pure def rememberWithAnchor(before: SessionState, after: SessionUpdate, anchor: int): SessionState = {
@@ -172,6 +178,7 @@ module reader_session {
       previousFlowIndex: 0, previousPosition: 0, previousGeneration: 0, previousActiveRequest: "",
       previousPhase: "idle", previousMode: "rsvp", previousPlayback: "paused",
       previousFlowLength: 0, previousTimerPending: false, previousContentPresent: false,
+      preparationHidden: false, previousPreparationHidden: false,
       figure0Visits: 0, figure1Visits: 0, figure0Consumes: 0, figure1Consumes: 0,
       previousFigure0Visits: 0, previousFigure1Visits: 0,
       previousFigure0Consumes: 0, previousFigure1Consumes: 0,
@@ -192,6 +199,7 @@ module reader_session {
         phase: "preparing", activeRequest: requestId, mode: "rsvp", playback: "paused",
         flowIndex: 0, flowLength: 0, position: 0,
         timerGeneration: nextGeneration(session.timerGeneration), timerPending: false, contentPresent: false,
+        preparationHidden: false,
       })
     },
     actionTaken' = Open({request_id: requestId}),
@@ -206,9 +214,12 @@ module reader_session {
       session' = remember(session, updateOf(session))
     } else {
       session' = remember(session, {
-        phase: "reading", activeRequest: requestId, mode: "rsvp", playback: "playing",
+        phase: "reading", activeRequest: requestId, mode: "rsvp",
+        playback: if (session.preparationHidden) "paused" else "playing",
         flowIndex: 0, flowLength: 5, position: 0,
-        timerGeneration: nextGeneration(session.timerGeneration), timerPending: true, contentPresent: true,
+        timerGeneration: nextGeneration(session.timerGeneration),
+        timerPending: not(session.preparationHidden), contentPresent: true,
+        preparationHidden: false,
       })
     },
     actionTaken' = PrepareSucceeded({request_id: requestId}),
@@ -226,6 +237,7 @@ module reader_session {
         phase: "error", activeRequest: requestId, mode: "rsvp", playback: "paused",
         flowIndex: 0, flowLength: 0, position: 0,
         timerGeneration: nextGeneration(session.timerGeneration), timerPending: false, contentPresent: false,
+        preparationHidden: false,
       })
     },
     actionTaken' = PrepareFailed({request_id: requestId}),
@@ -243,6 +255,7 @@ module reader_session {
         phase: "idle", activeRequest: "", mode: "rsvp", playback: "paused",
         flowIndex: 0, flowLength: 0, position: 0,
         timerGeneration: nextGeneration(session.timerGeneration), timerPending: false, contentPresent: false,
+        preparationHidden: false,
       })
     },
     actionTaken' = Cancel({request_id: requestId}),
@@ -380,9 +393,17 @@ module reader_session {
   }
 
   action visibilityHidden = all {
-    session.phase == "reading",
+    session.phase == "reading" or session.phase == "preparing",
     session.timerGeneration < 8,
-    session' = remember(session, { ...updateOf(session), playback: "paused", timerGeneration: nextGeneration(session.timerGeneration), timerPending: false }),
+    if (session.phase == "preparing") {
+      if (session.preparationHidden) {
+        session' = remember(session, updateOf(session))
+      } else {
+        session' = remember(session, { ...updateOf(session), preparationHidden: true, timerGeneration: nextGeneration(session.timerGeneration) })
+      }
+    } else {
+      session' = remember(session, { ...updateOf(session), playback: "paused", preparationHidden: false, timerGeneration: nextGeneration(session.timerGeneration), timerPending: false })
+    },
     actionTaken' = VisibilityHidden,
     lastAction' = "visibilityHidden",
     lastRequest' = "",
@@ -397,6 +418,7 @@ module reader_session {
         phase: "ended", activeRequest: "", mode: "rsvp", playback: "paused",
         flowIndex: 0, flowLength: 0, position: 0,
         timerGeneration: nextGeneration(session.timerGeneration), timerPending: false, contentPresent: false,
+        preparationHidden: false,
       })
     },
     actionTaken' = Close,
@@ -426,7 +448,8 @@ module reader_session {
   val staleTickDoesNotAdvance = lastAction != "tick" or session.timerGeneration != session.previousGeneration or session.flowIndex == session.previousFlowIndex
   val stalePreparationDoesNotOpen = (lastAction != "prepareSucceeded" and lastAction != "prepareFailed") or
     (session.previousPhase == "preparing" and lastRequest == session.previousActiveRequest and lastAction == "prepareSucceeded" and
-      session.phase == "reading" and session.contentPresent and session.flowLength > 0 and session.timerPending) or
+      session.phase == "reading" and session.contentPresent and session.flowLength > 0 and
+      (session.timerPending or session.previousPreparationHidden)) or
     (session.previousPhase == "preparing" and lastRequest == session.previousActiveRequest and lastAction == "prepareFailed" and
       session.phase == "error" and not(session.contentPresent) and session.flowLength == 0 and
       not(session.timerPending) and session.activeRequest == lastRequest) or
@@ -441,6 +464,11 @@ module reader_session {
       session.timerGeneration == session.previousGeneration and
       session.timerPending == session.previousTimerPending and
       session.contentPresent == session.previousContentPresent)
+  val hiddenPreparationStartsPaused = lastAction != "prepareSucceeded" or
+    session.previousPhase != "preparing" or not(session.previousPreparationHidden) or session.playback == "paused"
+  val repeatedPreparationVisibilityIsStable = lastAction != "visibilityHidden" or
+    session.previousPhase != "preparing" or not(session.previousPreparationHidden) or
+    (session.phase == "preparing" and session.preparationHidden and session.timerGeneration == session.previousGeneration)
   val closedSessionCannotRevive = session.previousPhase != "ended" or and {
     session.phase == "ended", not(session.contentPresent), session.flowLength == 0,
     not(session.timerPending), session.activeRequest == "",
@@ -492,7 +520,8 @@ module reader_session {
 
   val invariant = and {
     endedHasNoContent, playingOnlyInRsvp, figureIsPaused, timerOnlyWhilePlaying,
-    positionIsInRange, staleTickDoesNotAdvance, stalePreparationDoesNotOpen,
+    positionIsInRange, staleTickDoesNotAdvance, stalePreparationDoesNotOpen, hiddenPreparationStartsPaused,
+    repeatedPreparationVisibilityIsStable,
     closedSessionCannotRevive,
     noImplicitRewind, figureConsumedAtMostOnce, modeRoundTripKeepsLocation,
   }
@@ -510,4 +539,7 @@ module reader_session {
   run pausedModeRoundTrip = init.then(open("A")).then(prepareSucceeded("A")).then(pause).then(switchToText(0)).then(switchToRsvp(0))
   run rebuildUnitsWhilePlaying = init.then(open("A")).then(prepareSucceeded("A")).then(rebuildUnits(0))
   run visibilityHiddenPauses = init.then(open("A")).then(prepareSucceeded("A")).then(visibilityHidden)
+  run visibilityHiddenDuringPreparation = init.then(open("A")).then(visibilityHidden).then(prepareSucceeded("A"))
+  run visibilityHiddenDuringPreparationThenFailure = init.then(open("A")).then(visibilityHidden).then(prepareFailed("A"))
+  run visibilityHiddenDuringPreparationIsIdempotent = init.then(open("A")).then(visibilityHidden).then(visibilityHidden).then(prepareSucceeded("A"))
 }

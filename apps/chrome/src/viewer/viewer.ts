@@ -27,8 +27,6 @@
   let units: ReaderUnit[] = [];
   let segmentationLocale = "ja";
   let currentGraphemeLimit = 12;
-  let currentUnitIndex = 0;
-  let playbackState: PlaybackState = "idle";
   let timerId: number | null = null;
   let rootHost: HTMLDivElement | null = null;
   let readerShadow: ShadowRoot | null = null;
@@ -57,7 +55,6 @@
   let displayResizeObserver: ResizeObserver | null = null;
   let figures: ReaderFigure[] = [];
   let flowItems: ReaderFlowItem[] = [];
-  let flowIndex = 0;
   let figurePanel: HTMLElement | null = null;
   let figureViewState: FigureViewState = { kind: "idle" };
   let figureLoadToken = 0;
@@ -86,6 +83,31 @@
   let pendingSessionCommands: ReaderSessionCommand[] = [];
   let sessionEnabled = false;
   let applyingSession = false;
+
+  function readingSessionState(): ReaderSessionObservableState | null {
+    return sessionState?.phase === "reading" ? sessionState : null;
+  }
+
+  function sessionFlowIndex(): number {
+    return readingSessionState()?.flowIndex ?? 0;
+  }
+
+  function sessionUnitIndex(): number {
+    const state = readingSessionState();
+    if (typeof state?.unitIndex === "number") return state.unitIndex;
+    const item = flowItems[sessionFlowIndex()];
+    return item?.kind === "unit" ? item.unitIndex : 0;
+  }
+
+  function sessionPlaybackState(): PlaybackState {
+    const state = readingSessionState();
+    if (state) return state.playback;
+    return sessionState?.phase === "ended" ? "idle" : "paused";
+  }
+
+  function sessionMode(): ReaderSessionMode {
+    return readingSessionState()?.mode ?? "rsvp";
+  }
 
   function isReaderMessage(value: unknown): value is ReaderMessage {
     if (typeof value !== "object" || value === null || !("type" in value)) return false;
@@ -154,7 +176,7 @@
     requestId: string,
     suppliedReadingContext: Partial<ReadingContext> | null | undefined,
   ): void {
-    if (requestId !== activeRequestId) return;
+    if (requestId !== activeRequestId || activePreparation.kind !== "preparing") return;
 
     const loadingWasVisible = loadingLayer !== null;
     const elapsed = loadingStartedAt === null ? 0 : Date.now() - loadingStartedAt;
@@ -183,7 +205,6 @@
     sectionTransitions = readingContext.sectionTransitions;
     initialHeadingIndex = readingContext.initialHeadingIndex;
     figures = Array.isArray(readingContext.figures) ? readingContext.figures : [];
-    playbackState = "paused";
 
     const figureBoundaries = figures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
     segmentationLocale = readingContext.language;
@@ -206,16 +227,13 @@
 
     units = baseUnits;
     currentGraphemeLimit = 12;
-    currentUnitIndex = 0;
     flowItems = globalThis.Engine.buildReadingFlow(units, figures);
-    flowIndex = 0;
     currentPosition = flowItems[0]
       ? globalThis.Engine.positionForFlowItem(flowItems[0], units)
       : { kind: "text", sourceOffset: 0 };
     createOverlay();
     rebuildUnitsForViewport();
     activePreparation = { kind: "ready", requestId };
-    playbackState = "paused";
     renderCurrentFlowItem();
     dispatchSession({
       type: "prepareSucceeded",
@@ -316,17 +334,7 @@
   function syncReaderSessionState(): void {
     const state = sessionState;
     if (!state) return;
-    if (state.phase === "reading") {
-      if (typeof state.flowIndex === "number") flowIndex = state.flowIndex;
-      if (state.position) currentPosition = state.position;
-      const item = flowItems[flowIndex];
-      if (item?.kind === "unit") currentUnitIndex = item.unitIndex;
-      playbackState = state.playback || "paused";
-    } else if (state.phase === "ended") {
-      playbackState = "idle";
-    } else if (state.phase !== "idle") {
-      playbackState = "paused";
-    }
+    if (state.phase === "reading" && state.position) currentPosition = state.position;
     updatePlayPauseButton();
   }
 
@@ -366,7 +374,6 @@
   function renderSessionState(): void {
     const state = sessionState;
     if (!state || state.phase !== "reading" || state.mode !== "rsvp") return;
-    flowIndex = state.flowIndex ?? flowIndex;
     renderCurrentFlowItem();
   }
 
@@ -760,6 +767,7 @@
 
     const modeButton = document.createElement("button");
     modeButton.type = "button";
+    modeButton.setAttribute("data-reader-mode-button", "true");
     modeButton.textContent = modeLabel;
     Object.assign(modeButton.style, {
       position: "absolute",
@@ -1065,6 +1073,24 @@
       for (const child of Array.from(element.children)) {
         const candidate = child as HTMLElement;
         if (candidate.tagName.toLowerCase() === "button" && candidate.getAttribute?.("aria-label") === "readerを閉じる") {
+          return candidate as HTMLButtonElement;
+        }
+        const nested = find(candidate);
+        if (nested) return nested;
+      }
+      return null;
+    };
+    return find(root);
+  }
+
+  function findModeButton(): HTMLButtonElement | null {
+    if (!root) return null;
+    const queried = root.querySelector?.<HTMLButtonElement>('[data-reader-mode-button="true"]');
+    if (queried) return queried;
+    const find = (element: Element): HTMLButtonElement | null => {
+      for (const child of Array.from(element.children)) {
+        const candidate = child as HTMLElement;
+        if (candidate.tagName.toLowerCase() === "button" && candidate.getAttribute?.("data-reader-mode-button") === "true") {
           return candidate as HTMLButtonElement;
         }
         const nested = find(candidate);
@@ -1435,10 +1461,13 @@
 
   function showRsvpView() {
     if (!root || units.length === 0) return;
+    const previousFocus = readerActiveElement();
+    const restoreModeFocus = previousFocus?.getAttribute?.("data-reader-mode-button") === "true";
     dispatchSession({ type: "switchToRsvp", position: currentPosition });
     clearRenderedView();
     createOverlay();
-    if (!renderCurrentFlowItem()) play();
+    renderCurrentFlowItem();
+    if (restoreModeFocus) focusAfterPaint(findModeButton());
   }
 
   function clearRenderedView() {
@@ -1831,11 +1860,10 @@
       : { kind: "text", sourceOffset };
     if (syncSession && !applyingSession) {
       dispatchSession({
-        type: sessionState?.mode === "text" ? "switchToText" : "switchToRsvp",
+        type: sessionMode() === "text" ? "switchToText" : "switchToRsvp",
         position: currentPosition,
       });
     }
-    currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
     if (progressLabel && sourceText) {
       progressLabel.textContent = `${globalThis.Engine.calculateReadingProgress(
         currentPosition.sourceOffset,
@@ -1882,7 +1910,7 @@
   }
 
   function renderCurrentFlowItem(): boolean {
-    const item = flowItems[flowIndex];
+    const item = flowItems[sessionFlowIndex()];
     if (!item) return true;
     if (item.kind === "figure") {
       const figure = figures[item.figureIndex];
@@ -1892,7 +1920,6 @@
       }
     }
     dismissFigurePanel();
-    currentUnitIndex = item.kind === "unit" ? item.unitIndex : currentUnitIndex;
     renderCurrentUnit();
     updatePlayPauseButton();
     return false;
@@ -1901,14 +1928,15 @@
   function renderCurrentUnit() {
     if (!display || units.length === 0) return;
 
-    const unit = units[currentUnitIndex];
+    const unitIndex = sessionUnitIndex();
+    const unit = units[unitIndex];
     if (!unit) return;
     if (globalThis.performance?.getEntriesByName?.("reader:first-unit", "mark").length === 0) {
       globalThis.performance?.mark?.("reader:first-unit");
     }
     currentPosition = { kind: "text", sourceOffset: unit.start };
     if (unit.sentenceIndex !== contextSentenceIndex) {
-      const context = globalThis.Engine.surroundingSentences(units, currentUnitIndex);
+      const context = globalThis.Engine.surroundingSentences(units, unitIndex);
       if (previousContext) {
         previousContext.textContent = context.previous;
         fadeContext(previousContext);
@@ -1957,18 +1985,11 @@
     currentGraphemeLimit = nextLimit;
     units = globalThis.Engine.splitLongUnits(baseUnits, segmentationLocale, currentGraphemeLimit);
     flowItems = globalThis.Engine.buildReadingFlow(units, figures);
-    flowIndex = globalThis.Engine.findFlowIndexForPosition(flowItems, units, position);
-    if (flowIndex < 0) flowIndex = 0;
-    const item = flowItems[flowIndex];
-    currentPosition = item
-      ? globalThis.Engine.positionForFlowItem(item, units)
-      : { kind: "text", sourceOffset: position.sourceOffset };
-    currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
     if (!applyingSession) {
       dispatchSession({
         type: "rebuildUnits",
         units: sessionPreparation().units,
-        position: currentPosition,
+        position,
       });
     }
     return true;
@@ -2307,7 +2328,7 @@
       advanceFromFigure();
       return;
     }
-    if (playbackState === "playing") {
+    if (sessionPlaybackState() === "playing") {
       pause();
     } else {
       play();
@@ -2322,10 +2343,9 @@
     if (units.length === 0) return;
     const transition = sectionTransitions.find((entry) => entry.headingIndex === headingIndex);
     const targetOffset = transition?.offset ?? 0;
-    const targetIndex = units.findIndex((unit) => unit.end > targetOffset);
     dispatchSession({
       type: "switchToRsvp",
-      position: { kind: "text", sourceOffset: units[targetIndex < 0 ? units.length - 1 : targetIndex]?.start ?? targetOffset },
+      position: { kind: "text", sourceOffset: targetOffset },
     });
     pause();
   }
@@ -2339,7 +2359,7 @@
       playPauseButton.title = "続きを読む";
       return;
     }
-    const playing = playbackState === "playing";
+    const playing = sessionPlaybackState() === "playing";
     playPauseButton.replaceChildren(
       globalThis.ReaderIcons.create(document, playing ? "pause" : "play", playing ? 26 : 30),
     );
@@ -2579,14 +2599,11 @@
           activePreparation = { kind: "idle" };
           loadingStartedAt = null;
           units = [];
-          currentUnitIndex = 0;
           headings = [];
           sectionTransitions = [];
           initialHeadingIndex = -1;
           figures = [];
           flowItems = [];
-          flowIndex = 0;
-          playbackState = "idle";
           sourceText = "";
           blocks = [];
           baseUnits = [];

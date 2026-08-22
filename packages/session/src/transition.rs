@@ -41,8 +41,36 @@ pub fn reduce(state: &ReaderSessionState, command: ReaderSessionCommand) -> Tran
         ReaderSessionCommand::RebuildUnits { units, position } => {
             rebuild_units(state, units, position)
         }
-        ReaderSessionCommand::VisibilityHidden => pause(state),
+        ReaderSessionCommand::VisibilityHidden => visibility_hidden(state),
         ReaderSessionCommand::Close => close(state),
+    }
+}
+
+fn visibility_hidden(state: &ReaderSessionState) -> Transition {
+    let ReaderSessionState::Preparing {
+        visibility_hidden: already_hidden,
+        generation,
+        ..
+    } = state
+    else {
+        return pause(state);
+    };
+    if *already_hidden {
+        return unchanged(state);
+    }
+    let mut next = state.clone();
+    if let ReaderSessionState::Preparing {
+        visibility_hidden,
+        generation: next_generation,
+        ..
+    } = &mut next
+    {
+        *visibility_hidden = true;
+        *next_generation = generation.saturating_add(1);
+    }
+    Transition {
+        state: next,
+        effects: Vec::new(),
     }
 }
 
@@ -56,6 +84,7 @@ fn open(state: &ReaderSessionState, request_id: String) -> Transition {
         state: ReaderSessionState::Preparing {
             request_id,
             generation: state.generation().saturating_add(1),
+            visibility_hidden: false,
         },
         effects,
     }
@@ -69,6 +98,7 @@ fn prepare_succeeded(
     let ReaderSessionState::Preparing {
         request_id: active_request,
         generation,
+        visibility_hidden,
     } = state
     else {
         return unchanged(state);
@@ -88,7 +118,12 @@ fn prepare_succeeded(
     }
     let content: Arc<SessionContent> = input.into();
     let first = &content.flow[0];
-    let (position, playback) = position_and_playback(first, &content.units);
+    let (position, inferred_playback) = position_and_playback(first, &content.units);
+    let playback = if *visibility_hidden {
+        Playback::Paused
+    } else {
+        inferred_playback
+    };
     let next_generation = generation.saturating_add(1);
     let effects = if matches!(playback, Playback::Playing) {
         vec![schedule_effect(&content, 0, next_generation)]
@@ -117,6 +152,7 @@ fn prepare_failed(
     let ReaderSessionState::Preparing {
         request_id: active_request,
         generation,
+        ..
     } = state
     else {
         return unchanged(state);
@@ -138,6 +174,7 @@ fn cancel(state: &ReaderSessionState, request_id: String) -> Transition {
     let ReaderSessionState::Preparing {
         request_id: active_request,
         generation,
+        ..
     } = state
     else {
         return unchanged(state);
@@ -922,6 +959,33 @@ mod tests {
                 delay_ms: 10
             }
         )));
+    }
+
+    #[test]
+    fn hidden_preparation_starts_paused() {
+        let opened = reduce(
+            &initial_state(),
+            ReaderSessionCommand::Open {
+                request_id: "A".into(),
+            },
+        );
+        let hidden = reduce(&opened.state, ReaderSessionCommand::VisibilityHidden);
+        let started = reduce(
+            &hidden.state,
+            ReaderSessionCommand::PrepareSucceeded {
+                request_id: "A".into(),
+                flow: input(),
+            },
+        );
+        assert!(matches!(
+            started.state,
+            ReaderSessionState::Reading {
+                playback: Playback::Paused,
+                flow_index: 0,
+                ..
+            }
+        ));
+        assert_eq!(started.effects, vec![ReaderSessionEffect::CancelTimer]);
     }
 
     #[test]

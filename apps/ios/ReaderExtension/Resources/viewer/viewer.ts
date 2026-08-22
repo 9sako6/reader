@@ -58,18 +58,14 @@
   let sourceBodyOverflow: string | null = null;
   let content: ReaderContent | null = null;
   let units: ReaderUnit[] = [];
-  let unitIndex = 0;
   let flowItems: ReaderFlowItem[] = [];
-  let flowIndex = 0;
   let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
   let contextSentenceIndex: number | null = null;
   let playbackTimer: number | null = null;
-  let playing = false;
   let figurePanel: HTMLElement | null = null;
   let figureViewState: FigureViewState = { kind: "idle" };
   let figureLoadToken = 0;
   let figureLoadRevealTimerId: number | null = null;
-  let mode: ReadingMode = "rsvp";
   let nodes: MobileNodes | null = null;
   let opening = false;
   let pendingLeftTap: number | null = null;
@@ -94,6 +90,29 @@
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
   let performanceUnitMarked = false;
+
+  function readingSessionState(): ReaderSessionObservableState | null {
+    return sessionState?.phase === "reading" ? sessionState : null;
+  }
+
+  function sessionMode(): ReadingMode {
+    return readingSessionState()?.mode ?? "rsvp";
+  }
+
+  function sessionFlowIndex(): number {
+    return readingSessionState()?.flowIndex ?? 0;
+  }
+
+  function sessionUnitIndex(): number {
+    const state = readingSessionState();
+    if (typeof state?.unitIndex === "number") return state.unitIndex;
+    const item = flowItems[sessionFlowIndex()];
+    return item?.kind === "unit" ? item.unitIndex : 0;
+  }
+
+  function sessionIsPlaying(): boolean {
+    return readingSessionState()?.playback === "playing";
+  }
 
   function markPerformance(name: string): void {
     global.performance?.mark?.(name);
@@ -286,8 +305,6 @@
       currentPosition = flowItems[0]
         ? global.Engine.positionForFlowItem(flowItems[0], units)
         : { kind: "text", sourceOffset: 0 };
-      flowIndex = 0;
-      unitIndex = flowItems[0]?.kind === "unit" ? flowItems[0].unitIndex : 0;
     } catch (error) {
       if (!isCurrentSession(generation)) {
         destroyLaunchProgress(progress);
@@ -566,9 +583,9 @@
     open();
   }
 
-  function renderReader(autoPlayRsvp = true) {
+  function renderReader(): void {
     updateModeButton();
-    if (mode === "rsvp") renderRsvpView(autoPlayRsvp);
+    if (sessionMode() === "rsvp") renderRsvpView();
     else renderTextView();
     if (!performanceRenderMarked) {
       performanceRenderMarked = true;
@@ -627,9 +644,7 @@
       sessionHandle = global.ReaderSession.create();
       sessionState = sessionHandle.state;
       sessionEnabled = true;
-      const queued = pendingSessionCommands;
-      pendingSessionCommands = [];
-      for (const command of queued) dispatchSession(command);
+      flushPendingSessionCommands();
       return;
     }
     if (!sessionInitPromise) {
@@ -648,9 +663,7 @@
           sessionHandle = global.ReaderSession.create();
           sessionState = sessionHandle.state;
           sessionEnabled = true;
-          const queued = pendingSessionCommands;
-          pendingSessionCommands = [];
-          for (const command of queued) dispatchSession(command);
+          flushPendingSessionCommands();
         })
         .catch(() => {
           sessionInitPromise = null;
@@ -660,21 +673,19 @@
     }
   }
 
+  function flushPendingSessionCommands(): void {
+    const queued = pendingSessionCommands;
+    pendingSessionCommands = [];
+    for (const command of queued) dispatchSession(command, false);
+    if (content && units.length > 0 && sessionState?.phase === "reading") {
+      renderReader();
+    }
+  }
+
   function syncReaderSessionState(): void {
     const state = sessionState;
     if (!state) return;
-    if (state.phase === "reading") {
-      if (typeof state.flowIndex === "number") flowIndex = state.flowIndex;
-      if (state.position) currentPosition = state.position;
-      const item = flowItems[flowIndex];
-      if (item?.kind === "unit") unitIndex = item.unitIndex;
-      mode = state.mode || mode;
-      playing = state.playback === "playing";
-    } else if (state.phase === "ended") {
-      playing = false;
-    } else if (state.phase !== "idle") {
-      playing = false;
-    }
+    if (state.phase === "reading" && state.position) currentPosition = state.position;
     updateModeButtonIfReady();
     updatePlayButton();
   }
@@ -683,7 +694,7 @@
     if (nodes) updateModeButton();
   }
 
-  function dispatchSession(command: ReaderSessionCommand): void {
+  function dispatchSession(command: ReaderSessionCommand, render = true): void {
     if (applyingSession) return;
     if (!sessionEnabled || !sessionHandle || !sessionState) {
       if (command.type === "open") pendingSessionCommands = [command];
@@ -711,7 +722,7 @@
           playbackTimer = scheduledTimerId;
         }
       }
-      renderSessionState();
+      if (render && command.type !== "prepareSucceeded") renderSessionState();
     } finally {
       applyingSession = false;
     }
@@ -720,7 +731,6 @@
   function renderSessionState(): void {
     const state = sessionState;
     if (!state || state.phase !== "reading" || state.mode !== "rsvp") return;
-    flowIndex = state.flowIndex ?? flowIndex;
     renderFlowItem();
   }
 
@@ -1100,10 +1110,9 @@
           figureIndex: Number(selected.dataset.figureIndex),
         }
         : { kind: "text", sourceOffset };
-      unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
       if (syncSession && !applyingSession) {
         dispatchSession({
-          type: sessionState?.mode === "text" ? "switchToText" : "switchToRsvp",
+          type: sessionMode() === "text" ? "switchToText" : "switchToRsvp",
           position: currentPosition,
         });
       }
@@ -1155,7 +1164,7 @@
     scroller.scrollTop = Math.max(0, targetY - 72);
   }
 
-  function renderRsvpView(autoPlay = true) {
+  function renderRsvpView() {
     getNodes().textScroller = null;
     getNodes().textMarkers = [];
     getNodes().textRestoreScrollTop = null;
@@ -1181,7 +1190,7 @@
     Object.assign(getNodes(), { previousUnit, unit, nextUnit });
     renderRsvpControls();
     contextSentenceIndex = null;
-    if (!renderFlowItem() && autoPlay && global.document.visibilityState !== "hidden") play();
+    renderFlowItem();
   }
 
   function transportButton(label: string, action: () => void): HTMLButtonElement {
@@ -1223,16 +1232,16 @@
   }
 
   function toggleMode() {
-    switchMode(mode === "rsvp" ? "text" : "rsvp");
+    switchMode(sessionMode() === "rsvp" ? "text" : "rsvp");
   }
 
   function updateModeButton() {
     getNodes().modeButton.hidden = false;
-    getNodes().modeButton.textContent = mode === "rsvp" ? "文章で読む" : "RSVPで読む";
+    getNodes().modeButton.textContent = sessionMode() === "rsvp" ? "文章で読む" : "RSVPで読む";
   }
 
   function renderFlowItem(): boolean {
-    const item = flowItems[flowIndex];
+    const item = flowItems[sessionFlowIndex()];
     if (!item) return true;
     if (item.kind === "figure") {
       const figure = content?.readingContext?.figures?.[item.figureIndex];
@@ -1244,13 +1253,13 @@
     figurePanel?.remove();
     figurePanel = null;
     invalidateFigureLoad();
-    if (item.kind === "unit") unitIndex = item.unitIndex;
     renderUnit();
     return false;
   }
 
   function renderUnit() {
     if (!content) return;
+    const unitIndex = sessionUnitIndex();
     const value = units[unitIndex];
     const { unit, previousUnit, nextUnit, progress } = getNodes();
     if (!value || !unit || !previousUnit || !nextUnit) return;
@@ -1285,23 +1294,15 @@
   }
 
   function switchMode(nextMode: ReadingMode): void {
-    if (nextMode === mode) return;
+    const currentMode = sessionMode();
+    if (nextMode === currentMode) return;
     const previousFocus = readerActiveElement();
-    const wasPlaying = playing;
     clearPendingLeftTap();
-    if (nextMode === "rsvp" && mode === "text") {
+    if (nextMode === "rsvp" && currentMode === "text") {
       const { textScroller, textMarkers, progress } = getNodes();
-      const restoredScrollTop = getNodes().textRestoreScrollTop;
-      const textPositionChanged = textScroller && (
-        restoredScrollTop === null
-          ? textScroller.scrollTop > 0
-          : Math.abs(textScroller.scrollTop - restoredScrollTop) >= 1
-      );
-      if (textScroller && textPositionChanged) {
-        captureTextPosition(textScroller, textMarkers, progress, true, false);
-      }
-    } else if (mode === "rsvp") {
-      const currentFlow = flowItems[flowIndex];
+      if (textScroller) captureTextPosition(textScroller, textMarkers, progress, true, false);
+    } else if (currentMode === "rsvp") {
+      const currentFlow = flowItems[sessionFlowIndex()];
       if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
     }
     figurePanel?.remove();
@@ -1311,10 +1312,9 @@
       dispatchSession({
         type: nextMode === "text" ? "switchToText" : "switchToRsvp",
         position: currentPosition,
-      });
+      }, false);
     }
-    mode = nextMode;
-    renderReader(nextMode === "rsvp" ? wasPlaying : true);
+    renderReader();
     if (!containsReaderElement(previousFocus)) {
       global.requestAnimationFrame(() => findCloseButton()?.focus());
     }
@@ -1340,18 +1340,11 @@
       )));
     units = global.Engine.splitLongUnits(segmented, locale, maxGraphemesForViewport());
     rebuildFlowItems();
-    flowIndex = global.Engine.findFlowIndexForPosition(flowItems, units, previousPosition);
-    if (flowIndex < 0) flowIndex = 0;
-    const item = flowItems[flowIndex];
-    currentPosition = item
-      ? global.Engine.positionForFlowItem(item, units)
-      : { kind: "text", sourceOffset: previousPosition.sourceOffset };
-    unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
     if (!applyingSession) {
       dispatchSession({
         type: "rebuildUnits",
         units: sessionPreparation().units,
-        position: currentPosition,
+        position: previousPosition,
       });
     }
   }
@@ -1369,7 +1362,7 @@
   function handleViewportChange() {
     if (!overlay || !content) return;
     rebuildUnits();
-    if (mode === "rsvp") renderFlowItem();
+    if (sessionMode() === "rsvp") renderFlowItem();
   }
 
   function togglePlayback() {
@@ -1378,7 +1371,7 @@
       lastLeftTapAt = 0;
     }
     if (figurePanel) advanceFromFigure();
-    else if (playing) pause();
+    else if (sessionIsPlaying()) pause();
     else play();
   }
 
@@ -1512,13 +1505,13 @@
       playButton.setAttribute("aria-pressed", "false");
       return;
     }
-    const state = playing ? "pause" : "play";
+    const state = sessionIsPlaying() ? "pause" : "play";
     if (playButton.dataset.state !== state) {
       playButton.replaceChildren(global.ReaderIcons.create(global.document, state, state === "pause" ? 30 : 34));
       playButton.dataset.state = state;
     }
-    playButton.setAttribute("aria-label", playing ? "一時停止" : "再生");
-    playButton.setAttribute("aria-pressed", playing ? "true" : "false");
+    playButton.setAttribute("aria-label", sessionIsPlaying() ? "一時停止" : "再生");
+    playButton.setAttribute("aria-pressed", sessionIsPlaying() ? "true" : "false");
   }
 
   function showFigure(figure: ReaderFigure, figureIndex: number): void {
@@ -1811,7 +1804,7 @@
       focusable[nextIndex]?.focus();
       return;
     }
-    if (mode !== "rsvp" || isEditableTarget(event) || isButtonTarget(event)) return;
+    if (sessionMode() !== "rsvp" || isEditableTarget(event) || isButtonTarget(event)) return;
     if (event.code === "Space" || event.key === " ") {
       event.preventDefault();
       togglePlayback();
@@ -1901,16 +1894,12 @@
     clearPendingLeftTap();
     content = null;
     units = [];
-    unitIndex = 0;
     flowItems = [];
-    flowIndex = 0;
     contextSentenceIndex = null;
-    playing = false;
     invalidateFigureLoad();
     figurePanel?.remove();
     figurePanel = null;
     currentPosition = { kind: "text", sourceOffset: 0 };
-    mode = "rsvp";
     nodes = null;
     opening = false;
     lastLeftTapAt = 0;
