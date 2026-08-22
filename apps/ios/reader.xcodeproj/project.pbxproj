@@ -19,6 +19,7 @@
 		727D1DE789488E4B76496ADC /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C16DB3F3DDA1601212E620E /* SafariWebExtensionHandler.swift */; };
 		8A3E61DE0395E1A338917495 /* engine.js in Resources */ = {isa = PBXBuildFile; fileRef = 4AE4DB483CAD20FA58AE5489 /* engine.js */; };
 		93E827AC572D06507BA8D828 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53C87B3DEBE3AAB7738B8AE9 /* ContentView.swift */; };
+		9553D34A63A0701BA4E8DF0F /* reader-runtime.js in Resources */ = {isa = PBXBuildFile; fileRef = 694186B4C290F94B8740D446 /* reader-runtime.js */; };
 		A9791ED60F43406AE8E6C965 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 814C3482015D26AD808270AD /* manifest.json */; };
 		AE568FC883F18030AB0BAACD /* defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = AE1BE38F9010670A219A80AD /* defuddle-LICENSE.txt */; };
 		BFAD4667FE95EAE2DD8C0F06 /* session.js in Resources */ = {isa = PBXBuildFile; fileRef = 8D9F83A789E8397C77DD2819 /* session.js */; };
@@ -60,6 +61,7 @@
 		4AE4DB483CAD20FA58AE5489 /* engine.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = engine.js; sourceTree = "<group>"; };
 		53C87B3DEBE3AAB7738B8AE9 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		5BEAF8E6AB6A2FAFE47FE444 /* session-wasm.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "session-wasm.js"; sourceTree = "<group>"; };
+		694186B4C290F94B8740D446 /* reader-runtime.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "reader-runtime.js"; sourceTree = "<group>"; };
 		698C10DA0C7A78B067BE2850 /* reader-extension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = "reader-extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		6C16DB3F3DDA1601212E620E /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
 		804F66AD5D44EA4C13F377E2 /* viewer.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = viewer.js; sourceTree = "<group>"; };
@@ -85,6 +87,7 @@
 				286D8A7DEB4C8FE47BC99790 /* icons.js */,
 				C575FFC2EA1FAC083341E08B /* lucide-LICENSE.txt */,
 				2F28EBA4661DB5BB689F12CA /* reader_session_bg.wasm */,
+				694186B4C290F94B8740D446 /* reader-runtime.js */,
 				A829055828EAA2B7AC82C1EF /* reader-session-dependencies.txt */,
 				5BEAF8E6AB6A2FAFE47FE444 /* session-wasm.js */,
 				8D9F83A789E8397C77DD2819 /* session.js */,
@@ -233,6 +236,7 @@
 				FF138C8803495B5F4E5185AA /* icons.js in Resources */,
 				F160CED4B1607EA6F437546C /* lucide-LICENSE.txt in Resources */,
 				A9791ED60F43406AE8E6C965 /* manifest.json in Resources */,
+				9553D34A63A0701BA4E8DF0F /* reader-runtime.js in Resources */,
 				22E7AB9133695AC561788F91 /* reader-session-dependencies.txt in Resources */,
 				3ACCB890D822655239A2CE08 /* reader_session_bg.wasm in Resources */,
 				07F53AA916D106B4A3FE7EDD /* session-wasm.js in Resources */,

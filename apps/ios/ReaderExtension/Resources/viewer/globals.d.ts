@@ -11,4 +11,5 @@ declare global {
   }
 
   var MobileViewer: ReaderMobileViewer;
+  var ReaderRuntimeGate: ((open: () => Promise<void>) => Promise<void>) | undefined;
 }

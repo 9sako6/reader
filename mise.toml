@@ -120,6 +120,8 @@ cp .build/packages/extractor/src/extractor.js apps/ios/ReaderExtension/Resources
 cp .build/packages/icons/src/icons.js apps/ios/ReaderExtension/Resources/generated/icons.js
 cp .build/apps/ios/ReaderExtension/Resources/viewer/viewer.js apps/ios/ReaderExtension/Resources/generated/viewer.js
 cp .build/apps/ios/ReaderExtension/Resources/viewer/bootstrap.js apps/ios/ReaderExtension/Resources/generated/bootstrap.js
+cp apps/ios/ReaderExtension/Resources/viewer/reader-runtime-poc.mjs apps/ios/ReaderExtension/Resources/generated/reader-runtime.js
+cp apps/ios/ReaderExtension/Resources/viewer/lazy-runtime-loader-poc.js apps/ios/ReaderExtension/Resources/generated/bootstrap.js
 cp node_modules/defuddle/LICENSE apps/ios/ReaderExtension/Resources/generated/defuddle-LICENSE.txt
 cp LICENSES/lucide.txt apps/ios/ReaderExtension/Resources/generated/lucide-LICENSE.txt
 cp .build/session-licenses/reader-session-dependencies.txt apps/ios/ReaderExtension/Resources/generated/reader-session-dependencies.txt

@@ -74,6 +74,7 @@ async function verifyPackage() {
     ...new Set([
       ...manifest.content_scripts.flatMap((contentScript) => contentScript.js),
       ...manifest.web_accessible_resources.flatMap((resource) => resource.resources),
+      "reader-runtime.js",
     ]),
   ];
   const generatedAssets = new Map();
@@ -222,6 +223,72 @@ async function verifyGeneratedRuntimeInWebKit() {
   }
 }
 
+async function verifyGeneratedLazyRuntimeInWebKit() {
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(pageUrl, { waitUntil: "load" });
+    const result = await page.evaluate(async () => {
+      const originalInit = globalThis.ReaderSession.init;
+      const originalCreate = globalThis.ReaderSession.create;
+      const wasmResponses = [];
+      let initCount = 0;
+      let createCount = 0;
+      globalThis.ReaderSession.init = (...args) => {
+        initCount += 1;
+        return originalInit(...args);
+      };
+      globalThis.ReaderSession.create = (...args) => {
+        createCount += 1;
+        return originalCreate(...args);
+      };
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (...args) => originalFetch(...args).then((response) => {
+        if (String(args[0]).endsWith("reader_session_bg.wasm")) {
+          wasmResponses.push({ status: response.status, contentType: response.headers.get("content-type") });
+        }
+        return response;
+      });
+      const beforeReady = globalThis.ReaderSession.ready();
+      const firstOpen = globalThis.ReaderLazyRuntimePoC.open();
+      const secondOpen = globalThis.ReaderLazyRuntimePoC.open();
+      const runtimeResults = await Promise.all([firstOpen, secondOpen]);
+      const runtimeReady = runtimeResults.every((runtime) => runtime?.ready === true);
+      const runtimeWorld = runtimeResults[0]?.world;
+      const runtimeSessionPhase = runtimeResults[0]?.sessionPhase;
+      const runtimeInitCount = initCount;
+      const runtimeCreateCount = createCount;
+      await globalThis.MobileViewer.open();
+      const host = document.getElementById("__reader-host");
+      const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+      return {
+        beforeReady,
+        runtimeReady,
+        runtimeWorld,
+        runtimeSessionPhase,
+        runtimeInitCount,
+        runtimeCreateCount,
+        viewerCreateCount: createCount,
+        wasmResponses,
+        host: Boolean(host),
+        unit: Boolean(unit),
+      };
+    });
+    assert.equal(result.beforeReady, false);
+    assert.equal(result.runtimeReady, true);
+    assert.equal(result.runtimeWorld, "extension-content-script");
+    assert.equal(result.runtimeSessionPhase, "idle");
+    assert.equal(result.runtimeInitCount, 1);
+    assert.equal(result.runtimeCreateCount, 1);
+    assert.equal(result.viewerCreateCount, 2);
+    assert.deepEqual(result.wasmResponses, [{ status: 200, contentType: "application/wasm" }]);
+    assert.equal(result.host, true);
+    assert.equal(result.unit, true);
+  } finally {
+    await browser.close();
+  }
+}
+
 try {
   if (driverPort === 0) driverPort = await findFreePort();
   fixtureServer = spawn(process.execPath, ["tests/e2e/server.mjs"], {
@@ -232,7 +299,8 @@ try {
   await waitFor(pageUrl);
   await verifyPackage();
   await verifyGeneratedRuntimeInWebKit();
-  process.stdout.write("Generated Safari resources initialized ReaderSession in WebKit\n");
+  await verifyGeneratedLazyRuntimeInWebKit();
+  process.stdout.write("Generated Safari resources initialized ReaderSession and lazy runtime in WebKit\n");
   try {
     await verifySafariRuntime();
     process.stdout.write("Safari WebDriver runtime smoke passed\n");
