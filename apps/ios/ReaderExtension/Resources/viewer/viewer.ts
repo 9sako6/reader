@@ -282,6 +282,10 @@
       textPosition: (element: HTMLElement) => {
         if (reactTextRestoring) {
           if (reactTextRestoreScrollTop === null || Math.abs(element.scrollTop - reactTextRestoreScrollTop) < 1) return;
+          if (reactTextRestorePending) {
+            reactTextRestorePending = false;
+            reactTextRestoreGeneration += 1;
+          }
         }
         updateTextPosition(element, reactTextMarkers);
         reactTextRestoreScrollTop = element.scrollTop;
@@ -1069,14 +1073,14 @@
     if (nextMode === currentMode) return;
     const previousFocus = readerActiveElement();
     clearPendingLeftTap();
+    const modeRestorePending = reactTextRestorePending;
     reactTextRestorePending = nextMode === "text";
     let capturedPosition = currentPosition;
     if (nextMode === "rsvp" && currentMode === "text") {
       const textScroller = reactTextScroller;
       const textMarkers = reactTextMarkers;
-      const restoreInProgress = reactTextRestoring || reactTextRestorePending;
       const scrollChanged = textScroller && (reactTextRestoreScrollTop === null || Math.abs(textScroller.scrollTop - reactTextRestoreScrollTop) >= 1);
-      if (!restoreInProgress || scrollChanged) {
+      if (!modeRestorePending || scrollChanged) {
         reactTextRestoring = true;
         if (textScroller) captureTextPosition(textScroller, textMarkers, true, false);
       }

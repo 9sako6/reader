@@ -199,6 +199,10 @@
       textPosition: (element: HTMLElement) => {
         if (textRestoring) {
           if (textRestoreScrollTop === null || Math.abs(element.scrollTop - textRestoreScrollTop) < 1) return;
+          if (textRestorePending) {
+            textRestorePending = false;
+            textRestoreGeneration += 1;
+          }
         }
         updateTextPosition(element, textPositionMarkers);
         textRestoreScrollTop = element.scrollTop;
@@ -1136,12 +1140,12 @@
     if (!root || units.length === 0) return;
     const previousFocus = readerActiveElement();
     const restoreModeFocus = previousFocus?.getAttribute?.("data-reader-mode-button") === "true";
+    const modeRestorePending = textRestorePending;
     textRestorePending = false;
     let capturedPosition = currentPosition;
     if (sessionMode() === "text" && textScroller) {
-      const restoreInProgress = textRestoring || textRestorePending;
       const scrollChanged = textRestoreScrollTop === null || Math.abs(textScroller.scrollTop - textRestoreScrollTop) >= 1;
-      if (!restoreInProgress || scrollChanged) {
+      if (!modeRestorePending || scrollChanged) {
         textRestoring = true;
         updateTextPosition(textScroller, textPositionMarkers, true, false);
       }
