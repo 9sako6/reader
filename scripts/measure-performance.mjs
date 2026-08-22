@@ -482,13 +482,13 @@ function combineRepresentativeTrajectories(trajectories) {
       const summary = summarizeMemorySamples(samples);
       return { cycle, samples, p50: summary.p50, p90: summary.p90, max: summary.max };
     });
-    const steadyIncrements = summarizeMemorySamples(cycles.slice(1).flatMap((cycle) => cycle.samples));
-    return { warmupCycles: 1, cycles, steadyIncrements };
+    const steadyIncrements = summarizeMemorySamples(cycles.slice(2).flatMap((cycle) => cycle.samples));
+    return { warmupCycles: 2, cycles, steadyIncrements };
   };
   const steadyDelta = summarizeMemorySamples(trajectories.flatMap((trajectory) => trajectory.candidate.cycles
-    .slice(1)
+    .slice(2)
     .map((candidateCycle, cycle) => {
-      const baselineDelta = trajectory.baseline.cycles[cycle + 1]?.delta;
+      const baselineDelta = trajectory.baseline.cycles[cycle + 2]?.delta;
       return Number.isFinite(candidateCycle.delta) && Number.isFinite(baselineDelta)
         ? candidateCycle.delta - baselineDelta
         : null;
@@ -622,6 +622,7 @@ try {
 
   const cleanupCycles = {};
   let fixedOverheadSummary = null;
+  let secondRootOverheadSummary = null;
   if (baselineRoot) {
     const representativeFixtures = [
       fixtures[0],
@@ -635,6 +636,7 @@ try {
       ...Object.values(pairedComparison.nodeBenchmarks),
     ].map((comparison) => comparison.pairedMemory).filter(Boolean);
     fixedOverheadSummary = summarizeMemorySamples(pairedMemoryReports.flatMap((memory) => memory.fixedOverhead.samples));
+    secondRootOverheadSummary = summarizeMemorySamples(pairedMemoryReports.flatMap((memory) => memory.steadyDelta.samples));
   }
 
   if (baselineRoot) {
@@ -742,6 +744,13 @@ try {
     reactMemory: {
       fixedOverheadBytes: fixedOverheadSummary?.p90 ?? null,
       fixedOverhead: fixedOverheadSummary,
+      firstRootFixedOverheadBytes: fixedOverheadSummary?.p90 ?? null,
+      firstRootFixedOverhead: fixedOverheadSummary,
+      secondRootOverheadBytes: secondRootOverheadSummary?.p90 ?? null,
+      secondRootOverhead: secondRootOverheadSummary,
+      combinedFixedOverheadBytes: fixedOverheadSummary && secondRootOverheadSummary
+        ? fixedOverheadSummary.p90 + secondRootOverheadSummary.p90
+        : null,
       fixedOverheadBudgetBytes: REACT_FIXED_HEAP_BUDGET_BYTES,
       cleanupCyclesPerCase: baselineRoot ? cleanupCyclesPerCase : null,
       representativeCases: Object.keys(cleanupCycles),

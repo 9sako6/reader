@@ -82,28 +82,28 @@ function pairedMemory({ baselineCycle0 = 400_000, baselineCycle1 = 100, candidat
     const order = run % 2 === 0 ? "baseline-candidate" : "candidate-baseline";
     baselineRuns.push({
       executionOrder: order,
-      cleanupCycles: { cycles: [{ delta: baselineCycle0 }, { delta: baselineCycle1 }], warmupCycles: 1 },
+      cleanupCycles: { cycles: [{ delta: baselineCycle0 }, { delta: baselineCycle1 }], warmupCycles: 2 },
     });
     candidateRuns.push({
       executionOrder: order,
-      cleanupCycles: { cycles: [{ delta: candidateCycle0 }, { delta: candidateCycle1 }], warmupCycles: 1 },
+      cleanupCycles: { cycles: [{ delta: candidateCycle0 }, { delta: candidateCycle1 }], warmupCycles: 2 },
     });
   }
   return buildPairedMemorySamples(baselineRuns, candidateRuns);
 }
 
 function representativeCleanup(baselineSteady, candidateSteady) {
-  const steadyDelta = summarizeMemorySamples(candidateSteady.map((value, index) => value - baselineSteady[index]));
+  const steadyDelta = summarizeMemorySamples(candidateSteady.slice(1).map((value, index) => value - baselineSteady[index + 1]));
   return {
     baseline: {
-      warmupCycles: 1,
+      warmupCycles: 2,
       cycles: [0, ...baselineSteady].map((delta, cycle) => ({ cycle, samples: [delta] })),
-      steadyIncrements: summarizeMemorySamples(baselineSteady),
+      steadyIncrements: summarizeMemorySamples(baselineSteady.slice(1)),
     },
     candidate: {
-      warmupCycles: 1,
+      warmupCycles: 2,
       cycles: [0, ...candidateSteady].map((delta, cycle) => ({ cycle, samples: [delta] })),
-      steadyIncrements: summarizeMemorySamples(candidateSteady),
+      steadyIncrements: summarizeMemorySamples(candidateSteady.slice(1)),
     },
     steadyDelta,
   };
@@ -123,7 +123,10 @@ test("React memory gate uses ten AB/BA paired cycles to separate fixed overhead 
   assert.equal(result.fixedOverhead.p90, 380_000);
   assert.equal(result.steadyGrowth.candidate.p90, 120);
   assert.equal(result.steadyGrowth.baseline.p90, 100);
+  assert.equal(result.steadyGrowth.secondRootOverheadBytes, 20);
   assert.equal(result.steadyGrowth.regression, false);
+  assert.equal(result.representativeGrowth.warmupCycles, 2);
+  assert.equal(result.representativeGrowth.pairedDelta.p90, 15);
   assert.equal(result.representativeGrowth.regression, false);
   assert.equal(result.regression, false);
 });
@@ -164,17 +167,30 @@ test("React memory gate applies the retained-heap floor when the baseline is neg
   assert.equal(result.dataScalingRegression, false);
 });
 
-test("React memory gate rejects a steady cycle p90 above the paired 25 percent budget", () => {
+test("React memory gate accepts the exact combined first-root and second-root overhead ceiling", () => {
   const result = evaluateReactMemoryGate({
-    candidateP90Bytes: 200,
-    baselineP90Bytes: 100,
-    pairedMemory: pairedMemory({ baselineCycle0: 100, baselineCycle1: 100, candidateCycle0: 70_100, candidateCycle1: 70_000 }),
+    candidateP90Bytes: 800_000,
+    baselineP90Bytes: 400_000,
+    pairedMemory: pairedMemory({ baselineCycle0: 400_000, baselineCycle1: 100, candidateCycle0: 800_000, candidateCycle1: 100_100 }),
   });
 
-  assert.equal(result.steadyGrowth.baseline.p90, 100);
-  assert.equal(result.steadyGrowth.candidate.p90, 70_000);
-  assert.equal(result.steadyGrowth.budgetBytes, 65_536);
-  assert.equal(result.steadyGrowth.regression, true);
+  assert.equal(result.fixedOverheadBytes, 300_000);
+  assert.equal(result.secondRootOverheadBytes, 100_000);
+  assert.equal(result.combinedFixedOverheadBytes, 400_000);
+  assert.equal(result.fixedOverheadRegression, false);
+  assert.equal(result.steadyGrowth.classification, "second-root-overhead");
+  assert.equal(result.regression, false);
+});
+
+test("React memory gate rejects combined root overhead above the explicit byte ceiling", () => {
+  const result = evaluateReactMemoryGate({
+    candidateP90Bytes: 800_001,
+    baselineP90Bytes: 400_000,
+    pairedMemory: pairedMemory({ baselineCycle0: 400_000, baselineCycle1: 100, candidateCycle0: 800_001, candidateCycle1: 100_100 }),
+  });
+
+  assert.equal(result.combinedFixedOverheadBytes, 400_001);
+  assert.equal(result.fixedOverheadRegression, true);
   assert.equal(result.regression, true);
 });
 

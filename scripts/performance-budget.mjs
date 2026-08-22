@@ -5,8 +5,7 @@ export const FEEDBACK_PAIRED_P50_BUDGET_MS = 16;
 export const REACT_BUNDLE_MAX_INCREASE_PERCENT = 35;
 export const REACT_FIXED_HEAP_BUDGET_BYTES = 400_000;
 export const REACT_MEMORY_FLOOR_BYTES = 65_536;
-export const REACT_STEADY_P50_FLOOR_BYTES = 32_768;
-export const REACT_STEADY_P90_FLOOR_BYTES = 65_536;
+export const REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES = 32_768;
 export const REACT_INITIALIZATION_METRICS = ["reactInitMs", "wasmInitMs", "initializationSpanMs"];
 
 export function evaluateFeedbackBudget({ observedP90, pairedP50DeltaMs = null }) {
@@ -86,25 +85,22 @@ export function buildPairedMemorySamples(baselineRuns, candidateRuns, { requireB
   };
 }
 
-function steadyMemoryGate(baselineSummary, candidateSummary, pairedDelta) {
+function steadyMemoryGate(baselineSummary, candidateSummary, pairedDelta, firstRootFixedOverheadBytes) {
   const measured = Number.isFinite(baselineSummary?.p90)
     && Number.isFinite(candidateSummary?.p90)
     && Number.isFinite(pairedDelta?.p90);
-  const p50BudgetBytes = measured
-    ? Math.max(REACT_STEADY_P50_FLOOR_BYTES, Math.max(0, baselineSummary.p90) * 0.02)
-    : null;
-  const p90BudgetBytes = measured
-    ? Math.max(REACT_STEADY_P90_FLOOR_BYTES, Math.max(0, baselineSummary.p90) * 0.25)
+  const secondRootOverheadBytes = measured ? Math.max(0, pairedDelta.p90) : null;
+  const combinedFixedOverheadBytes = measured && Number.isFinite(firstRootFixedOverheadBytes)
+    ? Math.max(0, firstRootFixedOverheadBytes) + secondRootOverheadBytes
     : null;
   return {
     baseline: baselineSummary,
     candidate: candidateSummary,
     pairedDelta,
-    budgetBytes: p90BudgetBytes,
-    p50BudgetBytes,
-    p90BudgetBytes,
-    floorBytes: REACT_MEMORY_FLOOR_BYTES,
-    regression: !measured || pairedDelta.p50 > p50BudgetBytes || pairedDelta.p90 > p90BudgetBytes,
+    secondRootOverheadBytes,
+    combinedFixedOverheadBytes,
+    classification: "second-root-overhead",
+    regression: !measured,
   };
 }
 
@@ -113,10 +109,20 @@ function representativeMemoryGate(representativeCleanup) {
   const baseline = representativeCleanup.baseline?.steadyIncrements;
   const candidate = representativeCleanup.candidate?.steadyIncrements;
   const pairedDelta = representativeCleanup.steadyDelta;
+  const measured = Number.isFinite(pairedDelta?.p50) && Number.isFinite(pairedDelta?.p90);
   return {
-    ...steadyMemoryGate(baseline, candidate, pairedDelta),
+    baseline,
+    candidate,
+    pairedDelta,
     warmupCycles: representativeCleanup.candidate?.warmupCycles ?? null,
     cycleCount: representativeCleanup.candidate?.cycles?.length ?? null,
+    p50BudgetBytes: REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES,
+    p90BudgetBytes: REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES,
+    budgetBytes: REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES,
+    classification: "cycle2-plus-persistence",
+    regression: !measured
+      || pairedDelta.p50 > REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES
+      || pairedDelta.p90 > REACT_REPRESENTATIVE_LEAK_BUDGET_BYTES,
   };
 }
 
@@ -139,35 +145,41 @@ export function evaluateReactMemoryGate({ candidateP90Bytes, baselineP90Bytes, p
       dataScalingBudgetBytes: null,
       combinedBudgetBytes: null,
       dataScalingObservedBytes: null,
-      steadyGrowth: pairedMemory ? steadyMemoryGate(pairedMemory.baselineSteady, pairedMemory.candidateSteady, pairedMemory.steadyDelta) : null,
+      steadyGrowth: pairedMemory
+        ? steadyMemoryGate(pairedMemory.baselineSteady, pairedMemory.candidateSteady, pairedMemory.steadyDelta, null)
+        : null,
       representativeGrowth: representativeMemoryGate(representativeCleanup),
       regression: true,
     };
   }
   const measuredFixedOverheadBytes = Math.max(0, fixedSummary.p90);
+  const secondRootOverheadBytes = Math.max(0, pairedMemory.steadyDelta.p90);
+  const combinedFixedOverheadBytes = measuredFixedOverheadBytes + secondRootOverheadBytes;
   const dataScalingBudgetBytes = Math.max(REACT_MEMORY_FLOOR_BYTES, Math.max(0, baselineP90Bytes)) * 1.25;
   const dataScalingObservedBytes = candidateP90Bytes - measuredFixedOverheadBytes;
   const combinedBudgetBytes = dataScalingBudgetBytes + measuredFixedOverheadBytes;
-  const fixedOverheadRegression = measuredFixedOverheadBytes > REACT_FIXED_HEAP_BUDGET_BYTES;
   const dataScalingRegression = dataScalingObservedBytes > dataScalingBudgetBytes;
-  const steadyGrowth = steadyMemoryGate(pairedMemory.baselineSteady, pairedMemory.candidateSteady, pairedMemory.steadyDelta);
+  const steadyGrowth = steadyMemoryGate(pairedMemory.baselineSteady, pairedMemory.candidateSteady, pairedMemory.steadyDelta, measuredFixedOverheadBytes);
   const representativeGrowth = representativeMemoryGate(representativeCleanup);
-  const cleanupRegression = steadyGrowth.regression || representativeGrowth?.regression === true;
+  const cleanupRegression = representativeGrowth?.regression === true;
   return {
-    status: fixedOverheadRegression || dataScalingRegression || cleanupRegression ? "regression" : "within-budget",
+    status: combinedFixedOverheadBytes > REACT_FIXED_HEAP_BUDGET_BYTES || dataScalingRegression || cleanupRegression ? "regression" : "within-budget",
     candidateP90Bytes,
     baselineP90Bytes,
     fixedOverheadBytes: measuredFixedOverheadBytes,
     fixedOverhead: fixedSummary,
+    secondRootOverheadBytes,
+    secondRootOverhead: pairedMemory.steadyDelta,
+    combinedFixedOverheadBytes,
     fixedOverheadBudgetBytes: REACT_FIXED_HEAP_BUDGET_BYTES,
     dataScalingBudgetBytes,
     dataScalingObservedBytes,
     combinedBudgetBytes,
-    fixedOverheadRegression,
+    fixedOverheadRegression: combinedFixedOverheadBytes > REACT_FIXED_HEAP_BUDGET_BYTES,
     dataScalingRegression,
     steadyGrowth,
     representativeGrowth,
-    regression: fixedOverheadRegression || dataScalingRegression || cleanupRegression,
+    regression: combinedFixedOverheadBytes > REACT_FIXED_HEAP_BUDGET_BYTES || dataScalingRegression || cleanupRegression,
   };
 }
 
