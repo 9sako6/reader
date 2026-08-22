@@ -97,9 +97,10 @@
   }
 
   function install() {
-    if (!global.document?.documentElement || global.document.getElementById(HOST_ID)) return;
+    if (!global.document?.documentElement || host) return;
     host = global.document.createElement("div");
-    host.id = HOST_ID;
+    if (!global.document.getElementById(HOST_ID)) host.id = HOST_ID;
+    host.dataset.readerOwned = "true";
     const root = host.attachShadow({ mode: "open" });
     shadow = root;
     root.append(createStyles());

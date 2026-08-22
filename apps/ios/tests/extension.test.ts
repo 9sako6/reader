@@ -50,11 +50,21 @@ test("Xcode project embeds every manifest script in the extension", () => {
   assert.match(project, /reader-extension\.appex in Embed Foundation Extensions/);
 });
 
-function createSafariReaderHarness(engine = Engine, language = "ja") {
+function createSafariReaderHarness(
+  engine = Engine,
+  language = "ja",
+  options: { pageOwnedHost?: boolean } = {},
+) {
   const documentElement = new FakeElement("html");
   documentElement.lang = language;
   const body = new FakeElement("body");
   documentElement.append(body);
+  if (options.pageOwnedHost) {
+    const pageOwnedHost = new FakeElement("div");
+    pageOwnedHost.id = "__reader-host";
+    pageOwnedHost.textContent = "ページ側の要素";
+    body.append(pageOwnedHost);
+  }
   const createdElements: FakeElement[] = [];
   const documentListeners = new Map();
   const document = {
@@ -223,6 +233,38 @@ function createSafariReaderHarness(engine = Engine, language = "ja") {
     },
   };
 }
+
+test("Safari reader starts beside a page-owned host and reuses only its owned root", async () => {
+  const harness = createSafariReaderHarness(Engine, "ja", { pageOwnedHost: true });
+  const { context, documentElement } = harness;
+  const pageOwnedHost = findElement(
+    documentElement,
+    (element) => element.id === "__reader-host" && element.dataset.readerOwned !== "true",
+  );
+
+  assert.ok(pageOwnedHost);
+  await context.MobileViewer.open();
+
+  const ownedHosts = findElements(
+    documentElement,
+    (element) => element.dataset.readerOwned === "true",
+  );
+  assert.equal(ownedHosts.length, 1);
+  assert.notEqual(ownedHosts[0], pageOwnedHost);
+  assert.ok(findElement(documentElement, (element) => element.className === "reader"));
+
+  context.MobileViewer.close();
+  assert.equal(pageOwnedHost.parent?.tagName, "BODY");
+  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
+
+  await context.MobileViewer.open();
+  assert.equal(findElements(
+    documentElement,
+    (element) => element.dataset.readerOwned === "true",
+  ).length, 1);
+  assert.ok(findElement(documentElement, (element) => element.className === "reader"));
+  assert.equal(pageOwnedHost.parent?.tagName, "BODY");
+});
 
 test("Safari reader marks startup phases without including page content", async () => {
   const harness = createSafariReaderHarness();
