@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import { chromium } from "@playwright/test";
-import { evaluateFeedbackBudget, evaluateReactMigrationGate } from "./performance-budget.mjs";
+import { evaluateFeedbackBudget, evaluateReactMemoryGate, evaluateReactMigrationGate, REACT_FIXED_HEAP_BUDGET_BYTES } from "./performance-budget.mjs";
 import { buildPerformanceSample, median, percentile } from "./performance-sample.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
@@ -45,6 +45,7 @@ const bundleAssets = {
 };
 const nodeCounts = [1000, 10_000, 50_000, 100_000];
 const runsPerCase = Number(process.env.READER_PERFORMANCE_RUNS) || 10;
+const cleanupCyclesPerCase = Number(process.env.READER_PERFORMANCE_CLEANUP_CYCLES) || 6;
 const warmupRunsPerCase = process.env.READER_PERFORMANCE_WARMUP_RUNS === undefined
   ? (baselineRoot ? 2 : 0)
   : Number(process.env.READER_PERFORMANCE_WARMUP_RUNS);
@@ -209,7 +210,7 @@ function pairedDeltaReport(baselineRuns, candidateRuns) {
   return { baselineRuns, candidateRuns, deltas };
 }
 
-function budgetReport(fixtureName, p90, retainedHeap, pairedBaseline = null, pairedDelta = null) {
+function budgetReport(fixtureName, p90, retainedHeap, pairedBaseline = null, pairedDelta = null, reactMemoryGate = null) {
   const fixtureBaseline = baseline.fixtures[fixtureName] || baseline.nodeBenchmarks[fixtureName];
   if (!fixtureBaseline) return { status: "not-applicable", metrics: {} };
   const referenceP90 = pairedBaseline?.p90 || fixtureBaseline;
@@ -249,7 +250,8 @@ function budgetReport(fixtureName, p90, retainedHeap, pairedBaseline = null, pai
       budget,
       observedP90,
       increaseRate: retainedBaseline === 0 ? null : (observedP90 - retainedBaseline) / Math.abs(retainedBaseline),
-      regression: observedP90 > budget,
+      regression: reactMemoryGate?.regression ?? observedP90 > budget,
+      ...(reactMemoryGate ? { reactMemoryGate } : {}),
     };
   }
   return {
@@ -311,97 +313,134 @@ async function measurePassivePage(browser, control = false, variant = "candidate
   }
 }
 
-async function measurePage(browser, fixture, variant = "candidate") {
+async function setupPerformancePage(browser, fixture, variant = "candidate") {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   page.setDefaultTimeout(120_000);
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Performance.enable");
-  try {
-    await page.goto(`${baseUrl}/tests/e2e/fixtures/performance.html`);
-    const variantScripts = variant === "baseline" ? baselineScripts : scripts;
-    if (!variantScripts) throw new Error("baseline generated assets are required for paired measurement");
-    const runtimePrefix = variant === "baseline" ? `/__reader-baseline__${generatedPath}` : generatedPath;
-    await page.evaluate((runtimeConfig) => {
-      globalThis.browser = {
-        runtime: {
-          getURL(path) {
-            return `${runtimeConfig.baseUrl}${runtimeConfig.runtimePrefix}/${path}`;
-          },
+  await page.goto(`${baseUrl}/tests/e2e/fixtures/performance.html`);
+  const variantScripts = variant === "baseline" ? baselineScripts : scripts;
+  if (!variantScripts) throw new Error("baseline generated assets are required for paired measurement");
+  const runtimePrefix = variant === "baseline" ? `/__reader-baseline__${generatedPath}` : generatedPath;
+  await page.evaluate((runtimeConfig) => {
+    globalThis.browser = {
+      runtime: {
+        getURL(path) {
+          return `${runtimeConfig.baseUrl}${runtimeConfig.runtimePrefix}/${path}`;
         },
-      };
-    }, { baseUrl, runtimePrefix });
-    for (const script of variantScripts) {
-      await page.addScriptTag({
-        path: script,
-        type: script.endsWith("session-wasm-module.js") ? "module" : "text/javascript",
-      });
-    }
-    await page.evaluate(({ nodeCount, extraction }) => {
-      const sourceMarkup = (() => {
-        const rootTag = extraction === "dominant" ? "article" : "main";
-        const spanCount = Math.max(3, nodeCount - 4);
-        const paragraphs = ["<p>", "<p>", "<p>"];
-        for (let index = 0; index < spanCount; index += 1) {
-          paragraphs[index % 3] += "<span>読みやすい文章です。</span>";
-        }
-        return `<${rootTag}>${paragraphs.map((value) => `${value}</p>`).join("")}</${rootTag}>`;
-      })();
-      const fallbackMarkup = extraction === "fallback" ? sourceMarkup.replace(/^<main>|<\/main>$/gu, "") : sourceMarkup;
-      document.body.innerHTML = sourceMarkup;
-      class FixtureDefuddle {
-        parse() {
-          return { content: fallbackMarkup, title: "" };
-        }
-      }
-      globalThis.Defuddle = FixtureDefuddle;
-      globalThis.__READER_PERFORMANCE_ENABLED = true;
-      globalThis.MobileViewer.install();
-    }, fixture);
-    await cdp.send("HeapProfiler.enable");
-    await cdp.send("HeapProfiler.collectGarbage");
-    const beforeOpenMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
-    const rawResult = await page.evaluate(() => {
-      const openPromise = globalThis.MobileViewer.open();
-      return openPromise.then(() => {
-        const mark = (name) => performance.getEntriesByName(name, "mark").at(-1)?.startTime;
-        const marks = {
-          tap: mark("reader:tap"),
-          firstFeedback: mark("reader:first-feedback"),
-          extractionStart: mark("reader:extraction-start"),
-          extractionEnd: mark("reader:extraction-end"),
-          firstRender: mark("reader:first-render"),
-          firstUnit: mark("reader:first-unit"),
-          sessionInitStart: mark("reader:session-init-start"),
-          sessionInitEnd: mark("reader:session-init-end"),
-          reactInitStart: mark("reader:react-init-start"),
-          reactInitEnd: mark("reader:react-init-end"),
-          wasmInitStart: mark("reader:wasm-init-start"),
-          wasmInitEnd: mark("reader:wasm-init-end"),
-        };
-        const metrics = globalThis.__READER_PERFORMANCE_LAST_METRICS;
-        const wasmRequestsBeforeTap = performance.getEntriesByType("resource")
-          .filter((entry) => entry.name.endsWith("reader_session_bg.wasm"));
-        return {
-          marks,
-          metrics,
-          wasmFetchedBeforeTap: wasmRequestsBeforeTap.some((entry) => entry.startTime < marks.tap),
-          nodeCount: document.querySelectorAll("*").length,
-        };
-      });
-    });
-    const result = buildPerformanceSample(rawResult);
-    await page.evaluate(() => globalThis.MobileViewer.close());
-    await cdp.send("HeapProfiler.enable");
-    await cdp.send("HeapProfiler.collectGarbage");
-    const afterCloseMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
-    return {
-      ...result,
-      heapBeforeOpenBytes: beforeOpenMetrics.JSHeapUsedSize ?? null,
-      retainedHeapAfterCloseBytes: afterCloseMetrics.JSHeapUsedSize ?? null,
-      retainedHeapDeltaBytes: beforeOpenMetrics.JSHeapUsedSize === undefined || afterCloseMetrics.JSHeapUsedSize === undefined
-        ? null
-        : afterCloseMetrics.JSHeapUsedSize - beforeOpenMetrics.JSHeapUsedSize,
+      },
     };
+  }, { baseUrl, runtimePrefix });
+  for (const script of variantScripts) {
+    await page.addScriptTag({
+      path: script,
+      type: script.endsWith("session-wasm-module.js") ? "module" : "text/javascript",
+    });
+  }
+  await page.evaluate(({ nodeCount, extraction }) => {
+    const sourceMarkup = (() => {
+      const rootTag = extraction === "dominant" ? "article" : "main";
+      const spanCount = Math.max(3, nodeCount - 4);
+      const paragraphs = ["<p>", "<p>", "<p>"];
+      for (let index = 0; index < spanCount; index += 1) {
+        paragraphs[index % 3] += "<span>読みやすい文章です。</span>";
+      }
+      return `<${rootTag}>${paragraphs.map((value) => `${value}</p>`).join("")}</${rootTag}>`;
+    })();
+    const fallbackMarkup = extraction === "fallback" ? sourceMarkup.replace(/^<main>|<\/main>$/gu, "") : sourceMarkup;
+    document.body.innerHTML = sourceMarkup;
+    class FixtureDefuddle {
+      parse() {
+        return { content: fallbackMarkup, title: "" };
+      }
+    }
+    globalThis.Defuddle = FixtureDefuddle;
+    globalThis.__READER_PERFORMANCE_ENABLED = true;
+    globalThis.MobileViewer.install();
+  }, fixture);
+  return { page, cdp };
+}
+
+async function measurePerformanceCycle(page, cdp, settleMs = 0) {
+  await cdp.send("HeapProfiler.enable");
+  await cdp.send("HeapProfiler.collectGarbage");
+  const beforeOpenMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
+  const rawResult = await page.evaluate(() => {
+    const openPromise = globalThis.MobileViewer.open();
+    return openPromise.then(() => {
+      const mark = (name) => performance.getEntriesByName(name, "mark").at(-1)?.startTime;
+      const marks = {
+        tap: mark("reader:tap"),
+        firstFeedback: mark("reader:first-feedback"),
+        extractionStart: mark("reader:extraction-start"),
+        extractionEnd: mark("reader:extraction-end"),
+        firstRender: mark("reader:first-render"),
+        firstUnit: mark("reader:first-unit"),
+        sessionInitStart: mark("reader:session-init-start"),
+        sessionInitEnd: mark("reader:session-init-end"),
+        reactInitStart: mark("reader:react-init-start"),
+        reactInitEnd: mark("reader:react-init-end"),
+        wasmInitStart: mark("reader:wasm-init-start"),
+        wasmInitEnd: mark("reader:wasm-init-end"),
+      };
+      const metrics = globalThis.__READER_PERFORMANCE_LAST_METRICS;
+      const wasmRequestsBeforeTap = performance.getEntriesByType("resource")
+        .filter((entry) => entry.name.endsWith("reader_session_bg.wasm"));
+      return {
+        marks,
+        metrics,
+        wasmFetchedBeforeTap: wasmRequestsBeforeTap.some((entry) => entry.startTime < marks.tap),
+        nodeCount: document.querySelectorAll("*").length,
+      };
+    });
+  });
+  const result = buildPerformanceSample(rawResult);
+  await page.evaluate(() => globalThis.MobileViewer.close());
+  if (settleMs > 0) await page.waitForTimeout(settleMs);
+  await cdp.send("HeapProfiler.enable");
+  await cdp.send("HeapProfiler.collectGarbage");
+  const afterCloseMetrics = Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map(({ name, value }) => [name, value]));
+  return {
+    ...result,
+    heapBeforeOpenBytes: beforeOpenMetrics.JSHeapUsedSize ?? null,
+    retainedHeapAfterCloseBytes: afterCloseMetrics.JSHeapUsedSize ?? null,
+    retainedHeapDeltaBytes: beforeOpenMetrics.JSHeapUsedSize === undefined || afterCloseMetrics.JSHeapUsedSize === undefined
+      ? null
+      : afterCloseMetrics.JSHeapUsedSize - beforeOpenMetrics.JSHeapUsedSize,
+  };
+}
+
+async function measurePage(browser, fixture, variant = "candidate") {
+  const { page, cdp } = await setupPerformancePage(browser, fixture, variant);
+  try {
+    return await measurePerformanceCycle(page, cdp);
+  } finally {
+    await page.close();
+  }
+}
+
+function cleanupCycleReport(runs, warmupCycles = 2) {
+  const increments = runs.slice(warmupCycles).map((run) => run.retainedHeapDeltaBytes);
+  return {
+    cycles: runs.map((run, cycle) => ({ cycle, before: run.heapBeforeOpenBytes, after: run.retainedHeapAfterCloseBytes, delta: run.retainedHeapDeltaBytes })),
+    warmupCycles,
+    steadyIncrements: {
+      increments,
+      p50: median(increments),
+      p90: percentile(increments, 0.9),
+      max: increments.length > 0 && increments.every((value) => Number.isFinite(value)) ? Math.max(...increments) : null,
+    },
+  };
+}
+
+async function measureCleanupCycles(browser, fixture, variant, cycles = 8) {
+  const { page, cdp } = await setupPerformancePage(browser, fixture, variant);
+  try {
+    const runs = [];
+    for (let cycle = 0; cycle < cycles; cycle += 1) {
+      runs.push(await measurePerformanceCycle(page, cdp, 500));
+    }
+    return cleanupCycleReport(runs);
   } finally {
     await page.close();
   }
@@ -508,6 +547,47 @@ try {
     if (baselineRoot) pairedComparison.nodeBenchmarks[String(nodeCount)] = pairedDelta;
   }
 
+  const cleanupCycles = {};
+  let measuredReactFixedHeapOverheadBytes = null;
+  if (baselineRoot) {
+    const cleanupFixtures = [
+      ...fixtures,
+      ...nodeCounts.map((nodeCount) => ({ name: `nodes-${nodeCount}`, nodeCount, extraction: "dominant" })),
+    ];
+    for (const fixture of cleanupFixtures) {
+      const baselineCycles = await measureCleanupCycles(browser, fixture, "baseline", cleanupCyclesPerCase);
+      const candidateCycles = await measureCleanupCycles(browser, fixture, "candidate", cleanupCyclesPerCase);
+      cleanupCycles[fixture.name] = { baseline: baselineCycles, candidate: candidateCycles };
+    }
+    const fixedOverheads = Object.values(cleanupCycles).map(({ baseline, candidate }) => candidate.cycles[0]?.delta - baseline.cycles[0]?.delta);
+    if (fixedOverheads.every((value) => Number.isFinite(value))) measuredReactFixedHeapOverheadBytes = Math.max(0, ...fixedOverheads);
+  }
+
+  if (baselineRoot) {
+    for (const { name, report, baselineRuns } of [
+      ...Object.entries(fixtureReports).map(([name, report]) => ({ name, report, baselineRuns: pairedComparison.fixtures[name]?.baselineRuns })),
+      ...Object.entries(nodeReports).map(([name, report]) => ({ name, report, baselineRuns: pairedComparison.nodeBenchmarks[name]?.baselineRuns })),
+    ]) {
+      const baselineReport = baselineRuns;
+      const baselineP90Bytes = baselineReport ? retainedHeapReport(baselineReport).p90Bytes : null;
+      const reactMemoryGate = evaluateReactMemoryGate({
+        candidateP90Bytes: report.retainedHeap.p90Bytes,
+        baselineP90Bytes,
+        fixedOverheadBytes: measuredReactFixedHeapOverheadBytes,
+        cleanupCycles: cleanupCycles[name] || cleanupCycles[`nodes-${name}`] || null,
+      });
+      const retainedMetric = report.budget.metrics.retainedHeapDeltaBytes;
+      if (retainedMetric) {
+        retainedMetric.budget = reactMemoryGate.combinedBudgetBytes ?? retainedMetric.budget;
+        retainedMetric.regression = reactMemoryGate.regression;
+        retainedMetric.reactMemoryGate = reactMemoryGate;
+      }
+      report.budget.status = Object.values(report.budget.metrics).some((metric) => metric.regression)
+        ? "regression"
+        : "within-budget";
+    }
+  }
+
   const initializationReports = [
     ...Object.entries(fixtureReports).map(([name, report]) => ({
       name: `fixture:${name}`,
@@ -584,6 +664,12 @@ try {
     nodeBenchmarks: nodeReports,
     bundleBytes,
     reactMigration,
+    reactMemory: {
+      fixedOverheadBytes: measuredReactFixedHeapOverheadBytes,
+      fixedOverheadBudgetBytes: REACT_FIXED_HEAP_BUDGET_BYTES,
+      cleanupCyclesPerCase: baselineRoot ? cleanupCyclesPerCase : null,
+    },
+    cleanupCycles,
     passive,
     pairedComparison: baselineRoot ? pairedComparison : null,
     regressions: allRegressions,
