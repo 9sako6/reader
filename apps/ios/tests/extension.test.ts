@@ -224,7 +224,7 @@ test("Xcode project embeds every manifest script in the extension", () => {
 
 test("Safari viewer leaves loading and rendering to ReaderView", () => {
   const source = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "viewer", "viewer.ts"), "utf8");
-  for (const symbol of ["createLaunchFeedback", "revealLaunchProgress", "finishLaunchProgress", "launchProgress.element", "launchProgress.animation"]) {
+  for (const symbol of ["createLaunchFeedback", "revealLaunchProgress", "finishLaunchProgress", "launchProgress.element", "launchProgress.animation", "showRewindFeedback", "global.ReaderIcons.create", "feedback.append"]) {
     assert.equal(source.includes(symbol), false, `obsolete Safari renderer symbol: ${symbol}`);
   }
 });

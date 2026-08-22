@@ -71,6 +71,8 @@
   let reactTextScroller: HTMLElement | null = null;
   let reactTextMarkers: HTMLElement[] = [];
   let reactTextRestoreScrollTop: number | null = null;
+  let rewindFeedback: { left: number; top: number; id: number } | null = null;
+  let rewindFeedbackId = 0;
   const reactTextFigureCorrections = new WeakMap<HTMLElement, { scroller: HTMLElement; positionMarkers: HTMLElement[] }>();
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
@@ -141,7 +143,7 @@
     const figureStatus = figure && figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.kind : figure ? "loading" : null;
     const unit = item?.kind === "unit" ? units[unitIndex] || null : null;
     const context = unit ? global.Engine.surroundingSentences(units, unitIndex) : { previous: "", next: "" };
-    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus, loadingVisible: figureStatus === "loading" && figureLoadRevealTimerId === null, brightness: reactFigureBrightness } : null, playing: state?.playback === "playing", progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
+    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus, loadingVisible: figureStatus === "loading" && figureLoadRevealTimerId === null, brightness: reactFigureBrightness } : null, playing: state?.playback === "playing", progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, rewindFeedback, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
   }
 
   function renderReactView(): void {
@@ -177,6 +179,7 @@
       figureLoad: (figureIndex: number) => settleReactFigure(figureIndex, true),
       figureError: (figureIndex: number) => settleReactFigure(figureIndex, false),
       toggleFigureBrightness: (figureIndex: number) => toggleReactFigureBrightness(figureIndex),
+      rewindFeedbackDone: clearRewindFeedback,
       textScroll: (element: HTMLElement) => {
         if (!content) return;
         reactTextScroller = element;
@@ -1022,7 +1025,7 @@
     if (lastLeftTapAt > 0 && closeToPreviousTap) {
       clearPendingLeftTap();
       lastLeftTapAt = 0;
-      showRewindFeedback(clientX, clientY);
+      setRewindFeedback(clientX, clientY);
       previousSentence();
       return;
     }
@@ -1053,53 +1056,19 @@
     pendingLeftTap = null;
   }
 
-  function showRewindFeedback(clientX: number, clientY: number): void {
+  function setRewindFeedback(clientX: number, clientY: number): void {
     const surface = reactViewHost?.querySelector<HTMLElement>(".content") || reactViewHost || overlay;
     if (!surface) return;
     const rect = surface.getBoundingClientRect();
-    const feedback = global.document.createElement("div");
-    feedback.className = "rewind-feedback";
-    feedback.setAttribute("aria-hidden", "true");
-    feedback.style.left = `${clientX - rect.left}px`;
-    feedback.style.top = `${clientY - rect.top}px`;
-    const firstRing = global.document.createElement("span");
-    firstRing.className = "rewind-ring";
-    const secondRing = global.document.createElement("span");
-    secondRing.className = "rewind-ring";
-    const icon = global.ReaderIcons.create(global.document, "previous", 30);
-    feedback.append(firstRing, secondRing, icon);
-    surface.append(feedback);
+    rewindFeedbackId += 1;
+    rewindFeedback = { left: clientX - rect.left, top: clientY - rect.top, id: rewindFeedbackId };
+    renderReactView();
+  }
 
-    const reducedMotion = global.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const ringFrames = reducedMotion
-      ? [{ opacity: 0.28 }, { opacity: 0 }]
-      : [
-          { opacity: 0.08, transform: "scale(.32)" },
-          { opacity: 0.26, transform: "scale(.9)" },
-          { opacity: 0, transform: "scale(2.15)" },
-        ];
-    const firstAnimation = firstRing.animate(ringFrames, {
-      duration: reducedMotion ? 160 : 420,
-      easing: "cubic-bezier(.22, 1, .36, 1)",
-      fill: "forwards",
-    });
-    const secondAnimation = secondRing.animate(ringFrames, {
-      duration: reducedMotion ? 160 : 420,
-      delay: reducedMotion ? 0 : 80,
-      easing: "cubic-bezier(.22, 1, .36, 1)",
-      fill: "forwards",
-    });
-    icon.animate(
-      reducedMotion
-        ? [{ opacity: 0.72 }, { opacity: 0 }]
-        : [
-            { opacity: 0, transform: "translateX(8px) scale(.9)" },
-            { opacity: 0.72, transform: "translateX(0) scale(1)" },
-            { opacity: 0, transform: "translateX(-8px) scale(.96)" },
-          ],
-      { duration: reducedMotion ? 160 : 360, easing: "ease-out", fill: "forwards" },
-    );
-    Promise.allSettled([firstAnimation.finished, secondAnimation.finished]).then(() => feedback.remove());
+  function clearRewindFeedback(id: number): void {
+    if (!rewindFeedback || rewindFeedback.id !== id) return;
+    rewindFeedback = null;
+    renderReactView();
   }
 
   function play() {
@@ -1339,6 +1308,7 @@
     reactTextScroller = null;
     reactTextMarkers = [];
     reactTextRestoreScrollTop = null;
+    rewindFeedback = null;
   }
 
   function destroyLaunchProgressIfPresent(): void {

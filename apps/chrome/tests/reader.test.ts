@@ -663,6 +663,7 @@ test("Chrome viewer leaves rendering to ReaderView", () => {
     "renderCurrentFlowItem",
     "showFigure",
     "loadingLayer",
+    "progressLabel",
     "playbackState",
     "currentUnitIndex",
     "nextFigureIndex",

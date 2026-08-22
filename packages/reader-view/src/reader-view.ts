@@ -13,6 +13,7 @@ export type ReaderViewModel =
     playing: boolean;
     progress: number;
     loadingCover?: boolean;
+    rewindFeedback?: ReaderRewindFeedback;
     headings: ReaderHeading[];
     activeHeadingIndex: number;
     mobile?: boolean;
@@ -36,6 +37,12 @@ export type ReaderFigureView = {
   brightness?: "dimmed" | "revealed";
 };
 
+export type ReaderRewindFeedback = {
+  left: number;
+  top: number;
+  id: number;
+};
+
 export interface ReaderViewHandlers {
   close(): void;
   cancel(): void;
@@ -49,6 +56,7 @@ export interface ReaderViewHandlers {
   figureLoad(figureIndex: number): void;
   figureError(figureIndex: number): void;
   toggleFigureBrightness?(figureIndex: number): void;
+  rewindFeedbackDone?(id: number): void;
   textScroll(element: HTMLElement): void;
   textPosition(element: HTMLElement): void;
   rsvpPointerUp?(event: PointerEvent): void;
@@ -278,6 +286,81 @@ function LoadingIndicator({ mobile, reducedMotion, revealed }: { mobile: boolean
   });
 }
 
+function RewindFeedback({ feedback, onDone }: { feedback: ReaderRewindFeedback; onDone?(id: number): void }): ReactElement {
+  const firstRingRef = useRef<HTMLElement | null>(null);
+  const secondRingRef = useRef<HTMLElement | null>(null);
+  const iconRef = useRef<SVGElement | null>(null);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  const reducedMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  useLayoutEffect(() => {
+    const firstRing = firstRingRef.current;
+    const secondRing = secondRingRef.current;
+    const icon = iconRef.current;
+    if (!firstRing || !secondRing || !icon || typeof firstRing.animate !== "function" || typeof secondRing.animate !== "function" || typeof icon.animate !== "function") return undefined;
+    const ringFrames = reducedMotion
+      ? [{ opacity: 0.28 }, { opacity: 0 }]
+      : [
+        { opacity: 0.08, transform: "scale(.32)" },
+        { opacity: 0.26, transform: "scale(.9)" },
+        { opacity: 0, transform: "scale(2.15)" },
+      ];
+    const firstAnimation = firstRing.animate(ringFrames, {
+      duration: reducedMotion ? 160 : 420,
+      easing: "cubic-bezier(.22, 1, .36, 1)",
+      fill: "forwards",
+    });
+    const secondAnimation = secondRing.animate(ringFrames, {
+      duration: reducedMotion ? 160 : 420,
+      delay: reducedMotion ? 0 : 80,
+      easing: "cubic-bezier(.22, 1, .36, 1)",
+      fill: "forwards",
+    });
+    const iconAnimation = icon.animate(
+      reducedMotion
+        ? [{ opacity: 0.72 }, { opacity: 0 }]
+        : [
+          { opacity: 0, transform: "translateX(8px) scale(.9)" },
+          { opacity: 0.72, transform: "translateX(0) scale(1)" },
+          { opacity: 0, transform: "translateX(-8px) scale(.96)" },
+        ],
+      { duration: reducedMotion ? 160 : 360, easing: "ease-out", fill: "forwards" },
+    );
+    let cancelled = false;
+    Promise.allSettled([firstAnimation.finished, secondAnimation.finished, iconAnimation.finished]).then(() => {
+      if (!cancelled) onDoneRef.current?.(feedback.id);
+    });
+    return () => {
+      cancelled = true;
+      firstAnimation.cancel?.();
+      secondAnimation.cancel?.();
+      iconAnimation.cancel?.();
+    };
+  }, [feedback.id, reducedMotion]);
+  return createElement("div", {
+    className: "rewind-feedback",
+    "aria-hidden": "true",
+    style: { left: `${feedback.left}px`, top: `${feedback.top}px` },
+    children: [
+      createElement("span", { key: "first-ring", className: "rewind-ring", ref: (element: HTMLElement | null) => { firstRingRef.current = element; } }),
+      createElement("span", { key: "second-ring", className: "rewind-ring", ref: (element: HTMLElement | null) => { secondRingRef.current = element; } }),
+      createElement("svg", {
+        key: "icon",
+        width: 30,
+        height: 30,
+        viewBox: "0 0 24 24",
+        fill: "currentColor",
+        "aria-hidden": "true",
+        ref: (element: SVGSVGElement | null) => { iconRef.current = element; },
+        children: [
+          createElement("path", { key: "first", d: "M10.9 5.2a1.25 1.25 0 0 1 2.05.97v11.66a1.25 1.25 0 0 1-2.05.97l-7.3-5.83a1.25 1.25 0 0 1 0-1.94z" }),
+          createElement("path", { key: "second", d: "M20.15 5.2a1.25 1.25 0 0 1 2.05.97v11.66a1.25 1.25 0 0 1-2.05.97l-7.3-5.83a1.25 1.25 0 0 1 0-1.94z" }),
+        ],
+      }),
+    ],
+  });
+}
+
 function renderError(model: Extract<ReaderViewModel, { kind: "error" }>, handlers: ReaderViewHandlers): ReactElement {
   const actions = [model.canRetry ? button("やり直す", handlers.retry) : null, button("元に戻る", handlers.close, { "aria-label": "readerを閉じる" })];
   if (model.mobile) {
@@ -345,7 +428,7 @@ function renderMobileRsvp(model: Extract<ReaderViewModel, { kind: "rsvp" }>, han
   return createElement("section", { className: "reader", role: "dialog", "aria-label": "reader", "aria-modal": "true", onPointerUp: (event: PointerEvent) => handlers.rsvpPointerUp?.(event), children: [
     createElement("header", { key: "topbar", className: "topbar", children: createElement("button", { className: "icon-button", type: "button", "aria-label": "readerを閉じる", onClick: handlers.close, children: "×" }) }),
     createElement("footer", { key: "controlbar", className: "controlbar", children: [createElement("button", { key: "mode", className: "mode-button", type: "button", "data-reader-mode-button": "true", onClick: handlers.switchToText, children: "文章で読む" }), createElement("div", { key: "progress", className: "progress", children: `${model.progress}%` }), createElement("div", { key: "transport", className: "control-dock", children: [createElement("button", { key: "previous", className: "dock-button previous", type: "button", "aria-label": "1文戻る", "aria-keyshortcuts": "ArrowLeft", onClick: handlers.previousSentence, children: "1文戻る" }), createElement("button", { key: "play", className: "dock-button play", type: "button", "aria-label": playLabel, "aria-pressed": String(model.playing), "aria-keyshortcuts": "Space", onClick: model.figure ? handlers.resumeFigure : handlers.togglePlayback, children: model.figure ? "続きを読む" : model.playing ? "Ⅱ" : "▶" })] })] }),
-    createElement("main", { key: "content", className: "content", children: createElement("div", { className: "rsvp-view", children: [createElement("div", { key: "previous", className: "context-unit previous", "aria-hidden": "true", children: model.previous }), current, createElement("div", { key: "next", className: "context-unit next", "aria-hidden": "true", children: model.next })] }) }),
+    createElement("main", { key: "content", className: "content", children: [createElement("div", { key: "rsvp", className: "rsvp-view", children: [createElement("div", { key: "previous", className: "context-unit previous", "aria-hidden": "true", children: model.previous }), current, createElement("div", { key: "next", className: "context-unit next", "aria-hidden": "true", children: model.next })] }), model.rewindFeedback ? createElement(RewindFeedback, { key: `rewind-${model.rewindFeedback.id}`, feedback: model.rewindFeedback, onDone: handlers.rewindFeedbackDone }) : null] }),
   ] });
 }
 
