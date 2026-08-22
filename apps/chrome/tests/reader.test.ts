@@ -21,6 +21,10 @@ class FakeElement {
     this.parent = null;
     this.clientWidth = 1000;
     this.scrollWidth = 1000;
+    this.inert = false;
+    this.hidden = false;
+    this.disabled = false;
+    this.ownerDocument = null;
     this.listeners = new Map();
     this.animations = [];
   }
@@ -28,12 +32,21 @@ class FakeElement {
   append(...children) {
     for (const child of children) {
       child.parent = this;
+      child.ownerDocument ||= this.ownerDocument;
       this.children.push(child);
     }
   }
 
   setAttribute(name, value) {
     this.attributes[name] = value;
+  }
+
+  getAttribute(name) {
+    return this.attributes[name] ?? null;
+  }
+
+  hasAttribute(name) {
+    return Object.prototype.hasOwnProperty.call(this.attributes, name);
   }
 
   addEventListener(type, listener) {
@@ -63,6 +76,19 @@ class FakeElement {
     this.children = [];
     this.append(...children);
   }
+
+  getClientRects() {
+    return this.hidden ? [] : [{}];
+  }
+
+  contains(element) {
+    if (element === this) return true;
+    return this.children.some((child) => child.contains(element));
+  }
+
+  focus() {
+    if (this.ownerDocument) this.ownerDocument.activeElement = this;
+  }
 }
 
 function findElement(root, predicate) {
@@ -90,8 +116,11 @@ function createOutlineReaderHarness() {
   let resizeCallback = null;
   const document = {
     documentElement,
+    activeElement: null,
     createElement(tagName) {
-      return new FakeElement(tagName);
+      const element = new FakeElement(tagName);
+      element.ownerDocument = document;
+      return element;
     },
     createElementNS(_namespace, tagName) {
       return new FakeElement(tagName);
@@ -117,6 +146,7 @@ function createOutlineReaderHarness() {
       for (const listener of documentListeners.get(event.type) || []) listener(event);
     },
   };
+  documentElement.ownerDocument = document;
   let messageListener = null;
   const selection = {
     rangeCount: 1,
@@ -398,6 +428,147 @@ test("reader renders controls with their literal dimensions", () => {
   assert.equal(closeButton.children[0].tagName, "SVG");
   assert.equal(modeButton.style.minWidth, "112px");
   assert.equal(modeButton.parent.attributes["data-reader-topbar"], "true");
+});
+
+test("reader marks the dialog and RSVP unit for assistive technology", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "semantics-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "semantics-request",
+  });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const dialog = findElement(overlay, (element) => element.attributes.role === "dialog");
+  const unit = findElement(overlay, (element) => element.attributes["data-reader-unit"] === "true");
+  const previous = findElement(overlay, (element) => element.style.bottom === "calc(50% + 82px)");
+  assert.equal(dialog.attributes["aria-modal"], "true");
+  assert.equal(dialog.attributes["aria-label"], "reader");
+  assert.equal(unit.attributes["aria-live"], "off");
+  assert.equal(unit.attributes["aria-atomic"], "false");
+  assert.equal(previous.attributes["aria-hidden"], "true");
+});
+
+test("reader does not scale controls when reduced motion is enabled", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  harness.enableReducedMotion();
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "reduced-control-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "reduced-control-request",
+  });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const modeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
+  const playButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
+  modeButton.dispatchEvent({ type: "pointerdown" });
+  playButton.dispatchEvent({ type: "pointerdown" });
+  assert.equal(playButton.attributes["aria-pressed"], "true");
+  assert.equal(modeButton.style.scale, undefined);
+  assert.equal(playButton.style.scale, undefined);
+});
+
+test("reader restores background inert state and launch focus after Escape", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener } = harness;
+  const body = new FakeElement("body");
+  body.ownerDocument = document;
+  const head = new FakeElement("head");
+  head.ownerDocument = document;
+  head.inert = true;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(body, head, launchButton);
+  launchButton.focus();
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "modal-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "modal-request",
+  });
+  assert.equal(body.inert, true);
+  assert.equal(head.inert, true);
+  assert.equal(document.activeElement.attributes["aria-label"], "readerを閉じる");
+
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Escape",
+    target: documentElement,
+    preventDefault() {},
+  });
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(body.inert, false);
+  assert.equal(head.inert, true);
+  assert.equal(document.activeElement, launchButton);
+});
+
+test("reader keeps keyboard focus trapped after switching to text mode", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener } = harness;
+  const body = new FakeElement("body");
+  body.ownerDocument = document;
+  const head = new FakeElement("head");
+  head.ownerDocument = document;
+  head.inert = true;
+  const launchButton = new FakeElement("button");
+  launchButton.ownerDocument = document;
+  documentElement.append(body, head, launchButton);
+  launchButton.focus();
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-modal-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "text-modal-request",
+  });
+
+  const rsvpOverlay = document.getElementById("__rsvp-reader-root");
+  const textModeButton = findElement(rsvpOverlay, (element) => element.textContent === "文章で読む");
+  textModeButton.dispatchEvent({ type: "click" });
+
+  const textOverlay = document.getElementById("__rsvp-reader-root");
+  const textShell = findElement(
+    textOverlay,
+    (element) => element.attributes["data-reader-text-shell"] === "true",
+  );
+  const closeButton = findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる");
+  const rsvpModeButton = findElement(textShell, (element) => element.textContent === "RSVPで読む");
+  assert.ok(textShell);
+  assert.equal(document.activeElement, closeButton);
+
+  rsvpModeButton.focus();
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Tab",
+    shiftKey: true,
+    target: rsvpModeButton,
+    preventDefault() {},
+  });
+  assert.equal(document.activeElement, closeButton);
+
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Tab",
+    target: closeButton,
+    preventDefault() {},
+  });
+  assert.equal(document.activeElement, rsvpModeButton);
+
+  document.dispatchEvent({
+    type: "keydown",
+    key: "Escape",
+    target: rsvpModeButton,
+    preventDefault() {},
+  });
+  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(body.inert, false);
+  assert.equal(head.inert, true);
+  assert.equal(document.activeElement, launchButton);
 });
 
 test("reader keyboard controls pause and move between sentence contexts", () => {

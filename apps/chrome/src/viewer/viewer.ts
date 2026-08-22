@@ -49,6 +49,9 @@
   let blocks: ReaderBlock[] = [];
   let currentOffset = 0;
   let launchFocus: HTMLElement | null = null;
+  let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
+  let backgroundInert = false;
+  let keydownListenerAttached = false;
 
   function isReaderMessage(value: unknown): value is ReaderMessage {
     if (typeof value !== "object" || value === null || !("type" in value)) return false;
@@ -209,7 +212,8 @@
     loadingLayer.append(track, closeButton);
     root.append(loadingLayer);
     if (rootHost) document.documentElement.append(rootHost);
-    globalThis.requestAnimationFrame?.(() => closeButton.focus());
+    attachKeydownListener();
+    focusAfterPaint(closeButton);
   }
 
   function cancelLoadingReveal(): void {
@@ -251,7 +255,8 @@
       transform: "translateX(-50%)",
     });
     root.append(status, closeButton);
-    globalThis.requestAnimationFrame?.(() => closeButton.focus());
+    attachKeydownListener();
+    focusAfterPaint(closeButton);
   }
 
   function collectReadingContext(sourceText: string): Partial<ReadingContext> {
@@ -368,6 +373,8 @@
 
     display = document.createElement("div");
     display.setAttribute("data-reader-unit", "true");
+    display.setAttribute("aria-live", "off");
+    display.setAttribute("aria-atomic", "false");
     Object.assign(display.style, {
       position: "absolute",
       left: "50%",
@@ -421,10 +428,8 @@
     main.append(topbar, previousContext, display, nextContext, controls);
     stage.append(main);
     revealReader(stage);
-    document.addEventListener("keydown", handleKeyDown);
-    globalThis.requestAnimationFrame?.(() => {
-      root?.querySelector?.<HTMLButtonElement>('[aria-label="readerを閉じる"]')?.focus();
-    });
+    attachKeydownListener();
+    focusAfterPaint(findCloseButton());
 
     if (typeof globalThis.ResizeObserver === "function") {
       displayResizeObserver = new globalThis.ResizeObserver(() => {
@@ -480,6 +485,7 @@
       modeButton.style.scale = "1";
     });
     modeButton.addEventListener("pointerdown", () => {
+      if (prefersReducedMotion()) return;
       modeButton.style.scale = "0.96";
     });
     modeButton.addEventListener("pointerup", () => {
@@ -544,6 +550,7 @@
       button.style.scale = "1";
     });
     button.addEventListener("pointerdown", () => {
+      if (prefersReducedMotion()) return;
       button.style.opacity = "0.62";
       button.style.scale = "0.94";
     });
@@ -618,12 +625,99 @@
         [data-reader-text-shell] { width: 100% !important; height: 100% !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
         [data-reader-text-scroller] { padding: 64px 20px 96px !important; }
       }
+      @media (prefers-contrast: more) {
+        :host { --reader-contrast-text: #ffffff; }
+        [data-reader-topbar] button,
+        [data-reader-stage] button { color: var(--reader-contrast-text) !important; }
+      }
     `;
     rootStyle = style;
     element.append(style);
     if (typeof host.attachShadow === "function") host.attachShadow({ mode: "open" }).append(element);
     else host.append(element);
+    makeBackgroundInert(host);
     return element;
+  }
+
+  function makeBackgroundInert(readerHost: HTMLElement): void {
+    if (backgroundInert) return;
+    backgroundInert = true;
+    const documentChildren = Array.from(document.documentElement.children) as HTMLElement[];
+    for (const element of documentChildren) {
+      if (element === readerHost || element.contains?.(readerHost)) continue;
+      const wasInert = element.inert === true;
+      inertedElements.push({ element, wasInert });
+      element.inert = true;
+    }
+  }
+
+  function restoreBackgroundInert(): void {
+    const entries = inertedElements;
+    inertedElements = [];
+    backgroundInert = false;
+    for (const { element, wasInert } of entries) element.inert = wasInert;
+  }
+
+  function findCloseButton(): HTMLButtonElement | null {
+    if (!root) return null;
+    const queried = root.querySelector?.<HTMLButtonElement>('[aria-label="readerを閉じる"]');
+    if (queried) return queried;
+    const find = (element: Element): HTMLButtonElement | null => {
+      for (const child of Array.from(element.children)) {
+        const candidate = child as HTMLElement;
+        if (candidate.tagName.toLowerCase() === "button" && candidate.getAttribute?.("aria-label") === "readerを閉じる") {
+          return candidate as HTMLButtonElement;
+        }
+        const nested = find(candidate);
+        if (nested) return nested;
+      }
+      return null;
+    };
+    return find(root);
+  }
+
+  function focusAfterPaint(element: HTMLElement | null): void {
+    if (!element) return;
+    const focus = () => element.focus?.();
+    if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(focus);
+    else focus();
+  }
+
+  function readerActiveElement(): HTMLElement | null {
+    const rootNode = root?.getRootNode?.();
+    const activeElement = rootNode && "activeElement" in rootNode
+      ? (rootNode as ShadowRoot).activeElement
+      : document.activeElement;
+    return activeElement && typeof (activeElement as HTMLElement).focus === "function"
+      ? activeElement as HTMLElement
+      : null;
+  }
+
+  function containsReaderElement(element: HTMLElement | null): boolean {
+    if (!element || !root) return false;
+    if (typeof root.contains === "function") return root.contains(element);
+    let current: HTMLElement | null = element;
+    while (current) {
+      if (current === root) return true;
+      current = current.parentElement;
+    }
+    return false;
+  }
+
+  function focusCloseIfNeeded(previousFocus: HTMLElement | null): void {
+    if (!containsReaderElement(previousFocus)) focusAfterPaint(findCloseButton());
+  }
+
+  function attachKeydownListener(): void {
+    if (keydownListenerAttached) return;
+    document.addEventListener("keydown", handleKeyDown);
+    keydownListenerAttached = true;
+  }
+
+  function detachKeydownListener(): void {
+    if (!keydownListenerAttached) return;
+    document.removeEventListener("keydown", handleKeyDown);
+    keydownListenerAttached = false;
   }
 
   function revealReader(stage: HTMLDivElement): void {
@@ -805,6 +899,7 @@
       button.style.scale = "1";
     });
     button.addEventListener("pointerdown", () => {
+      if (prefersReducedMotion()) return;
       button.style.scale = "0.97";
     });
     button.addEventListener("pointerup", () => {
@@ -822,6 +917,7 @@
 
   function showTextView() {
     if (!root || !sourceText) return;
+    const activeElement = readerActiveElement();
     pause();
     currentOffset = units[currentUnitIndex]?.start ?? currentOffset;
     clearRenderedView();
@@ -869,6 +965,7 @@
     Object.assign(topbar.style, { left: "16px", right: "16px" });
     shell.append(scroller, topbar);
     root.append(shell);
+    attachKeydownListener();
 
     const updatePosition = () => {
       const viewportCenter = scroller.getBoundingClientRect().top + scroller.clientHeight / 2;
@@ -886,6 +983,7 @@
     };
     scroller.addEventListener("scroll", updatePosition, { passive: true });
     globalThis.requestAnimationFrame?.(() => restoreTextPosition(scroller, blockElements, readableBlocks));
+    focusCloseIfNeeded(activeElement);
   }
 
   function showRsvpView() {
@@ -900,7 +998,7 @@
 
   function clearRenderedView() {
     if (!root || !rootStyle) return;
-    document.removeEventListener("keydown", handleKeyDown);
+    detachKeydownListener();
     displayResizeObserver?.disconnect();
     displayResizeObserver = null;
     root.replaceChildren(rootStyle);
@@ -1398,6 +1496,7 @@
       globalThis.ReaderIcons.create(document, playing ? "pause" : "play", playing ? 26 : 30),
     );
     playPauseButton.setAttribute("aria-label", playing ? "一時停止" : "再生");
+    playPauseButton.setAttribute("aria-pressed", playing ? "true" : "false");
     playPauseButton.title = playing ? "一時停止" : "再生";
   }
 
@@ -1412,7 +1511,7 @@
       trapFocus(event);
       return;
     }
-    if (!display || isEditableTarget(event.target)) return;
+    if (!display || isEditableTarget(event) || isButtonTarget(event)) return;
     if (event.code === "Space" || event.key === " ") {
       event.preventDefault();
       togglePlayPause();
@@ -1424,27 +1523,74 @@
 
   function trapFocus(event: KeyboardEvent): void {
     if (!root) return;
-    const focusable = [...root.querySelectorAll<HTMLElement>(
-      'button:not([hidden]):not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    )].filter((element) => element.getClientRects().length > 0);
+    const focusable = focusableReaderElements();
     if (focusable.length === 0) return;
-    const active = root.getRootNode() instanceof ShadowRoot
-      ? (root.getRootNode() as ShadowRoot).activeElement
-      : document.activeElement;
+    const active = readerActiveElement();
     const currentIndex = focusable.indexOf(active as HTMLElement);
-    let nextIndex = event.shiftKey ? currentIndex - 1 : currentIndex + 1;
-    if (currentIndex < 0) nextIndex = event.shiftKey ? focusable.length - 1 : 0;
-    if (nextIndex < 0) nextIndex = focusable.length - 1;
-    if (nextIndex >= focusable.length) nextIndex = 0;
+    const atStart = currentIndex === 0;
+    const atEnd = currentIndex === focusable.length - 1;
+    const outsideReader = currentIndex < 0;
+    if (!outsideReader && !(event.shiftKey ? atStart : atEnd)) return;
+    const nextIndex = event.shiftKey ? focusable.length - 1 : 0;
     event.preventDefault();
     focusable[nextIndex]?.focus();
   }
 
-  function isEditableTarget(target: EventTarget | null): boolean {
-    if (typeof target !== "object" || target === null) return false;
-    const candidate = target as { tagName?: unknown; isContentEditable?: unknown };
-    const tagName = typeof candidate.tagName === "string" ? candidate.tagName.toLowerCase() : "";
-    return candidate.isContentEditable === true || tagName === "input" || tagName === "textarea" || tagName === "select";
+  function focusableReaderElements(): HTMLElement[] {
+    if (!root) return [];
+    const focusable: HTMLElement[] = [];
+    const visit = (element: Element): void => {
+      for (const child of Array.from(element.children)) {
+        const candidate = child as HTMLElement;
+        if (isFocusableReaderElement(candidate)) focusable.push(candidate);
+        visit(candidate);
+      }
+    };
+    visit(root);
+    return focusable;
+  }
+
+  function isFocusableReaderElement(element: HTMLElement): boolean {
+    const tagName = element.tagName.toLowerCase();
+    const hasHref = element.hasAttribute?.("href") === true;
+    const tabIndex = element.getAttribute?.("tabindex");
+    const explicitTabIndex = typeof tabIndex === "string" && tabIndex !== "-1";
+    const isCandidate = tagName === "button"
+      || hasHref
+      || tagName === "input"
+      || tagName === "select"
+      || tagName === "textarea"
+      || explicitTabIndex;
+    if (!isCandidate) return false;
+    if (element.hidden || element.getAttribute?.("hidden") !== null) return false;
+    if (element.getAttribute?.("aria-hidden") === "true") return false;
+    if ((element as HTMLButtonElement | HTMLInputElement).disabled === true) return false;
+    if (typeof element.getClientRects === "function" && element.getClientRects().length === 0) return false;
+    return true;
+  }
+
+  function eventPath(event: KeyboardEvent): EventTarget[] {
+    if (typeof event.composedPath === "function") return event.composedPath();
+    return event.target ? [event.target] : [];
+  }
+
+  function isEditableTarget(event: KeyboardEvent): boolean {
+    const targets = eventPath(event);
+    for (const target of targets) {
+      if (typeof target !== "object" || target === null) continue;
+      const candidate = target as HTMLElement;
+      const tagName = typeof candidate.tagName === "string" ? candidate.tagName.toLowerCase() : "";
+      if (candidate.isContentEditable === true || tagName === "input" || tagName === "textarea" || tagName === "select") return true;
+    }
+    return false;
+  }
+
+  function isButtonTarget(event: KeyboardEvent): boolean {
+    return eventPath(event).some((target) => (
+      typeof target === "object"
+      && target !== null
+      && (target as HTMLElement).tagName?.toLowerCase() === "button"
+    ));
   }
 
   function prefersReducedMotion() {
@@ -1483,49 +1629,59 @@
     loadingIndicatorAnimation?.cancel?.();
     loadingIndicatorAnimation = null;
     loadingIndicator = null;
-    document.removeEventListener("keydown", handleKeyDown);
+    detachKeydownListener();
     displayResizeObserver?.disconnect();
     displayResizeObserver = null;
-    document.getElementById(ROOT_ID)?.remove();
-    root = null;
-    rootHost = null;
-    rootStyle = null;
-    loadingLayer = null;
-    previousContext = null;
-    display = null;
-    nextContext = null;
-    contextSentenceIndex = null;
-    readerMain = null;
-    playPauseButton = null;
-    headingNodes = [];
-    progressLabel = null;
-    progressBar = null;
-    figurePanel = null;
+    try {
+      document.getElementById(ROOT_ID)?.remove();
+    } finally {
+      root = null;
+      rootHost = null;
+      rootStyle = null;
+      loadingLayer = null;
+      previousContext = null;
+      display = null;
+      nextContext = null;
+      contextSentenceIndex = null;
+      readerMain = null;
+      playPauseButton = null;
+      headingNodes = [];
+      progressLabel = null;
+      progressBar = null;
+      figurePanel = null;
+    }
   }
 
   function close() {
     const restoreFocus = launchFocus;
-    pause();
-    removeOverlay();
-    activeRequestId = null;
-    loadingStartedAt = null;
-    units = [];
-    currentUnitIndex = 0;
-    headings = [];
-    sectionTransitions = [];
-    initialHeadingIndex = -1;
-    figures = [];
-    nextFigureIndex = 0;
-    playbackState = "idle";
-    sourceText = "";
-    blocks = [];
-    baseUnits = [];
-    currentOffset = 0;
-    segmentationLocale = "ja";
-    currentGraphemeLimit = 12;
-    launchFocus = null;
-    if (restoreFocus && typeof globalThis.requestAnimationFrame === "function") {
-      globalThis.requestAnimationFrame(() => restoreFocus.focus?.());
-    } else restoreFocus?.focus?.();
+    try {
+      pause();
+      removeOverlay();
+    } finally {
+      try {
+        restoreBackgroundInert();
+      } finally {
+        activeRequestId = null;
+        loadingStartedAt = null;
+        units = [];
+        currentUnitIndex = 0;
+        headings = [];
+        sectionTransitions = [];
+        initialHeadingIndex = -1;
+        figures = [];
+        nextFigureIndex = 0;
+        playbackState = "idle";
+        sourceText = "";
+        blocks = [];
+        baseUnits = [];
+        currentOffset = 0;
+        segmentationLocale = "ja";
+        currentGraphemeLimit = 12;
+        launchFocus = null;
+        if (restoreFocus && restoreFocus.isConnected !== false && typeof restoreFocus.focus === "function") {
+          focusAfterPaint(restoreFocus);
+        }
+      }
+    }
   }
 })();
