@@ -19,8 +19,8 @@ class FakeElement {
     this.dataset = {};
     this.children = [];
     this.parent = null;
-    this.clientWidth = 500;
-    this.scrollWidth = 500;
+    this.clientWidth = 1000;
+    this.scrollWidth = 1000;
     this.listeners = new Map();
     this.animations = [];
   }
@@ -79,8 +79,6 @@ function createOutlineReaderHarness() {
   const headingInSelection = new FakeElement("h2", "次の節");
   const documentElement = new FakeElement("html");
   const documentListeners = new Map();
-  let rangeMeasurementCount = 0;
-  let measuredRangeElement = null;
   let resizeCallback = null;
   const document = {
     documentElement,
@@ -89,25 +87,6 @@ function createOutlineReaderHarness() {
     },
     createElementNS(_namespace, tagName) {
       return new FakeElement(tagName);
-    },
-    createRange() {
-      return {
-        selectNodeContents(element) {
-          measuredRangeElement = element;
-        },
-        getBoundingClientRect() {
-          const assignedFontSize = Number.parseFloat(measuredRangeElement.style.fontSize);
-          const fontSize = Number.isFinite(assignedFontSize) ? assignedFontSize : 64;
-          const width = rangeMeasurementCount === 0
-            ? 1000
-            : rangeMeasurementCount === 1
-              ? 520
-              : fontSize * 18.288;
-          rangeMeasurementCount += 1;
-          return { width };
-        },
-        detach() {},
-      };
     },
     getElementById(id) {
       return findElement(documentElement, (element) => element.id === id);
@@ -221,9 +200,6 @@ function createOutlineReaderHarness() {
     resizeDisplay() {
       resizeCallback();
     },
-    rangeMeasurementCount() {
-      return rangeMeasurementCount;
-    },
     enableReducedMotion() {
       reduceMotion = true;
     },
@@ -284,8 +260,7 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(outline.style.scrollbarWidth, "none");
   assert.ok(activeMarker);
   assert.equal(activeMarker.style.boxShadow, "none");
-  assert.ok(Number.parseFloat(display.style.fontSize) <= 26);
-  assert.equal(harness.rangeMeasurementCount(), 3);
+  assert.equal(display.style.fontSize, "clamp(36px, 4.5vw, 64px)");
   assert.equal(display.style.justifyContent, "center");
   assert.equal(previousContext.textContent, "");
   assert.equal(nextContext.textContent, "次の節です。");
@@ -295,7 +270,7 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(nextContext.animations[0].options.duration, 120);
 });
 
-test("reader reduces the RSVP font size when the available width shrinks", () => {
+test("reader splits RSVP units when the available width shrinks without changing font size", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resize-request" });
@@ -309,10 +284,14 @@ test("reader reduces the RSVP font size when the available width shrinks", () =>
     (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
   );
 
+  const initialFontSize = display.style.fontSize;
   display.clientWidth = 300;
   harness.resizeDisplay();
-  assert.ok(Number.parseFloat(display.style.fontSize) <= 15);
-  assert.ok(harness.rangeMeasurementCount() >= 5);
+  assert.equal(display.style.fontSize, initialFontSize);
+  assert.equal(display.style.fontSize, "clamp(36px, 4.5vw, 64px)");
+  assert.ok([
+    ...new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(display.textContent),
+  ].length <= 4);
   assert.equal(display.style.justifyContent, "center");
 });
 

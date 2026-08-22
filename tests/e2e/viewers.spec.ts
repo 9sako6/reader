@@ -5,6 +5,76 @@ async function loadViewer(page: Page, viewer: "chrome" | "mobile"): Promise<void
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
 }
 
+const RSVP_WIDTHS = [320, 375, 390, 430, 768];
+const RSVP_SHORT_TEXT = "短い。";
+const RSVP_NEAR_LIMIT_TEXT = "上限付近。";
+const RSVP_LONG_URL = "https://example.com/path/to/a/very/long/resource?token=abcdefghijklmnopqrstuvwxyz0123456789";
+const RSVP_WIDTH_SOURCE = `${RSVP_SHORT_TEXT}${RSVP_NEAR_LIMIT_TEXT}${RSVP_LONG_URL}。`;
+
+for (const viewportWidth of RSVP_WIDTHS) {
+  test(`Chrome viewer caps RSVP units at ${viewportWidth}px without changing font size`, async ({ page }) => {
+    await page.setViewportSize({ width: viewportWidth, height: 800 });
+    await loadViewer(page, "chrome");
+    await page.evaluate((text) => {
+      (globalThis as typeof globalThis & {
+        ReaderE2E: { open(customText: string): void };
+      }).ReaderE2E.open(text);
+    }, RSVP_WIDTH_SOURCE);
+
+    const dialog = page.getByRole("dialog", { name: "reader" });
+    await expect(dialog).toBeVisible();
+    const display = dialog.locator("[data-reader-unit]");
+    await dialog.getByRole("button", { name: "一時停止" }).click();
+
+    const inspectDisplay = () => display.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const rectangle = element.getBoundingClientRect();
+      return {
+        text: element.textContent || "",
+        sourceStart: Number(element.getAttribute("data-source-start")),
+        sourceEnd: Number(element.getAttribute("data-source-end")),
+        widthOverflow: element.scrollWidth - element.clientWidth,
+        fontSize: style.fontSize,
+        centerY: rectangle.top + rectangle.height / 2,
+      };
+    });
+
+    const snapshots = [];
+    await expect.poll(async () => (await inspectDisplay()).sourceStart).toBe(0);
+    snapshots.push(await inspectDisplay());
+
+    await dialog.getByRole("button", { name: "再生" }).click();
+    await expect.poll(async () => (await inspectDisplay()).sourceStart).toBe(RSVP_SHORT_TEXT.length);
+    await dialog.getByRole("button", { name: "一時停止" }).click();
+    snapshots.push(await inspectDisplay());
+
+    await dialog.getByRole("button", { name: "再生" }).click();
+    await expect.poll(async () => (await inspectDisplay()).sourceStart).toBe(
+      RSVP_SHORT_TEXT.length + RSVP_NEAR_LIMIT_TEXT.length,
+    );
+    await dialog.getByRole("button", { name: "一時停止" }).click();
+    snapshots.push(await inspectDisplay());
+
+    expect(snapshots[0]?.text).toBe(RSVP_SHORT_TEXT);
+    expect(snapshots[1]?.text).toBe(RSVP_NEAR_LIMIT_TEXT);
+    expect(snapshots[2]?.text.startsWith("https:")).toBe(true);
+    expect(snapshots.every(({ widthOverflow }) => widthOverflow <= 0)).toBe(true);
+    expect(snapshots.map(({ fontSize }) => fontSize)).toEqual(
+      snapshots.map(() => snapshots[0]?.fontSize),
+    );
+    const centerYs = snapshots.map(({ centerY }) => centerY);
+    expect(Math.max(...centerYs) - Math.min(...centerYs)).toBeLessThanOrEqual(1);
+
+    const sourceStartBeforeResize = (await inspectDisplay()).sourceStart;
+    await page.setViewportSize({ width: viewportWidth === 768 ? 320 : 768, height: 800 });
+    await expect.poll(async () => (await inspectDisplay()).sourceStart).toBe(sourceStartBeforeResize);
+    const resizedDisplay = await inspectDisplay();
+    expect(RSVP_WIDTH_SOURCE.slice(resizedDisplay.sourceStart, resizedDisplay.sourceEnd)).toBe(resizedDisplay.text);
+    expect(resizedDisplay.widthOverflow).toBeLessThanOrEqual(0);
+    expect(resizedDisplay.fontSize).toBe(snapshots[0]?.fontSize);
+  });
+}
+
 test("Chrome viewer keeps RSVP text readable without overflow", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await loadViewer(page, "chrome");
