@@ -92,6 +92,7 @@
       async function installChromeViewer() {
         const messageListeners = [];
         const loadingBarRevealEvents = [];
+        const cancelledRequestIds = new Set();
         let requestSequence = 0;
         const chromeGlobal = globalThis.chrome || {};
         chromeGlobal.runtime = {
@@ -99,6 +100,15 @@
             addListener(listener) {
               messageListeners.push(listener);
             },
+          },
+          sendMessage(message) {
+            if (message?.type === "CANCEL_RSVP" && typeof message.requestId === "string") {
+              cancelledRequestIds.add(message.requestId);
+            }
+            if (message?.type === "RETRY_RSVP" && typeof message.requestId === "string") {
+              open({ delay: 0, text: "再試行成功。" });
+            }
+            return Promise.resolve();
           },
         };
         globalThis.chrome = chromeGlobal;
@@ -127,8 +137,16 @@
             : `e2e-${requestSequence += 1}`;
           const requestedDelay = Number(options.delay);
           const delay = Number.isFinite(requestedDelay) && requestedDelay >= 0 ? requestedDelay : defaultDelay;
+          const shouldFail = options.error === true;
           for (const listener of messageListeners) listener({ type: "SHOW_RSVP_LOADING", requestId });
           const start = () => {
+            if (cancelledRequestIds.has(requestId)) return;
+            if (shouldFail) {
+              for (const listener of messageListeners) {
+                listener({ type: "RSVP_ERROR", requestId, reason: options.reason || "extraction_failed" });
+              }
+              return;
+            }
             for (const listener of messageListeners) listener({ type: "START_RSVP", requestId, text, readingContext });
           };
           if (delay === 0) start();
@@ -174,7 +192,11 @@
         }
         const extractFromPage = globalThis.Extractor.fromPage;
         const extract = () => extractFromPage(document, globalThis.Defuddle);
-        globalThis.Extractor.fromPage = () => fixtureContent();
+        const delayedFixtureContent = () => defaultDelay === 0
+          ? fixtureContent()
+          : new Promise((resolve) => setTimeout(() => resolve(fixtureContent()), defaultDelay));
+        globalThis.Extractor.fromPage = delayedFixtureContent;
+        globalThis.Extractor.fromPageAsync = delayedFixtureContent;
         return { open: () => globalThis.MobileViewer.open(), extract };
       }
 

@@ -5,7 +5,13 @@ async function loadViewer(page: Page, viewer: "chrome" | "mobile"): Promise<void
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
 }
 
-type ChromeOpenOptions = { delay?: number; text?: string; requestId?: string };
+type ChromeOpenOptions = {
+  delay?: number;
+  text?: string;
+  requestId?: string;
+  error?: boolean;
+  reason?: "content_not_found" | "unsupported_page" | "extraction_failed";
+};
 
 async function openChrome(page: Page, options: ChromeOpenOptions): Promise<void> {
   await page.evaluate((openOptions) => {
@@ -139,6 +145,64 @@ test("Chrome reader reveals a centered thin bar at the 100ms threshold", async (
   expect(Math.abs(snapshot!.left + snapshot!.width / 2 - snapshot!.viewportWidth / 2)).toBeLessThanOrEqual(1);
   expect(Math.abs(snapshot!.top + 1 - snapshot!.viewportHeight / 2)).toBeLessThanOrEqual(1);
   await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+});
+
+test("Chrome reader keeps only the thin bar before the slow preparation threshold", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 399 });
+
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(1);
+  await expect(page.getByText("文章を準備しています")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "中止" })).toHaveCount(0);
+});
+
+test("Chrome reader exposes status and cancel controls after 400ms", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 2000 });
+
+  await expect(page.getByRole("status")).toHaveText("文章を準備しています");
+  await expect(page.getByRole("button", { name: "中止" })).toBeVisible();
+  await page.getByRole("button", { name: "中止" }).click();
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+  await page.waitForTimeout(2100);
+  await expect(page.getByRole("dialog", { name: "reader" })).toHaveCount(0);
+});
+
+test("Chrome reader lets users retry a classified preparation error", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 0, error: true, reason: "unsupported_page" });
+
+  await expect(page.getByText("このページはまだ開けません")).toBeVisible();
+  await page.getByRole("button", { name: "やり直す" }).click();
+  const retriedDialog = page.getByRole("dialog", { name: "reader" });
+  await expect(retriedDialog).toBeVisible();
+  await retriedDialog.getByRole("button", { name: "一時停止" }).click();
+  await expect.poll(async () => (await page.locator("[data-reader-unit]").allTextContents()).join(""))
+    .toBe("再試行成功。");
+});
+
+test("mobile reader keeps the launch indicator hidden for a 99ms preparation", async ({ page }) => {
+  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&delay=99");
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  await page.evaluate(() => { void (globalThis as typeof globalThis & { ReaderE2E: { open(): Promise<void> } }).ReaderE2E.open(); });
+
+  await expect(page.locator(".launch-progress-track")).toHaveCount(0);
+  await expect(page.locator(".reader")).toBeVisible();
+});
+
+test("mobile reader shows a bar and then slow preparation cancel feedback", async ({ page }) => {
+  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&delay=800");
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  await page.evaluate(() => { void (globalThis as typeof globalThis & { ReaderE2E: { open(): Promise<void> } }).ReaderE2E.open(); });
+
+  await expect(page.locator(".launch-progress-track")).toBeVisible();
+  await expect(page.locator(".launch-status")).toHaveText("文章を準備しています");
+  await expect(page.locator(".launch-cancel")).toBeVisible();
+  await page.locator(".launch-cancel").click();
+  await expect(page.locator(".reader")).toHaveCount(0);
+  await page.waitForTimeout(900);
+  await expect(page.locator(".reader")).toHaveCount(0);
 });
 
 test("Chrome reader shows the bar for 1200ms preparation and removes it after the reader opens", async ({ page }) => {

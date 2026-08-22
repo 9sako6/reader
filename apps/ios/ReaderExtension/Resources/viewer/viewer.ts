@@ -13,6 +13,11 @@
     indicator: HTMLElement;
     animation: Animation | null;
     startedAt: number;
+    revealTimer: number | null;
+    slowTimer: number | null;
+    status: HTMLElement | null;
+    cancelButton: HTMLButtonElement | null;
+    revealed: boolean;
   }
   interface MobileNodes {
     content: HTMLElement;
@@ -30,9 +35,8 @@
   }
 
   const HOST_ID = "__reader-host";
-  const LAUNCH_PROGRESS_REVEAL_DELAY_MS = 100;
-  const LAUNCH_PROGRESS_DURATION_MS = 1200;
-  const LAUNCH_PROGRESS_PRECOMPLETION = 0.94;
+  const LOADER_REVEAL_DELAY_MS = 100;
+  const SLOW_PREPARATION_DELAY_MS = 400;
   const TEXT_VIEW_READABLE_TOP_PX = 72;
   const TEXT_VIEW_READABLE_BOTTOM_PX = 96;
   const RSVP_FONT_SIZE = 40;
@@ -67,6 +71,9 @@
   let backgroundInert = false;
   let launchProgress: LaunchProgress | null = null;
   let sessionGeneration = 0;
+  let preparationGeneration = 0;
+  let preparationController: AbortController | null = null;
+  let activePreparation: PreparationState = { kind: "idle" };
 
   function getNodes(): MobileNodes {
     if (!nodes) throw new Error("reader shell is not available");
@@ -99,10 +106,10 @@
       .entry:active::after, .entry:focus-visible::after { width: 10px; opacity: 1; }
       .entry.scrolling::after { opacity: .24; }
       .entry[hidden] { display: none; }
-      .launch-feedback { position: fixed; z-index: 3; inset: 0; pointer-events: none; }
-      .launch-loader { width: min(56vw, 360px); height: 3px; position: fixed; left: 50%; top: 50%; opacity: 0; transform: translate(-50%, -50%); animation: reader-launch-loader-reveal 120ms cubic-bezier(.22, 1, .36, 1) forwards; will-change: opacity; }
+      .launch-feedback { position: fixed; z-index: 3; inset: 0; pointer-events: auto; }
+      .launch-loader { width: min(56vw, 360px); height: 3px; position: fixed; left: 50%; top: 50%; opacity: 0; transform: translate(-50%, -50%); pointer-events: none; will-change: opacity; }
       .launch-progress-track { width: 100%; height: 100%; overflow: hidden; border-radius: 999px; background: rgba(238,238,239,.24); }
-      .launch-progress-indicator { width: 100%; height: 100%; border-radius: inherit; background: var(--reader-text); opacity: 1; transform: scaleX(0); transform-origin: left center; will-change: transform; }
+      .launch-progress-indicator { width: 100%; height: 100%; border-radius: inherit; background: var(--reader-text); opacity: 1; transform: translateX(0) scaleX(.35); transform-origin: left center; will-change: transform; }
       .reader { position: fixed; inset: 0; display: grid; grid-template-rows: auto minmax(0,1fr); background: var(--reader-background); color: var(--reader-text); pointer-events: auto; font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; }
       .topbar { min-height: calc(58px + env(safe-area-inset-top)); padding: calc(8px + env(safe-area-inset-top)) 12px 8px; position: relative; display: flex; align-items: center; justify-content: flex-end; background: var(--reader-background); }
       .mode-button { min-width: 120px; min-height: 44px; padding: 0 12px; position: absolute; z-index: 5; left: 50%; bottom: calc(6px + env(safe-area-inset-bottom)); border: 0; border-radius: 14px; background: rgba(5,5,5,.58); color: var(--reader-secondary); font-size: 14px; font-weight: 600; white-space: nowrap; transform: translateX(-50%); pointer-events: auto; -webkit-tap-highlight-color: transparent; }
@@ -150,12 +157,12 @@
       .rewind-feedback { width: 80px; height: 80px; margin: -40px 0 0 -40px; position: absolute; z-index: 6; display: grid; place-items: center; color: var(--reader-control); pointer-events: none; }
       .rewind-ring { position: absolute; inset: 0; border-radius: 50%; background: rgba(162,162,168,.12); }
       .rewind-feedback svg { position: relative; z-index: 1; opacity: .72; }
-      @keyframes reader-launch-loader-reveal { to { opacity: 1; } }
+      @keyframes reader-indeterminate { from { transform: translateX(-100%) scaleX(.35); } to { transform: translateX(220%) scaleX(.35); } }
       @media (prefers-reduced-motion: reduce) {
         .entry::after, .dock-button, .control-dock, .icon-button, .reader-image-veil { transition: none; }
         .mode-button:active { transform: translateX(-50%); }
         .dock-button:active, .icon-button:active { transform: none; }
-        .launch-loader { animation-duration: 1ms; }
+        .launch-loader { animation: none; }
       }
       @media (prefers-contrast: more) { :host { --reader-secondary: #f5f5f7; --reader-muted: #f5f5f7; --reader-control: #f5f5f7; } }
     `;
@@ -172,10 +179,12 @@
   }
 
   function isCurrentSession(generation: number): boolean {
-    return generation === sessionGeneration;
+    return generation === sessionGeneration && generation === preparationGeneration;
   }
 
   function destroyLaunchProgress(progress: LaunchProgress): void {
+    if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
+    if (progress.slowTimer !== null) global.clearTimeout(progress.slowTimer);
     progress.animation?.cancel?.();
     progress.element.remove();
     if (launchProgress === progress) launchProgress = null;
@@ -184,7 +193,9 @@
   async function open() {
     if (overlay || opening || !handle || !shadow) return;
     const generation = ++sessionGeneration;
+    preparationGeneration = generation;
     opening = true;
+    activePreparation = { kind: "preparing", requestId: String(generation), startedAt: Date.now() };
     launchFocus = handle;
     makeBackgroundInert(host);
     sourceScrollY = global.scrollY || 0;
@@ -193,6 +204,8 @@
     handle.hidden = true;
     const progress = createLaunchFeedback();
     launchProgress = progress;
+    progress.revealTimer = global.setTimeout(() => revealLaunchProgress(progress, generation), LOADER_REVEAL_DELAY_MS);
+    progress.slowTimer = global.setTimeout(() => showSlowLaunchProgress(progress, generation), SLOW_PREPARATION_DELAY_MS);
     if (!isCurrentSession(generation)) {
       destroyLaunchProgress(progress);
       return;
@@ -203,9 +216,13 @@
       destroyLaunchProgress(progress);
       return;
     }
+    const controller = createAbortController();
+    preparationController = controller;
     let preparationError: unknown = null;
     try {
-      const extractedContent = await global.Extractor.fromPage(global.document, global.Defuddle);
+      const extractedContent = typeof global.Extractor.fromPageAsync === "function"
+        ? await global.Extractor.fromPageAsync(global.document, global.Defuddle, { signal: controller.signal })
+        : await global.Extractor.fromPage(global.document, global.Defuddle);
       if (!isCurrentSession(generation)) {
         destroyLaunchProgress(progress);
         return;
@@ -221,22 +238,20 @@
         destroyLaunchProgress(progress);
         return;
       }
+      if (isAbortError(error) || controller.signal.aborted) {
+        destroyLaunchProgress(progress);
+        return;
+      }
       preparationError = error;
     }
     if (!isCurrentSession(generation)) {
       destroyLaunchProgress(progress);
       return;
     }
-    if (Date.now() - progress.startedAt >= LAUNCH_PROGRESS_REVEAL_DELAY_MS) {
-      await Promise.all([
-        completeLaunchProgress(progress, generation),
-        coverSourcePage(progress.element),
-      ]);
-      if (!isCurrentSession(generation)) {
-        destroyLaunchProgress(progress);
-        return;
-      }
-    } else progress.animation?.cancel?.();
+    const elapsed = Date.now() - progress.startedAt;
+    if (elapsed >= LOADER_REVEAL_DELAY_MS) revealLaunchProgress(progress, generation);
+    if (elapsed >= SLOW_PREPARATION_DELAY_MS) showSlowLaunchProgress(progress, generation);
+    if (progress.revealed) await finishLaunchProgress(progress, generation);
     if (!isCurrentSession(generation)) {
       destroyLaunchProgress(progress);
       return;
@@ -254,9 +269,13 @@
     lockSourcePage();
     if (!isCurrentSession(generation)) return;
     if (preparationError) {
-      showError();
-      global.console?.error?.("reader could not prepare this page", preparationError);
-    } else renderReader();
+      const reason = classifyPreparationFailure(preparationError);
+      activePreparation = { kind: "failed", requestId: String(generation), reason };
+      showError(reason);
+    } else {
+      activePreparation = { kind: "ready", requestId: String(generation) };
+      renderReader();
+    }
     global.requestAnimationFrame(() => {
       if (!isCurrentSession(generation)) return;
       findCloseButton()?.focus();
@@ -270,69 +289,133 @@
     feedback.setAttribute("aria-hidden", "true");
     const loader = global.document.createElement("div");
     loader.className = "launch-loader";
-    loader.style.animationDelay = `${LAUNCH_PROGRESS_REVEAL_DELAY_MS}ms`;
+    loader.style.display = "none";
     const track = global.document.createElement("div");
     track.className = "launch-progress-track";
     const indicator = global.document.createElement("div");
     indicator.className = "launch-progress-indicator";
-    const reducedMotion = global.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const animation = reducedMotion ? null : indicator.animate(
-      [{ transform: "scaleX(0)" }, { transform: "scaleX(.94)" }],
-      { duration: LAUNCH_PROGRESS_DURATION_MS, iterations: 1, easing: "linear", fill: "forwards" },
-    );
     track.append(indicator);
     loader.append(track);
     feedback.append(loader);
-    return { element: feedback, loader, indicator, animation, startedAt: Date.now() };
+    return {
+      element: feedback,
+      loader,
+      indicator,
+      animation: null,
+      startedAt: Date.now(),
+      revealTimer: null,
+      slowTimer: null,
+      status: null,
+      cancelButton: null,
+      revealed: false,
+    };
   }
 
-  async function completeLaunchProgress(progress: LaunchProgress, generation: number): Promise<void> {
-    progress.loader.style.animation = "none";
+  function revealLaunchProgress(progress: LaunchProgress, generation: number): void {
+    if (!isCurrentSession(generation) || progress.revealed) return;
+    progress.revealed = true;
+    if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
+    progress.revealTimer = null;
+    progress.loader.style.display = "block";
     progress.loader.style.opacity = "1";
     const reducedMotion = global.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const elapsedRatio = Math.min(1, Math.max(
-      0,
-      (Date.now() - progress.startedAt) / LAUNCH_PROGRESS_DURATION_MS,
-    ));
-    const currentScale = elapsedRatio * LAUNCH_PROGRESS_PRECOMPLETION;
+    progress.indicator.style.transform = "translateX(0) scaleX(.35)";
+    progress.animation = reducedMotion ? null : progress.indicator.animate(
+      [
+        { transform: "translateX(-100%) scaleX(.35)" },
+        { transform: "translateX(220%) scaleX(.35)" },
+      ],
+      { duration: 1100, iterations: Infinity, easing: "linear" },
+    );
+  }
+
+  function showSlowLaunchProgress(progress: LaunchProgress, generation: number): void {
+    if (!isCurrentSession(generation)) return;
+    if (!progress.revealed) revealLaunchProgress(progress, generation);
+    if (progress.slowTimer !== null) global.clearTimeout(progress.slowTimer);
+    progress.slowTimer = null;
+    if (progress.status || progress.cancelButton) return;
+    progress.element.setAttribute("aria-hidden", "false");
+    const status = global.document.createElement("div");
+    status.className = "launch-status";
+    status.setAttribute("role", "status");
+    status.textContent = "文章を準備しています";
+    Object.assign(status.style, {
+      position: "fixed",
+      left: "50%",
+      top: "calc(50% + 24px)",
+      transform: "translateX(-50%)",
+      color: "var(--reader-text)",
+      fontSize: "14px",
+      whiteSpace: "nowrap",
+    });
+    const cancelButton = transportButton("中止", () => cancelOpening(generation));
+    cancelButton.className = "launch-cancel";
+    Object.assign(cancelButton.style, {
+      position: "fixed",
+      left: "50%",
+      bottom: "32px",
+      transform: "translateX(-50%)",
+      pointerEvents: "auto",
+    });
+    progress.status = status;
+    progress.cancelButton = cancelButton;
+    progress.element.append(status, cancelButton);
+    cancelButton.focus?.();
+  }
+
+  async function finishLaunchProgress(progress: LaunchProgress, generation: number): Promise<void> {
     progress.animation?.cancel?.();
-    if (reducedMotion) {
-      progress.indicator.style.transform = "scaleX(1)";
+    progress.animation = null;
+    if (!progress.revealed || !isCurrentSession(generation)) return;
+    if (global.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      progress.element.style.opacity = "0";
       return;
     }
-    const completion = progress.indicator.animate(
-      [{ transform: `scaleX(${currentScale})` }, { transform: "scaleX(1)" }],
-      {
-        duration: Math.min(160, Math.max(
-          70,
-          ((1 - currentScale) / LAUNCH_PROGRESS_PRECOMPLETION) * LAUNCH_PROGRESS_DURATION_MS,
-        )),
-        iterations: 1,
-        easing: "linear",
-        fill: "forwards",
-      },
+    const fade = progress.element.animate(
+      [{ opacity: 1 }, { opacity: 0 }],
+      { duration: 90, easing: "ease-out", fill: "forwards" },
     );
     try {
-      await completion.finished;
+      await fade.finished;
     } catch {
-      if (isCurrentSession(generation)) progress.indicator.style.transform = "scaleX(1)";
+      return;
     }
   }
 
-  async function coverSourcePage(feedback: HTMLElement): Promise<void> {
-    if (global.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-    const animation = feedback.animate?.(
-      [
-        { background: "rgba(5,5,5,0)" },
-        { background: "rgba(5,5,5,1)" },
-      ],
-      { duration: 140, easing: "cubic-bezier(.22, 1, .36, 1)", fill: "forwards" },
-    );
-    try {
-      await animation?.finished;
-    } catch {
-      return;
+  function createAbortController(): AbortController {
+    if (typeof global.AbortController === "function") return new global.AbortController();
+    let aborted = false;
+    const signal = { get aborted() { return aborted; } } as AbortSignal;
+    return {
+      signal,
+      abort() { aborted = true; },
+    } as AbortController;
+  }
+
+  function isAbortError(error: unknown): boolean {
+    return typeof error === "object"
+      && error !== null
+      && "name" in error
+      && (error as { name?: unknown }).name === "AbortError";
+  }
+
+  function classifyPreparationFailure(error: unknown): PreparationFailure {
+    if (error instanceof Error && error.message === "content_not_found") return "content_not_found";
+    if (error instanceof Error && error.message === "unsupported_page") return "unsupported_page";
+    if (error instanceof Error && error.message === "extraction_failed") return "extraction_failed";
+    if (isAbortError(error)) return "extraction_failed";
+    if (error instanceof Error && /cannot access|not supported|invalid url|restricted/iu.test(error.message)) {
+      return "unsupported_page";
     }
+    return "extraction_failed";
+  }
+
+  function cancelOpening(generation: number): void {
+    if (!isCurrentSession(generation)) return;
+    preparationController?.abort();
+    activePreparation = { kind: "cancelled", requestId: String(generation) };
+    close();
   }
 
   function buildShell() {
@@ -382,7 +465,7 @@
     return button;
   }
 
-  function showError() {
+  function showError(reason: PreparationFailure) {
     getNodes().transport?.remove();
     getNodes().transport = null;
     getNodes().modeButton.hidden = true;
@@ -390,7 +473,7 @@
     const error = global.document.createElement("div");
     error.className = "error";
     const label = global.document.createElement("div");
-    label.textContent = "文章を読み取れませんでした";
+    label.textContent = preparationFailureLabel(reason);
     const actions = global.document.createElement("div");
     actions.className = "error-actions";
     const retryButton = transportButton("やり直す", retry);
@@ -398,6 +481,12 @@
     actions.append(retryButton, closeButton);
     error.append(label, actions);
     getNodes().content.replaceChildren(error);
+  }
+
+  function preparationFailureLabel(reason: PreparationFailure): string {
+    if (reason === "content_not_found") return "文章を読み取れませんでした";
+    if (reason === "unsupported_page") return "このページはまだ開けません";
+    return "文章を準備できませんでした";
   }
 
   function retry() {
@@ -1270,6 +1359,8 @@
     lastLeftTapX = 0;
     lastLeftTapY = 0;
     destroyLaunchProgressIfPresent();
+    preparationController = null;
+    activePreparation = { kind: "idle" };
     launchFocus = null;
   }
 
@@ -1277,8 +1368,7 @@
     const progress = launchProgress;
     launchProgress = null;
     if (!progress) return;
-    progress.animation?.cancel?.();
-    progress.element.remove();
+    destroyLaunchProgress(progress);
   }
 
   function restoreSourcePage(): void {
@@ -1293,6 +1383,8 @@
 
   function close(): void {
     sessionGeneration += 1;
+    preparationGeneration += 1;
+    preparationController?.abort();
     const restoreFocus = launchFocus;
     const currentOverlay = overlay;
     overlay = null;
