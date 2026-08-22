@@ -87,6 +87,7 @@
   let sessionInitFailure = false;
   let sessionEnabled = false;
   let applyingSession = false;
+  let sessionLifecycleAttached = false;
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
   let performanceUnitMarked = false;
@@ -136,7 +137,6 @@
     global.document.documentElement.append(host);
     global.addEventListener("scroll", fadeHandleDuringScroll, { passive: true });
     global.addEventListener("resize", handleViewportChange, { passive: true });
-    global.document.addEventListener?.("visibilitychange", handleVisibilityChange);
     markPerformance("reader:bootstrap-ready");
   }
 
@@ -246,6 +246,7 @@
     preparationGeneration = generation;
     opening = true;
     activePreparation = { kind: "preparing", requestId: String(generation), startedAt: Date.now() };
+    attachSessionLifecycle();
     beginReaderSession(String(generation));
     launchFocus = handle;
     makeBackgroundInert(host);
@@ -717,7 +718,13 @@
           const scheduledTimerId = global.setTimeout(() => {
             if (playbackTimer !== scheduledTimerId) return;
             playbackTimer = null;
-            if (!scheduledHandle || sessionHandle !== scheduledHandle || sessionState?.phase === "ended") return;
+            if (
+              !scheduledHandle
+              || sessionHandle !== scheduledHandle
+              || sessionState?.phase !== "reading"
+              || sessionState.generation !== effect.generation
+              || sessionState.playback !== "playing"
+            ) return;
             dispatchSession({ type: "tick", generation: effect.generation });
           }, effect.delayMs);
           playbackTimer = scheduledTimerId;
@@ -1496,6 +1503,18 @@
     }
   }
 
+  function attachSessionLifecycle(): void {
+    if (sessionLifecycleAttached) return;
+    global.document.addEventListener?.("visibilitychange", handleVisibilityChange);
+    sessionLifecycleAttached = true;
+  }
+
+  function detachSessionLifecycle(): void {
+    if (!sessionLifecycleAttached) return;
+    global.document.removeEventListener?.("visibilitychange", handleVisibilityChange);
+    sessionLifecycleAttached = false;
+  }
+
   function updatePlayButton() {
     const playButton = nodes?.play;
     if (!playButton) return;
@@ -1735,10 +1754,18 @@
     dispatchSession({ type: "resumeFromFigure" });
   }
 
+  function activeHeadingAt(offset: number): number {
+    const readingContext = content?.readingContext;
+    return global.Engine.findActiveHeadingIndex(
+      readingContext?.sectionTransitions || [],
+      offset,
+      readingContext?.initialHeadingIndex ?? -1,
+    );
+  }
+
   function crossesSectionBoundary(unit: ReaderUnit | undefined, nextUnit: ReaderUnit | undefined): boolean {
     if (!unit || !nextUnit) return false;
-    const offsets = content?.readingContext?.sectionOffsets || [];
-    return offsets.some((offset) => offset > unit.start && offset <= nextUnit.start);
+    return activeHeadingAt(unit.start) !== activeHeadingAt(nextUnit.start);
   }
 
   function previousSentence() {
@@ -1938,6 +1965,7 @@
   function close(): void {
     sessionGeneration += 1;
     preparationGeneration += 1;
+    detachSessionLifecycle();
     preparationController?.abort();
     const restoreFocus = launchFocus;
     const currentOverlay = overlay;

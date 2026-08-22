@@ -250,6 +250,12 @@ function createSafariReaderHarness(
       listeners.push(listener);
       documentListeners.set(type, listeners);
     },
+    removeEventListener(type, listener) {
+      documentListeners.set(
+        type,
+        (documentListeners.get(type) || []).filter((candidate) => candidate !== listener),
+      );
+    },
     dispatchEvent(event) {
       for (const listener of documentListeners.get(event.type) || []) listener(event);
     },
@@ -396,6 +402,9 @@ function createSafariReaderHarness(
       document.visibilityState = state;
       document.dispatchEvent({ type: "visibilitychange" });
     },
+    listenerCount(type) {
+      return (documentListeners.get(type) || []).length;
+    },
   };
 }
 
@@ -446,6 +455,48 @@ test("Safari reader marks startup phases without including page content", async 
     "reader:first-unit",
     "reader:first-render",
   ]);
+});
+
+test("Safari attaches visibility lifecycle only while a session is active", async () => {
+  const harness = createSafariReaderHarness();
+
+  assert.equal(harness.listenerCount("visibilitychange"), 0);
+  await harness.context.MobileViewer.open();
+  assert.equal(harness.listenerCount("visibilitychange"), 1);
+
+  harness.setVisibilityState("hidden");
+  assert.equal(harness.sessionCommands().at(-1)?.type, "visibilityHidden");
+
+  harness.context.MobileViewer.close();
+  assert.equal(harness.listenerCount("visibilitychange"), 0);
+  const commandCountAfterClose = harness.sessionCommands().length;
+  harness.setVisibilityState("hidden");
+  assert.equal(harness.sessionCommands().length, commandCountAfterClose);
+});
+
+test("Safari uses heading transitions when scheduling the first unit", async () => {
+  const harness = createSafariReaderHarness();
+  const text = "短い、次です。";
+  harness.setActiveContent({
+    text,
+    readingContext: {
+      ...harness.activeContent().readingContext,
+      blocks: [{ text, kind: "paragraph", level: null, start: 0, end: text.length }],
+      headings: [{ text: "導入", level: 1 }, { text: "本論", level: 2 }],
+      sectionOffsets: [],
+      sectionTransitions: [
+        { offset: 0, headingIndex: 0 },
+        { offset: 3, headingIndex: 1 },
+      ],
+      initialHeadingIndex: -1,
+      figures: [],
+    },
+  });
+
+  await harness.context.MobileViewer.open();
+
+  const [firstTimer] = [...harness.timers.values()];
+  assert.equal(firstTimer?.delay, 612);
 });
 
 test("Safari reader shows extraction progress before opening", async () => {

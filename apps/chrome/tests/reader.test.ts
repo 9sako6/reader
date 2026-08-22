@@ -302,6 +302,7 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
   const document = {
     documentElement,
     activeElement: null,
+    visibilityState: "visible",
     createElement(tagName) {
       const element = new FakeElement(tagName);
       element.ownerDocument = document;
@@ -456,6 +457,13 @@ function createOutlineReaderHarness(options: { initFails?: boolean } = {}) {
       currentScrollX = left;
       currentScrollY = top;
     },
+    setVisibilityState(state) {
+      document.visibilityState = state;
+      document.dispatchEvent({ type: "visibilitychange" });
+    },
+    listenerCount(type) {
+      return (documentListeners.get(type) || []).length;
+    },
     scrollPosition() {
       return { left: currentScrollX, top: currentScrollY };
     },
@@ -585,6 +593,36 @@ test("reader cancel closes loading and sends the request id to the service worke
   assert.equal(runtimeMessages[0].requestId, "cancel-request");
   assert.deepEqual(sessionCommands.map(({ type }) => type), ["open", "cancel", "close"]);
   assert.equal(document.getElementById("__rsvp-reader-root"), null);
+});
+
+test("reader attaches visibility lifecycle only while a session is active", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, messageListener, sessionCommands } = harness;
+
+  assert.equal(harness.listenerCount("visibilitychange"), 0);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "lifecycle-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の本文です。次の文です。",
+    requestId: "lifecycle-request",
+  });
+
+  assert.equal(harness.listenerCount("visibilitychange"), 1);
+  harness.setVisibilityState("hidden");
+  assert.equal(sessionCommands.at(-1)?.type, "visibilityHidden");
+
+  const closeButton = findElement(
+    documentElement,
+    (element) => element.attributes["aria-label"] === "readerを閉じる",
+  );
+  closeButton.dispatchEvent({ type: "click" });
+  assert.equal(harness.listenerCount("visibilitychange"), 0);
+
+  const commandCountAfterClose = sessionCommands.length;
+  document.visibilityState = "hidden";
+  document.dispatchEvent({ type: "visibilitychange" });
+  assert.equal(sessionCommands.length, commandCountAfterClose);
 });
 
 test("reader renders content-not-found errors with retry and return actions", () => {

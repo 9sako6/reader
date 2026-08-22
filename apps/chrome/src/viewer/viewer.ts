@@ -83,6 +83,7 @@
   let pendingSessionCommands: ReaderSessionCommand[] = [];
   let sessionEnabled = false;
   let applyingSession = false;
+  let sessionLifecycleAttached = false;
 
   function readingSessionState(): ReaderSessionObservableState | null {
     return sessionState?.phase === "reading" ? sessionState : null;
@@ -134,9 +135,23 @@
     }
   });
 
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") dispatchSession({ type: "visibilityHidden" });
-  });
+  function handleVisibilityChange(): void {
+    if (document.visibilityState === "hidden" && !applyingSession) {
+      dispatchSession({ type: "visibilityHidden" });
+    }
+  }
+
+  function attachSessionLifecycle(): void {
+    if (sessionLifecycleAttached) return;
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    sessionLifecycleAttached = true;
+  }
+
+  function detachSessionLifecycle(): void {
+    if (!sessionLifecycleAttached) return;
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    sessionLifecycleAttached = false;
+  }
 
   function showLoading(requestId: string): void {
     const existingLaunchFocus = launchFocus
@@ -275,6 +290,7 @@
   }
 
   function beginReaderSession(requestId: string): void {
+    attachSessionLifecycle();
     pendingSessionCommands = [{ type: "open", requestId }];
     if (!readerSessionAvailable()) {
       showSessionUnavailable(requestId);
@@ -359,7 +375,14 @@
           const scheduledTimerId = globalThis.setTimeout(() => {
             if (timerId !== scheduledTimerId) return;
             timerId = null;
-            if (!scheduledHandle || sessionHandle !== scheduledHandle || !sessionEnabled) return;
+            if (
+              !scheduledHandle
+              || sessionHandle !== scheduledHandle
+              || !sessionEnabled
+              || sessionState?.phase !== "reading"
+              || sessionState.generation !== effect.generation
+              || sessionState.playback !== "playing"
+            ) return;
             dispatchSession({ type: "tick", generation: effect.generation });
           }, effect.delayMs);
           timerId = scheduledTimerId;
@@ -2568,6 +2591,7 @@
   function close(notifyServiceWorker = true, preserveSourceScroll = false) {
     if (closeInProgress) return;
     closeInProgress = true;
+    detachSessionLifecycle();
     const requestId = activeRequestId;
     try {
       if (activePreparation.kind === "preparing" && requestId && !applyingSession) {
