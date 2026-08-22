@@ -69,6 +69,7 @@
   let textPositionDirty = false;
   let textRestoreScrollTop: number | null = null;
   let textRestoring = false;
+  let reactTextCorrectionImages = new WeakSet<HTMLImageElement>();
   let launchFocus: HTMLElement | null = null;
   let sourceScrollPosition: { left: number; top: number } | null = null;
   let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
@@ -86,10 +87,14 @@
   let applyingSession = false;
   let sessionLifecycleAttached = false;
   let reactViewMount: ReaderReactViewerMount | null = null;
+  let reactRenderedKind: ReactReaderViewModel["kind"] | null = null;
+  let reactRenderedPositionKey: string | null = null;
+  let reactLoadingRevealed = false;
 
   type ReactReaderViewModel = {
     kind: "closed" | "loading" | "error" | "rsvp" | "text";
     slow?: boolean;
+    revealed?: boolean;
     reducedMotion?: boolean;
     message?: string;
     canRetry?: boolean;
@@ -103,6 +108,7 @@
     activeHeadingIndex?: number;
     blocks?: ReaderBlock[];
     figures?: ReaderFigure[];
+    language?: string;
     position?: ReaderPosition;
     title?: string;
   };
@@ -130,6 +136,14 @@
 
   function renderReactView(model: ReactReaderViewModel): void {
     if (!reactViewMount) return;
+    const wasVisibleLoading = reactRenderedKind === "loading" && reactLoadingRevealed;
+    const previousDisplay = display;
+    const previousPositionKey = reactRenderedPositionKey;
+    const nextPositionKey = model.kind === "rsvp"
+      ? model.figure
+        ? `figure:${model.figure.figureIndex}`
+        : `text:${model.unit?.start ?? 0}`
+      : null;
     reactViewMount.render(model, {
       close,
       cancel: cancelLoading,
@@ -137,6 +151,7 @@
       switchToText: showTextView,
       switchToRsvp: showRsvpView,
       previousSentence: goBackOneSentence,
+      headingSelect: jumpToHeading,
       togglePlayback: togglePlayPause,
       resumeFigure: advanceFromFigure,
       figureLoad: (figureIndex: number) => settleReactFigure(figureIndex, true),
@@ -144,15 +159,48 @@
       toggleFigureBrightness: (figureIndex: number) => toggleReactFigureBrightness(figureIndex),
       textScroll: (element: HTMLElement) => {
         textScroller = element;
-        updateTextPosition(element, textPositionMarkers);
+        textPositionMarkers = [...element.querySelectorAll<HTMLElement>('[data-reader-position-kind="text"], [data-reader-position-kind="figure"]')];
+        attachReactTextFigureLoadCorrections(element);
+        progressLabel = root?.querySelector?.<HTMLSpanElement>('[data-reader-progress="true"]') || null;
       },
       textPosition: (element: HTMLElement) => updateTextPosition(element, textPositionMarkers),
     });
+    display = root?.querySelector?.<HTMLDivElement>('[data-reader-unit="true"]') || null;
+    if (
+      model.kind === "rsvp"
+      && previousDisplay
+      && previousPositionKey
+      && nextPositionKey
+      && previousPositionKey !== nextPositionKey
+      && !prefersReducedMotion()
+    ) {
+      const enteringFigure = nextPositionKey.startsWith("figure:");
+      previousDisplay.animate(
+        enteringFigure ? [{ opacity: 1 }, { opacity: 0 }] : [{ opacity: 0 }, { opacity: 1 }],
+        { duration: 180, easing: "ease-out" },
+      );
+    }
+    const stage = root?.querySelector?.<HTMLDivElement>('[data-reader-stage="true"]');
+    if (stage && model.kind === "rsvp" && wasVisibleLoading && !prefersReducedMotion()) {
+      stage.animate(
+        [{ opacity: 0 }, { opacity: 1 }],
+        { duration: LOADING_COVER_TRANSITION_MS, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+      );
+    }
+    if (model.kind === "rsvp" && model.next && !prefersReducedMotion()) {
+      root?.querySelector?.<HTMLDivElement>('[data-reader-context-next="true"]')?.animate(
+        [{ opacity: 0.12 }, { opacity: 0.26 }],
+        { duration: 120, easing: "ease-out" },
+      );
+    }
+    reactLoadingRevealed = model.kind === "loading" && model.revealed !== false;
+    reactRenderedKind = model.kind;
+    reactRenderedPositionKey = nextPositionKey;
   }
 
   function reactViewModel(): ReactReaderViewModel {
     if (activePreparation.kind === "preparing") {
-      return { kind: "loading", slow: loadingSlowVisible, reducedMotion: prefersReducedMotion() };
+      return { kind: "loading", slow: loadingSlowVisible, revealed: loadingRevealTimerId === null, reducedMotion: prefersReducedMotion() };
     }
     if (activePreparation.kind === "failed") {
       return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: activePreparation.reason !== "session_unavailable" };
@@ -163,6 +211,7 @@
         kind: "text",
         blocks: blocks.length > 0 ? blocks : fallbackBlocks(sourceText),
         figures,
+        language: segmentationLocale,
         position: currentPosition,
         progress: sourceText ? globalThis.Engine.calculateReadingProgress(currentPosition.sourceOffset, sourceText.length) : 0,
         title: "",
@@ -391,6 +440,7 @@
       requestId,
       flow: sessionPreparation(),
     });
+    focusAfterPaint(findCloseButton());
   }
 
   function readerSessionAvailable(): boolean {
@@ -602,7 +652,7 @@
     loadingSlowVisible = true;
     if (reactViewMount) {
       renderReactView(reactViewModel());
-      focusAfterPaint(findCloseButton());
+      focusAfterPaint(findLoadingCancelButton());
       return;
     }
     if (!loadingLayer || loadingStatus || loadingCancelButton) return;
@@ -1277,6 +1327,10 @@
     return find(root);
   }
 
+  function findLoadingCancelButton(): HTMLButtonElement | null {
+    return root?.querySelector?.<HTMLButtonElement>('[data-reader-loading-cancel="true"]') || null;
+  }
+
   function findModeButton(): HTMLButtonElement | null {
     if (!root) return null;
     const queried = root.querySelector?.<HTMLButtonElement>('[data-reader-mode-button="true"]');
@@ -1662,6 +1716,9 @@
     if (!root || units.length === 0) return;
     const previousFocus = readerActiveElement();
     const restoreModeFocus = previousFocus?.getAttribute?.("data-reader-mode-button") === "true";
+    if (sessionMode() === "text" && textScroller) {
+      updateTextPosition(textScroller, textPositionMarkers, true, false);
+    }
     dispatchSession({ type: "switchToRsvp", position: currentPosition });
     if (reactViewMount) {
       renderReactView(reactViewModel());
@@ -1969,6 +2026,51 @@
     if (sizes !== undefined) image.sizes = sizes;
     image.src = source;
     if (image.complete && image.naturalWidth > 0) void adjustAfterDecode();
+  }
+
+  function attachReactTextFigureLoadCorrections(scroller: HTMLElement): void {
+    const positionMarkers = [...scroller.querySelectorAll<HTMLElement>('[data-reader-position-kind="text"], [data-reader-position-kind="figure"]')];
+    for (const figureElement of scroller.querySelectorAll<HTMLElement>('[data-reader-text-figure="true"]')) {
+      const image = figureElement.querySelector<HTMLImageElement>("img");
+      if (!image || reactTextCorrectionImages.has(image)) continue;
+      reactTextCorrectionImages.add(image);
+      const currentMarker = currentTextPositionMarker(positionMarkers);
+      const figureOffset = Number(figureElement.dataset.sourceStart);
+      const markerOffset = Number(currentMarker?.dataset.sourceStart);
+      const shouldCorrect = Boolean(
+        currentMarker
+        && Number.isFinite(figureOffset)
+        && Number.isFinite(markerOffset)
+        && figureOffset <= markerOffset,
+      );
+      const beforeTop = shouldCorrect ? elementRect(currentMarker as HTMLElement, 0, 100).top : 0;
+      let settled = false;
+      const adjustAfterDecode = async () => {
+        if (settled) return;
+        settled = true;
+        if (!shouldCorrect || textScroller !== scroller) return;
+        try {
+          if (typeof image.decode === "function") await image.decode();
+        } catch {
+        }
+        if (textScroller !== scroller) return;
+        const applyCorrection = () => {
+          if (textScroller !== scroller) return;
+          const afterTop = elementRect(currentMarker as HTMLElement, 0, 100).top;
+          const delta = afterTop - beforeTop;
+          if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
+            textRestoring = true;
+            scroller.scrollTop += delta;
+            textRestoreScrollTop = scroller.scrollTop;
+            textRestoring = false;
+          }
+        };
+        if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(applyCorrection);
+        else applyCorrection();
+      };
+      image.addEventListener("load", () => { void adjustAfterDecode(); });
+      image.addEventListener("error", () => { void adjustAfterDecode(); });
+    }
   }
 
   function currentTextPositionMarker(positionMarkers: HTMLElement[]): HTMLElement | undefined {
@@ -2794,6 +2896,8 @@
       textRestoreScrollTop = null;
       textRestoring = false;
       lastReaderFocusedElement = null;
+      reactRenderedKind = null;
+      reactLoadingRevealed = false;
     }
   }
 

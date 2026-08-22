@@ -83,6 +83,11 @@ class FakeElement {
 
   setAttribute(name, value) {
     this.attributes[name] = value;
+    if (name.startsWith("data-")) {
+      this.dataset[name.slice(5).replace(/-([a-z])/gu, (_, letter) => letter.toUpperCase())] = String(value);
+    }
+    const propertyName = name.toLowerCase() === "srcset" ? "srcset" : name.toLowerCase();
+    if (["src", "srcset", "sizes", "alt", "title", "width", "height"].includes(propertyName)) this[propertyName] = value;
     if (name === "hidden") this.hidden = true;
     if (name === "disabled") this.disabled = true;
   }
@@ -101,6 +106,7 @@ class FakeElement {
 
   removeAttribute(name) {
     delete this.attributes[name];
+    if (name.startsWith("data-")) delete this.dataset[name.slice(5).replace(/-([a-z])/gu, (_, letter) => letter.toUpperCase())];
     if (name === "hidden") this.hidden = false;
     if (name === "disabled") this.disabled = false;
   }
