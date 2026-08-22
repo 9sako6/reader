@@ -12,6 +12,9 @@ export class FakeElement {
     this.clientHeight = 500;
     this.scrollTop = 0;
     this.hidden = false;
+    this.inert = false;
+    this.disabled = false;
+    this.ownerDocument = null;
     this.className = "";
     this.listeners = new Map();
     this.animations = [];
@@ -27,6 +30,7 @@ export class FakeElement {
   append(...children: FakeElement[]) {
     for (const child of children) {
       child.parent = this;
+      child.ownerDocument ||= this.ownerDocument;
       this.children.push(child);
     }
   }
@@ -39,6 +43,14 @@ export class FakeElement {
 
   setAttribute(name: string, value: string) {
     this.attributes[name] = value;
+  }
+
+  getAttribute(name: string) {
+    return this.attributes[name] ?? null;
+  }
+
+  hasAttribute(name: string) {
+    return Object.prototype.hasOwnProperty.call(this.attributes, name);
   }
 
   addEventListener(type: string, listener: (event: any) => void) {
@@ -69,12 +81,22 @@ export class FakeElement {
     this.append(...children);
   }
 
-  focus() {
-    this.focused = true;
-  }
-
   getBoundingClientRect() {
     return this.rect || { top: 0, bottom: 100, left: 0, right: 390, width: 390, height: 100 };
+  }
+
+  getClientRects() {
+    return this.hidden ? [] : [this.getBoundingClientRect()];
+  }
+
+  contains(element: FakeElement) {
+    if (element === this) return true;
+    return this.children.some((child) => child.contains(element));
+  }
+
+  focus() {
+    this.focused = true;
+    if (this.ownerDocument) this.ownerDocument.activeElement = this;
   }
 
   get parentElement() {
