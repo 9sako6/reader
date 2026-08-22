@@ -378,6 +378,7 @@ test("Chrome viewer preserves the first complete sentence after 50 mode round tr
   await pauseReaderIfPlaying(dialog);
   const expected = await readReaderPosition(dialog);
   expect(expected.kind).toBe("text");
+  expect(expected.sourceStart).toBe(0);
 
   for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
     await dialog.getByRole("button", { name: "文章で読む" }).click();
@@ -389,7 +390,7 @@ test("Chrome viewer preserves the first complete sentence after 50 mode round tr
 
 test("Chrome viewer preserves an image position after 50 mode round trips", async ({ page }) => {
   test.setTimeout(60_000);
-  await page.setViewportSize({ width: 1280, height: 500 });
+  await page.setViewportSize({ width: 1280, height: 800 });
   await loadViewer(page, "chrome");
   await page.getByRole("button", { name: "Chrome readerを開く" }).click();
   const dialog = page.getByRole("dialog", { name: "reader" });
@@ -397,10 +398,16 @@ test("Chrome viewer preserves an image position after 50 mode round trips", asyn
   await pauseReaderIfPlaying(dialog);
   await dialog.getByRole("button", { name: "文章で読む" }).click();
   const imageMarker = dialog.locator('[data-reader-position-kind="figure"]').first();
+  await imageMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    scroller.style.paddingBottom = "600px";
+  });
   await placeTextMarker(imageMarker, 100);
   await dialog.getByRole("button", { name: "RSVPで読む" }).click();
   const expected = await readReaderPosition(dialog);
   expect(expected.kind).toBe("figure");
+  expect(expected.sourceStart).toBe(44);
   expect(expected.figureIndex).toBe(0);
 
   for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
@@ -430,6 +437,7 @@ test("Chrome viewer preserves the sentence after an image after 50 mode round tr
   await pauseReaderIfPlaying(dialog);
   const expected = await readReaderPosition(dialog);
   expect(expected.kind).toBe("text");
+  expect(expected.sourceStart).toBe(52);
 
   for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
     await dialog.getByRole("button", { name: "文章で読む" }).click();
@@ -531,6 +539,7 @@ test("mobile viewer preserves the first complete sentence after 50 mode round tr
   await pauseReaderIfPlaying(dialog);
   const expected = await readReaderPosition(dialog);
   expect(expected.kind).toBe("text");
+  expect(expected.sourceStart).toBe(0);
 
   for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
     await dialog.getByRole("button", { name: "文章で読む" }).click();
@@ -542,7 +551,7 @@ test("mobile viewer preserves the first complete sentence after 50 mode round tr
 
 test("mobile viewer preserves an image position after 50 mode round trips", async ({ page }) => {
   test.setTimeout(60_000);
-  await page.setViewportSize({ width: 390, height: 500 });
+  await page.setViewportSize({ width: 390, height: 844 });
   await loadViewer(page, "mobile");
   await page.getByRole("button", { name: "readerで読む" }).click();
   const dialog = page.getByRole("dialog", { name: "reader" });
@@ -550,10 +559,16 @@ test("mobile viewer preserves an image position after 50 mode round trips", asyn
   await pauseReaderIfPlaying(dialog);
   await dialog.getByRole("button", { name: "文章で読む" }).click();
   const imageMarker = dialog.locator('[data-reader-position-kind="figure"]').first();
+  await imageMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    scroller.style.paddingBottom = "600px";
+  });
   await placeTextMarker(imageMarker, 100);
   await dialog.getByRole("button", { name: "RSVPで読む" }).click();
   const expected = await readReaderPosition(dialog);
   expect(expected.kind).toBe("figure");
+  expect(expected.sourceStart).toBe(44);
   expect(expected.figureIndex).toBe(0);
 
   for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
@@ -583,6 +598,7 @@ test("mobile viewer preserves the sentence after an image after 50 mode round tr
   await pauseReaderIfPlaying(dialog);
   const expected = await readReaderPosition(dialog);
   expect(expected.kind).toBe("text");
+  expect(expected.sourceStart).toBe(52);
 
   for (let roundTrip = 0; roundTrip < 50; roundTrip += 1) {
     await dialog.getByRole("button", { name: "文章で読む" }).click();

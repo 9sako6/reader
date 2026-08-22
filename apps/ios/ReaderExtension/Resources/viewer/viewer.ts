@@ -606,39 +606,22 @@
     const readableBottom = Math.max(readableTop, visibleBottom - TEXT_VIEW_READABLE_BOTTOM_PX);
     let firstVisible: HTMLElement | undefined;
     let firstVisibleTop = Number.POSITIVE_INFINITY;
-    let firstReadableSentence: HTMLElement | undefined;
-    let firstReadableSentenceTop = Number.POSITIVE_INFINITY;
-    let firstReadableFigure: HTMLElement | undefined;
-    let firstReadableFigureTop = Number.POSITIVE_INFINITY;
+    let firstReadable: HTMLElement | undefined;
+    let firstReadableTop = Number.POSITIVE_INFINITY;
     for (const element of positionMarkers) {
       const rect = element.getBoundingClientRect();
       if (rect.bottom <= visibleTop || rect.top >= visibleBottom) continue;
-      if (!preferVisualTop) {
-        firstVisible = element;
-        break;
-      }
       if (rect.top < firstVisibleTop) {
         firstVisible = element;
         firstVisibleTop = rect.top;
       }
-      const isFigure = element.dataset.readerPositionKind === "figure";
-      const markerCenter = rect.top + rect.height / 2;
-      const isReadableFigure = isFigure && markerCenter >= readableTop && markerCenter <= readableBottom;
-      const isCompleteSentence = !isFigure && rect.top >= readableTop && rect.bottom <= readableBottom;
-      if (isReadableFigure && rect.top < firstReadableFigureTop) {
-        firstReadableFigure = element;
-        firstReadableFigureTop = rect.top;
-      }
-      if (isCompleteSentence && rect.top < firstReadableSentenceTop) {
-        firstReadableSentence = element;
-        firstReadableSentenceTop = rect.top;
+      const isFullyReadable = rect.top >= readableTop && rect.bottom <= readableBottom;
+      if (isFullyReadable && rect.top < firstReadableTop) {
+        firstReadable = element;
+        firstReadableTop = rect.top;
       }
     }
-    const followingSentence = firstReadableFigure && firstReadableSentence
-      && Number(firstReadableSentence.dataset.sourceStart) > Number(firstReadableFigure.dataset.sourceStart)
-      ? firstReadableSentence
-      : undefined;
-    if (preferVisualTop) firstVisible = followingSentence || firstReadableFigure || firstReadableSentence || firstVisible;
+    if (preferVisualTop) firstVisible = firstReadable || firstVisible;
     if (firstVisible) {
       const sourceOffset = Number(firstVisible.dataset.sourceStart);
       currentPosition = firstVisible.dataset.readerPositionKind === "figure"

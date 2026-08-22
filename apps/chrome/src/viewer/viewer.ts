@@ -1243,10 +1243,8 @@
     const readableBottom = Math.max(readableTop, visibleBottom - 112);
     let firstVisible: HTMLElement | undefined;
     let firstVisibleTop = Number.POSITIVE_INFINITY;
-    let firstReadableSentence: HTMLElement | undefined;
-    let firstReadableSentenceTop = Number.POSITIVE_INFINITY;
-    let firstReadableFigure: HTMLElement | undefined;
-    let firstReadableFigureTop = Number.POSITIVE_INFINITY;
+    let firstReadable: HTMLElement | undefined;
+    let firstReadableTop = Number.POSITIVE_INFINITY;
     for (const marker of positionMarkers) {
       const rect = elementRect(marker, visibleTop, visibleTop + 100);
       if (rect.bottom <= visibleTop || rect.top >= visibleBottom) continue;
@@ -1254,26 +1252,13 @@
         firstVisible = marker;
         firstVisibleTop = rect.top;
       }
-      const isFigure = marker.dataset.readerPositionKind === "figure";
-      const markerCenter = rect.top + rect.height / 2;
-      const isReadableFigure = isFigure && markerCenter >= readableTop && markerCenter <= readableBottom;
-      const isCompleteSentence = !isFigure && rect.top >= readableTop && rect.bottom <= readableBottom;
-      if (isReadableFigure && rect.top < firstReadableFigureTop) {
-        firstReadableFigure = marker;
-        firstReadableFigureTop = rect.top;
-      }
-      if (isCompleteSentence && rect.top < firstReadableSentenceTop) {
-        firstReadableSentence = marker;
-        firstReadableSentenceTop = rect.top;
+      const isFullyReadable = rect.top >= readableTop && rect.bottom <= readableBottom;
+      if (isFullyReadable && rect.top < firstReadableTop) {
+        firstReadable = marker;
+        firstReadableTop = rect.top;
       }
     }
-    const followingSentence = firstReadableFigure && firstReadableSentence
-      && Number(firstReadableSentence.dataset.sourceStart) > Number(firstReadableFigure.dataset.sourceStart)
-      ? firstReadableSentence
-      : undefined;
-    const selected = preferReadableTop
-      ? followingSentence || firstReadableFigure || firstReadableSentence || firstVisible
-      : firstVisible;
+    const selected = preferReadableTop ? firstReadable || firstVisible : firstVisible;
     if (!selected) return;
     const sourceOffset = Number(selected.dataset.sourceStart);
     if (!Number.isFinite(sourceOffset)) return;
