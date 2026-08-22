@@ -4,9 +4,6 @@
 })(globalThis, function createMobileViewer(global: typeof globalThis): ReaderMobileViewer {
   type ReadingMode = "rsvp" | "text";
   type MobileIconName = "previous" | "play" | "pause" | "close";
-  type ReadingFlowItem =
-    | { kind: "unit"; unitIndex: number; sourceOffset: number }
-    | { kind: "figure"; figureIndex: number; sourceOffset: number };
   interface LaunchProgress {
     element: HTMLElement;
     loader: HTMLElement;
@@ -48,9 +45,9 @@
   let cachedPageUrl: string | null = null;
   let units: ReaderUnit[] = [];
   let unitIndex = 0;
-  let flowItems: ReadingFlowItem[] = [];
+  let flowItems: ReaderFlowItem[] = [];
   let flowIndex = 0;
-  let currentOffset = 0;
+  let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
   let contextSentenceIndex: number | null = null;
   let playbackTimer: number | null = null;
   let playing = false;
@@ -63,7 +60,6 @@
   let lastLeftTapAt = 0;
   let lastLeftTapX = 0;
   let lastLeftTapY = 0;
-  let textFigureOffset: number | null = null;
   let launchFocus: HTMLElement | null = null;
 
   function getNodes(): MobileNodes {
@@ -186,8 +182,11 @@
       if (units.length === 0) throw new Error("units_not_found");
       cachedContent = content;
       cachedPageUrl = pageUrl;
-      currentOffset = 0;
-      seekToUnit(0);
+      currentPosition = flowItems[0]
+        ? global.Engine.positionForFlowItem(flowItems[0], units)
+        : { kind: "text", sourceOffset: 0 };
+      flowIndex = 0;
+      unitIndex = flowItems[0]?.kind === "unit" ? flowItems[0].unitIndex : 0;
     } catch (error) {
       preparationError = error;
     }
@@ -387,6 +386,9 @@
     appendArticleContent(articleNode, readableBlocks, blockElements, content.readingContext?.figures || [], figureElements);
     const positionMarkers = [...anchorElements, ...figureElements].sort((left, right) => (
       Number(left.dataset.sourceStart) - Number(right.dataset.sourceStart)
+      || (left.dataset.readerPositionKind === right.dataset.readerPositionKind
+        ? Number(left.dataset.figureIndex || 0) - Number(right.dataset.figureIndex || 0)
+        : left.dataset.readerPositionKind === "figure" ? -1 : 1)
     ));
     scroller.append(articleNode);
     getNodes().content.replaceChildren(scroller);
@@ -425,10 +427,15 @@
     if (tagName === "h1") element.className = "article-title";
     element.dataset.sourceStart = String(block.start ?? 0);
     element.dataset.sourceEnd = String(block.end ?? (block.start ?? 0) + block.text.length);
-    const locale = content?.readingContext?.language || "ja";
-    const sentences = [...new Intl.Segmenter(locale, { granularity: "sentence" }).segment(block.text)];
+    const sentences = global.Engine.splitSentenceSpans(
+      block.text,
+      content?.readingContext?.language || "ja",
+    );
     if (sentences.length === 0) {
       element.textContent = block.text;
+      element.setAttribute("data-reader-text-anchor", "true");
+      element.dataset.readerTextAnchor = "true";
+      element.dataset.readerPositionKind = "text";
       anchorElements.push(element);
       return element;
     }
@@ -436,9 +443,11 @@
       const anchor = global.document.createElement("span");
       anchor.className = "text-sentence";
       anchor.setAttribute("data-reader-text-anchor", "true");
-      anchor.dataset.sourceStart = String((block.start ?? 0) + sentence.index);
-      anchor.dataset.sourceEnd = String((block.start ?? 0) + sentence.index + sentence.segment.length);
-      anchor.textContent = sentence.segment;
+      anchor.dataset.readerTextAnchor = "true";
+      anchor.dataset.readerPositionKind = "text";
+      anchor.dataset.sourceStart = String((block.start ?? 0) + sentence.start);
+      anchor.dataset.sourceEnd = String((block.start ?? 0) + sentence.end);
+      anchor.textContent = block.text.slice(sentence.start, sentence.end);
       element.append(anchor);
       anchorElements.push(anchor);
     }
@@ -452,12 +461,17 @@
     articleFigures: ReaderFigure[],
     figureElements: HTMLElement[],
   ): void {
-    const orderedFigures = [...articleFigures].sort((left, right) => left.sourceOffset - right.sourceOffset);
+    const orderedFigures = articleFigures
+      .map((figure, figureIndex) => ({ figure, figureIndex }))
+      .sort((left, right) => (
+        left.figure.sourceOffset - right.figure.sourceOffset
+        || left.figureIndex - right.figureIndex
+      ));
     let figureIndex = 0;
     readableBlocks.forEach((block, blockIndex) => {
       let currentFigure = orderedFigures[figureIndex];
-      while (currentFigure && currentFigure.sourceOffset <= block.start) {
-        const figureElement = createArticleFigure(currentFigure);
+      while (currentFigure && currentFigure.figure.sourceOffset <= block.start) {
+        const figureElement = createArticleFigure(currentFigure.figure, currentFigure.figureIndex);
         article.append(figureElement);
         figureElements.push(figureElement);
         figureIndex += 1;
@@ -466,8 +480,8 @@
       const blockElement = blockElements[blockIndex];
       if (blockElement) article.append(blockElement);
       currentFigure = orderedFigures[figureIndex];
-      while (currentFigure && currentFigure.sourceOffset <= block.end) {
-        const figureElement = createArticleFigure(currentFigure);
+      while (currentFigure && currentFigure.figure.sourceOffset <= block.end) {
+        const figureElement = createArticleFigure(currentFigure.figure, currentFigure.figureIndex);
         article.append(figureElement);
         figureElements.push(figureElement);
         figureIndex += 1;
@@ -476,7 +490,7 @@
     });
     let currentFigure = orderedFigures[figureIndex];
     while (currentFigure) {
-      const figureElement = createArticleFigure(currentFigure);
+      const figureElement = createArticleFigure(currentFigure.figure, currentFigure.figureIndex);
       article.append(figureElement);
       figureElements.push(figureElement);
       figureIndex += 1;
@@ -484,12 +498,13 @@
     }
   }
 
-  function createArticleFigure(figure: ReaderFigure): HTMLElement {
+  function createArticleFigure(figure: ReaderFigure, figureIndex: number): HTMLElement {
     const container = global.document.createElement("figure");
     container.className = "article-figure";
     container.dataset.sourceStart = String(figure.sourceOffset);
-    container.dataset.sourceEnd = String(figure.sourceOffset);
+    container.dataset.sourceEnd = String(figure.sourceEnd);
     container.dataset.readerPositionKind = "figure";
+    container.dataset.figureIndex = String(figureIndex);
     const image = global.document.createElement("img");
     image.src = figure.src;
     image.alt = figure.alt || figure.caption || "本文画像";
@@ -536,8 +551,10 @@
     const readableBottom = Math.max(readableTop, visibleBottom - TEXT_VIEW_READABLE_BOTTOM_PX);
     let firstVisible: HTMLElement | undefined;
     let firstVisibleTop = Number.POSITIVE_INFINITY;
-    let firstReadable: HTMLElement | undefined;
-    let firstReadableTop = Number.POSITIVE_INFINITY;
+    let firstReadableSentence: HTMLElement | undefined;
+    let firstReadableSentenceTop = Number.POSITIVE_INFINITY;
+    let firstReadableFigure: HTMLElement | undefined;
+    let firstReadableFigureTop = Number.POSITIVE_INFINITY;
     for (const element of positionMarkers) {
       const rect = element.getBoundingClientRect();
       if (rect.bottom <= visibleTop || rect.top >= visibleBottom) continue;
@@ -550,19 +567,38 @@
         firstVisibleTop = rect.top;
       }
       const isFigure = element.dataset.readerPositionKind === "figure";
-      const isReadableFigure = isFigure && rect.bottom > readableTop && rect.top < readableBottom;
+      const markerCenter = rect.top + rect.height / 2;
+      const isReadableFigure = isFigure && markerCenter >= readableTop && markerCenter <= readableBottom;
       const isCompleteSentence = !isFigure && rect.top >= readableTop && rect.bottom <= readableBottom;
-      if ((isReadableFigure || isCompleteSentence) && rect.top < firstReadableTop) {
-        firstReadable = element;
-        firstReadableTop = rect.top;
+      if (isReadableFigure && rect.top < firstReadableFigureTop) {
+        firstReadableFigure = element;
+        firstReadableFigureTop = rect.top;
+      }
+      if (isCompleteSentence && rect.top < firstReadableSentenceTop) {
+        firstReadableSentence = element;
+        firstReadableSentenceTop = rect.top;
       }
     }
-    if (preferVisualTop && firstReadable) firstVisible = firstReadable;
+    const followingSentence = firstReadableFigure && firstReadableSentence
+      && Number(firstReadableSentence.dataset.sourceStart) > Number(firstReadableFigure.dataset.sourceStart)
+      ? firstReadableSentence
+      : undefined;
+    if (preferVisualTop) firstVisible = followingSentence || firstReadableFigure || firstReadableSentence || firstVisible;
     if (firstVisible) {
-      currentOffset = Number(firstVisible.dataset.sourceStart);
-      textFigureOffset = firstVisible.dataset.readerPositionKind === "figure" ? currentOffset : null;
+      const sourceOffset = Number(firstVisible.dataset.sourceStart);
+      currentPosition = firstVisible.dataset.readerPositionKind === "figure"
+        ? {
+          kind: "figure",
+          sourceOffset,
+          figureIndex: Number(firstVisible.dataset.figureIndex),
+        }
+        : { kind: "text", sourceOffset };
+      unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
     }
-    progress.textContent = `${global.Engine.calculateReadingProgress(currentOffset, content.text.length)}%`;
+    progress.textContent = `${global.Engine.calculateReadingProgress(
+      currentPosition.sourceOffset,
+      content.text.length,
+    )}%`;
   }
 
   function captureTextPosition(
@@ -577,20 +613,22 @@
   }
 
   function restoreTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[]): void {
-    const exactFigure = textFigureOffset === null
+    const figureIndex = currentPosition.kind === "figure" ? currentPosition.figureIndex : -1;
+    const exactFigure = currentPosition.kind !== "figure"
       ? undefined
       : positionMarkers.find((element) => (
           element.dataset.readerPositionKind === "figure"
-          && Number(element.dataset.sourceStart) === textFigureOffset
+          && Number(element.dataset.figureIndex) === figureIndex
         ));
     const containingMarker = positionMarkers.find((element) => (
-      Number(element.dataset.sourceStart) <= currentOffset
-      && Number(element.dataset.sourceEnd) > currentOffset
+      element.dataset.readerPositionKind === "text"
+      && Number(element.dataset.sourceStart) <= currentPosition.sourceOffset
+      && Number(element.dataset.sourceEnd) > currentPosition.sourceOffset
     ));
     let precedingMarker: HTMLElement | undefined;
     for (let index = positionMarkers.length - 1; index >= 0; index -= 1) {
       const marker = positionMarkers[index];
-      if (marker && Number(marker.dataset.sourceStart) <= currentOffset) {
+      if (marker && Number(marker.dataset.sourceStart) <= currentPosition.sourceOffset) {
         precedingMarker = marker;
         break;
       }
@@ -681,7 +719,8 @@
     if (item.kind === "figure") {
       const figure = content?.readingContext?.figures?.[item.figureIndex];
       if (figure) {
-        showFigure(figure);
+        currentPosition = global.Engine.positionForFlowItem(item, units);
+        showFigure(figure, item.figureIndex);
         return true;
       }
     }
@@ -699,6 +738,9 @@
     if (!value || !unit || !previousUnit || !nextUnit) return;
     unit.textContent = value.text;
     unit.className = `rsvp-unit ${value.kind}`;
+    unit.dataset.readerPositionKind = "text";
+    unit.dataset.sourceStart = String(value.start);
+    unit.dataset.sourceEnd = String(value.end);
     if (contextSentenceIndex !== value.sentenceIndex) {
       const context = global.Engine.surroundingSentences(units, unitIndex);
       previousUnit.textContent = context.previous;
@@ -707,9 +749,11 @@
       fadeContext(previousUnit);
       fadeContext(nextUnit);
     }
-    currentOffset = value.start;
-    textFigureOffset = null;
-    progress.textContent = `${global.Engine.calculateReadingProgress(value.end, content.text.length)}%`;
+    currentPosition = { kind: "text", sourceOffset: value.start };
+    progress.textContent = `${global.Engine.calculateReadingProgress(
+      currentPosition.sourceOffset,
+      content.text.length,
+    )}%`;
     updatePlayButton();
   }
 
@@ -722,22 +766,28 @@
     if (nextMode === mode) return;
     clearPendingLeftTap();
     const currentFlow = flowItems[flowIndex];
-    if (nextMode === "text" && currentFlow?.kind === "figure") {
-      textFigureOffset = currentFlow.sourceOffset;
-    }
+    if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
     figurePanel?.remove();
     figurePanel = null;
     if (nextMode === "rsvp") {
       const { textScroller, textMarkers, progress } = getNodes();
-      if (textScroller) captureTextPosition(textScroller, textMarkers, progress, true);
-      const figureFlowIndex = textFigureOffset === null
-        ? -1
-        : flowItems.findIndex((item) => item.kind === "figure" && item.sourceOffset === textFigureOffset);
-      if (figureFlowIndex >= 0) flowIndex = figureFlowIndex;
-      else {
-        const visibleUnit = global.Engine.findUnitIndex(units, currentOffset);
-        seekToUnit(global.Engine.findSentenceStart(units, visibleUnit));
+      const restoredScrollTop = getNodes().textRestoreScrollTop;
+      const textPositionChanged = textScroller && (
+        restoredScrollTop === null || Math.abs(textScroller.scrollTop - restoredScrollTop) >= 1
+      );
+      if (textScroller && textPositionChanged) captureTextPosition(textScroller, textMarkers, progress, true);
+      if (currentPosition.kind === "figure") {
+        flowIndex = global.Engine.findFlowIndexForPosition(flowItems, units, currentPosition);
+      } else {
+        const visibleUnit = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
+        const sentenceStart = global.Engine.findSentenceStart(units, visibleUnit);
+        flowIndex = global.Engine.findFlowIndexForPosition(
+          flowItems,
+          units,
+          { kind: "text", sourceOffset: units[sentenceStart]?.start ?? currentPosition.sourceOffset },
+        );
       }
+      if (flowIndex < 0) flowIndex = 0;
     }
     mode = nextMode;
     renderReader();
@@ -745,7 +795,7 @@
 
   function rebuildUnits() {
     if (!content?.text) return;
-    const previousFlow = flowItems[flowIndex];
+    const previousPosition = currentPosition;
     const locale = content?.readingContext?.language || "ja";
     const articleFigures = content.readingContext?.figures || [];
     const figureBoundaries = articleFigures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
@@ -763,35 +813,18 @@
       )));
     units = global.Engine.splitLongUnits(segmented, locale, maxGraphemesForViewport());
     rebuildFlowItems();
-    if (previousFlow?.kind === "figure") {
-      const matchingFigure = flowItems.findIndex((item) => (
-        item.kind === "figure" && item.sourceOffset === previousFlow.sourceOffset
-      ));
-      if (matchingFigure >= 0) {
-        flowIndex = matchingFigure;
-        return;
-      }
-    }
-    seekToUnit(global.Engine.findUnitIndex(units, currentOffset));
+    flowIndex = global.Engine.findFlowIndexForPosition(flowItems, units, previousPosition);
+    if (flowIndex < 0) flowIndex = 0;
+    const item = flowItems[flowIndex];
+    currentPosition = item
+      ? global.Engine.positionForFlowItem(item, units)
+      : { kind: "text", sourceOffset: previousPosition.sourceOffset };
+    unitIndex = global.Engine.findUnitIndex(units, currentPosition.sourceOffset);
   }
 
   function rebuildFlowItems(): void {
     const articleFigures = content?.readingContext?.figures || [];
-    const nextFlow: ReadingFlowItem[] = [];
-    let nextUnitIndex = 0;
-    let nextFigureIndex = 0;
-    while (nextUnitIndex < units.length || nextFigureIndex < articleFigures.length) {
-      const unit = units[nextUnitIndex];
-      const figure = articleFigures[nextFigureIndex];
-      if (figure && (!unit || figure.sourceOffset <= unit.start)) {
-        nextFlow.push({ kind: "figure", figureIndex: nextFigureIndex, sourceOffset: figure.sourceOffset });
-        nextFigureIndex += 1;
-      } else if (unit) {
-        nextFlow.push({ kind: "unit", unitIndex: nextUnitIndex, sourceOffset: unit.start });
-        nextUnitIndex += 1;
-      }
-    }
-    flowItems = nextFlow;
+    flowItems = global.Engine.buildReadingFlow(units, articleFigures);
   }
 
   function maxGraphemesForViewport() {
@@ -990,16 +1023,26 @@
     ));
   }
 
-  function showFigure(figure: ReaderFigure): void {
+  function showFigure(figure: ReaderFigure, figureIndex: number): void {
     pause();
     showTransportControls();
     figurePanel?.remove();
-    currentOffset = figure.sourceOffset;
-    textFigureOffset = figure.sourceOffset;
+    currentPosition = {
+      kind: "figure",
+      sourceOffset: figure.sourceOffset,
+      figureIndex,
+    };
+    getNodes().progress.textContent = `${global.Engine.calculateReadingProgress(
+      currentPosition.sourceOffset,
+      content?.text.length || 0,
+    )}%`;
     const panel = global.document.createElement("figure");
     panel.className = "rsvp-figure";
     panel.setAttribute("aria-label", "本文画像");
     panel.dataset.sourceStart = String(figure.sourceOffset);
+    panel.dataset.sourceEnd = String(figure.sourceEnd);
+    panel.dataset.readerPositionKind = "figure";
+    panel.dataset.figureIndex = String(figureIndex);
     panel.addEventListener("pointerup", handleRsvpPointerUp);
     const image = global.document.createElement("img");
     image.src = figure.src;
@@ -1031,6 +1074,8 @@
       item.kind === "unit" && item.unitIndex === unitIndex
     ));
     flowIndex = matchingFlowIndex >= 0 ? matchingFlowIndex : 0;
+    const item = flowItems[flowIndex];
+    if (item) currentPosition = global.Engine.positionForFlowItem(item, units);
   }
 
   function crossesSectionBoundary(unit: ReaderUnit | undefined, nextUnit: ReaderUnit | undefined): boolean {
@@ -1098,7 +1143,7 @@
     flowItems = [];
     flowIndex = 0;
     figurePanel = null;
-    textFigureOffset = null;
+    currentPosition = { kind: "text", sourceOffset: 0 };
     mode = "rsvp";
     nodes = null;
     opening = false;

@@ -33,15 +33,20 @@
   let initialHeadingIndex = -1;
   let activeRequestId: string | null = null;
   let progressLabel: HTMLSpanElement | null = null;
-  let progressBar: HTMLDivElement | null = null;
   let displayResizeObserver: ResizeObserver | null = null;
   let figures: ReaderFigure[] = [];
-  let nextFigureIndex = 0;
+  let flowItems: ReaderFlowItem[] = [];
+  let flowIndex = 0;
   let figurePanel: HTMLElement | null = null;
   let readerMain: HTMLDivElement | null = null;
   let sourceText = "";
   let blocks: ReaderBlock[] = [];
-  let currentOffset = 0;
+  let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
+  let textScroller: HTMLElement | null = null;
+  let textPositionMarkers: HTMLElement[] = [];
+  let textPositionDirty = false;
+  let textRestoreScrollTop: number | null = null;
+  let textRestoring = false;
   let launchFocus: HTMLElement | null = null;
 
   function isReaderMessage(value: unknown): value is ReaderMessage {
@@ -103,7 +108,6 @@
     sectionTransitions = readingContext.sectionTransitions;
     initialHeadingIndex = readingContext.initialHeadingIndex;
     figures = Array.isArray(readingContext.figures) ? readingContext.figures : [];
-    nextFigureIndex = 0;
     playbackState = "paused";
 
     const figureBoundaries = figures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
@@ -128,10 +132,14 @@
     units = baseUnits;
     currentGraphemeLimit = 12;
     currentUnitIndex = 0;
+    flowItems = globalThis.Engine.buildReadingFlow(units, figures);
+    flowIndex = 0;
+    currentPosition = flowItems[0]
+      ? globalThis.Engine.positionForFlowItem(flowItems[0], units)
+      : { kind: "text", sourceOffset: 0 };
     createOverlay();
     rebuildUnitsForViewport();
-    renderCurrentUnit();
-    play();
+    if (!renderCurrentFlowItem()) play();
   }
 
   function createLoadingOverlay() {
@@ -357,6 +365,20 @@
     nextContext = createContext("next");
     contextSentenceIndex = null;
 
+    progressLabel = document.createElement("span");
+    progressLabel.setAttribute("data-reader-progress", "true");
+    progressLabel.textContent = "0%";
+    Object.assign(progressLabel.style, {
+      position: "absolute",
+      right: "16px",
+      bottom: "16px",
+      zIndex: "3",
+      color: "rgba(235,235,235,0.58)",
+      fontSize: "13px",
+      fontVariantNumeric: "tabular-nums",
+      pointerEvents: "none",
+    });
+
     const topbar = createTopbar("文章で読む", showTextView);
     const controls = document.createElement("div");
     Object.assign(controls.style, {
@@ -377,7 +399,7 @@
     playPauseButton.setAttribute("aria-keyshortcuts", "Space");
 
     controls.append(backButton, playPauseButton);
-    main.append(topbar, previousContext, display, nextContext, controls);
+    main.append(topbar, previousContext, display, nextContext, controls, progressLabel);
     stage.append(main);
     revealReader(stage);
     document.addEventListener("keydown", handleKeyDown);
@@ -387,7 +409,7 @@
 
     if (typeof globalThis.ResizeObserver === "function") {
       displayResizeObserver = new globalThis.ResizeObserver(() => {
-        if (rebuildUnitsForViewport()) renderCurrentUnit();
+        if (rebuildUnitsForViewport()) renderCurrentFlowItem();
       });
       displayResizeObserver.observe(main);
     }
@@ -643,29 +665,7 @@
     });
     const locationLabel = document.createElement("span");
     locationLabel.textContent = "記事の構成";
-    progressLabel = document.createElement("span");
-    progressLabel.textContent = "0%";
-    locationMeta.append(locationLabel, progressLabel);
-
-    const progressTrack = document.createElement("div");
-    Object.assign(progressTrack.style, {
-      position: "relative",
-      height: "4px",
-      margin: "10px 0 0",
-      borderRadius: "999px",
-      background: "rgba(120,120,120,0.24)",
-    });
-    progressBar = document.createElement("div");
-    Object.assign(progressBar.style, {
-      width: "0%",
-      height: "100%",
-      borderRadius: "inherit",
-      background: "rgba(255,255,255,0.68)",
-      transition: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-        ? "none"
-        : "width 220ms ease-out",
-    });
-    progressTrack.append(progressBar);
+    locationMeta.append(locationLabel);
 
     const outline = document.createElement("nav");
     outline.setAttribute("aria-label", "記事の構成");
@@ -709,7 +709,7 @@
       return item;
     });
 
-    location.append(locationMeta, progressTrack);
+    location.append(locationMeta);
     minimap.append(location, outline);
 
     return minimap;
@@ -766,7 +766,6 @@
   function showTextView() {
     if (!root || !sourceText) return;
     pause();
-    currentOffset = units[currentUnitIndex]?.start ?? currentOffset;
     clearRenderedView();
 
     const shell = document.createElement("div");
@@ -805,40 +804,78 @@
 
     const readableBlocks = blocks.length > 0 ? blocks : fallbackBlocks(sourceText);
     const blockElements = readableBlocks.map((block) => createTextBlock(block));
-    appendTextContent(article, readableBlocks, blockElements, figures);
+    const figureElements: HTMLElement[] = [];
+    appendTextContent(article, readableBlocks, blockElements, figures, figureElements);
+    const positionMarkers = [...blockElements.flatMap((element) => descendantElements(element)
+      .filter((child) => child.dataset.readerTextAnchor === "true")), ...figureElements].sort((left, right) => (
+      Number(left.dataset.sourceStart) - Number(right.dataset.sourceStart)
+      || (left.dataset.readerPositionKind === right.dataset.readerPositionKind
+        ? Number(left.dataset.figureIndex || 0) - Number(right.dataset.figureIndex || 0)
+        : left.dataset.readerPositionKind === "figure" ? -1 : 1)
+    ));
     scroller.append(article);
 
-    const topbar = createTopbar("RSVPで読む", showRsvpView);
+    textScroller = scroller;
+    textPositionMarkers = positionMarkers;
+    textPositionDirty = false;
+    textRestoreScrollTop = null;
+    const topbar = createTopbar("RSVPで読む", () => {
+      if (textPositionDirty) updateTextPosition(scroller, positionMarkers, true);
+      showRsvpView();
+    });
     Object.assign(topbar.style, { left: "16px", right: "16px" });
-    shell.append(scroller, topbar);
+    progressLabel = document.createElement("span");
+    progressLabel.setAttribute("data-reader-progress", "true");
+    progressLabel.textContent = `${globalThis.Engine.calculateReadingProgress(
+      currentPosition.sourceOffset,
+      sourceText.length,
+    )}%`;
+    Object.assign(progressLabel.style, {
+      position: "absolute",
+      right: "16px",
+      bottom: "16px",
+      zIndex: "3",
+      color: "rgba(235,235,235,0.58)",
+      fontSize: "13px",
+      fontVariantNumeric: "tabular-nums",
+      pointerEvents: "none",
+    });
+    shell.append(scroller, topbar, progressLabel);
     root.append(shell);
 
     const updatePosition = () => {
-      const viewportCenter = scroller.getBoundingClientRect().top + scroller.clientHeight / 2;
-      const measurements = blockElements.map((element) => {
-        const rect = element.getBoundingClientRect();
-        return {
-          top: rect.top,
-          bottom: rect.bottom,
-          start: Number(element.dataset.sourceStart),
-          end: Number(element.dataset.sourceEnd),
-        };
-      });
-      currentOffset = globalThis.Engine.sourceOffsetAtViewportCenter(measurements, viewportCenter);
-      currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentOffset);
+      if (textRestoring) return;
+      if (textRestoreScrollTop !== null && Math.abs(scroller.scrollTop - textRestoreScrollTop) < 1) return;
+      textPositionDirty = true;
+      updateTextPosition(scroller, positionMarkers);
     };
     scroller.addEventListener("scroll", updatePosition, { passive: true });
-    globalThis.requestAnimationFrame?.(() => restoreTextPosition(scroller, blockElements, readableBlocks));
+    globalThis.requestAnimationFrame?.(() => {
+      textRestoring = true;
+      restoreTextPosition(scroller, positionMarkers);
+      textRestoreScrollTop = scroller.scrollTop;
+      textPositionDirty = false;
+      textRestoring = false;
+    });
   }
 
   function showRsvpView() {
     if (!root || units.length === 0) return;
-    currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentOffset);
-    syncNextFigureIndex();
+    if (currentPosition.kind === "figure") {
+      flowIndex = globalThis.Engine.findFlowIndexForPosition(flowItems, units, currentPosition);
+    } else {
+      const visibleUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
+      const sentenceStart = globalThis.Engine.findSentenceStart(units, visibleUnitIndex);
+      flowIndex = globalThis.Engine.findFlowIndexForPosition(
+        flowItems,
+        units,
+        { kind: "text", sourceOffset: units[sentenceStart]?.start ?? currentPosition.sourceOffset },
+      );
+    }
+    if (flowIndex < 0) flowIndex = 0;
     clearRenderedView();
     createOverlay();
-    renderCurrentUnit();
-    play();
+    if (!renderCurrentFlowItem()) play();
   }
 
   function clearRenderedView() {
@@ -854,8 +891,12 @@
     playPauseButton = null;
     headingNodes = [];
     progressLabel = null;
-    progressBar = null;
     readerMain = null;
+    textScroller = null;
+    textPositionMarkers = [];
+    textPositionDirty = false;
+    textRestoreScrollTop = null;
+    textRestoring = false;
   }
 
   function fallbackBlocks(text: string): ReaderBlock[] {
@@ -877,7 +918,6 @@
     if (block.kind === "quote") tagName = "blockquote";
     if (block.kind === "preformatted") tagName = "pre";
     const element = document.createElement(tagName);
-    element.textContent = block.text;
     element.dataset.sourceStart = String(block.start ?? 0);
     element.dataset.sourceEnd = String(block.end ?? (block.start ?? 0) + block.text.length);
     Object.assign(element.style, {
@@ -892,7 +932,32 @@
         color: "rgba(255,255,255,0.68)",
       });
     }
+    const sentenceSpans = globalThis.Engine.splitSentenceSpans(block.text, segmentationLocale);
+    if (sentenceSpans.length === 0) {
+      element.textContent = block.text;
+      element.setAttribute("data-reader-text-anchor", "true");
+      element.dataset.readerTextAnchor = "true";
+      element.dataset.readerPositionKind = "text";
+      return element;
+    }
+    for (const sentence of sentenceSpans) {
+      const anchor = document.createElement("span");
+      anchor.setAttribute("data-reader-text-anchor", "true");
+      anchor.dataset.readerTextAnchor = "true";
+      anchor.dataset.sourceStart = String((block.start ?? 0) + sentence.start);
+      anchor.dataset.sourceEnd = String((block.start ?? 0) + sentence.end);
+      anchor.dataset.readerPositionKind = "text";
+      anchor.textContent = block.text.slice(sentence.start, sentence.end);
+      element.append(anchor);
+    }
     return element;
+  }
+
+  function descendantElements(element: HTMLElement): HTMLElement[] {
+    return [...element.children].flatMap((child) => {
+      const childElement = child as HTMLElement;
+      return [childElement, ...descendantElements(childElement)];
+    });
   }
 
   function appendTextContent(
@@ -900,38 +965,52 @@
     readableBlocks: ReaderBlock[],
     blockElements: HTMLElement[],
     articleFigures: ReaderFigure[],
+    figureElements: HTMLElement[],
   ): void {
-    const orderedFigures = [...articleFigures].sort((left, right) => left.sourceOffset - right.sourceOffset);
+    const orderedFigures = articleFigures
+      .map((figure, figureIndex) => ({ figure, figureIndex }))
+      .sort((left, right) => (
+        left.figure.sourceOffset - right.figure.sourceOffset
+        || left.figureIndex - right.figureIndex
+      ));
     let figureIndex = 0;
     readableBlocks.forEach((block, blockIndex) => {
       let currentFigure = orderedFigures[figureIndex];
-      while (currentFigure && currentFigure.sourceOffset <= block.start) {
-        article.append(createTextFigure(currentFigure));
+      while (currentFigure && currentFigure.figure.sourceOffset <= block.start) {
+        const figureElement = createTextFigure(currentFigure.figure, currentFigure.figureIndex);
+        article.append(figureElement);
+        figureElements.push(figureElement);
         figureIndex += 1;
         currentFigure = orderedFigures[figureIndex];
       }
       const blockElement = blockElements[blockIndex];
       if (blockElement) article.append(blockElement);
       currentFigure = orderedFigures[figureIndex];
-      while (currentFigure && currentFigure.sourceOffset <= block.end) {
-        article.append(createTextFigure(currentFigure));
+      while (currentFigure && currentFigure.figure.sourceOffset <= block.end) {
+        const figureElement = createTextFigure(currentFigure.figure, currentFigure.figureIndex);
+        article.append(figureElement);
+        figureElements.push(figureElement);
         figureIndex += 1;
         currentFigure = orderedFigures[figureIndex];
       }
     });
     let currentFigure = orderedFigures[figureIndex];
     while (currentFigure) {
-      article.append(createTextFigure(currentFigure));
+      const figureElement = createTextFigure(currentFigure.figure, currentFigure.figureIndex);
+      article.append(figureElement);
+      figureElements.push(figureElement);
       figureIndex += 1;
       currentFigure = orderedFigures[figureIndex];
     }
   }
 
-  function createTextFigure(figure: ReaderFigure): HTMLElement {
+  function createTextFigure(figure: ReaderFigure, figureIndex: number): HTMLElement {
     const container = document.createElement("figure");
     container.setAttribute("data-reader-text-figure", "true");
     container.dataset.sourceStart = String(figure.sourceOffset);
-    container.dataset.sourceEnd = String(figure.sourceOffset);
+    container.dataset.sourceEnd = String(figure.sourceEnd);
+    container.dataset.readerPositionKind = "figure";
+    container.dataset.figureIndex = String(figureIndex);
     Object.assign(container.style, {
       margin: "2em 0",
     });
@@ -997,17 +1076,118 @@
     return surface;
   }
 
-  function restoreTextPosition(scroller: HTMLElement, blockElements: HTMLElement[], readableBlocks: ReaderBlock[]): void {
-    const blockIndex = globalThis.Engine.findBlockIndexForOffset(readableBlocks, currentOffset);
-    const target = blockElements[blockIndex];
-    if (!target) return;
-    const targetRect = target.getBoundingClientRect();
-    const scrollerRect = scroller.getBoundingClientRect();
-    const block = readableBlocks[blockIndex];
-    if (!block) return;
-    const ratio = block.end > block.start ? (currentOffset - block.start) / (block.end - block.start) : 0;
-    const targetY = targetRect.top - scrollerRect.top + scroller.scrollTop + targetRect.height * Math.min(1, Math.max(0, ratio));
-    scroller.scrollTop = Math.max(0, targetY - scroller.clientHeight / 2);
+  function updateTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[], preferReadableTop = false): void {
+    const scrollerRect = elementRect(scroller, 0, scroller.clientHeight || 500);
+    const visibleTop = scrollerRect.top;
+    const visibleBottom = scrollerRect.bottom;
+    const readableTop = Math.min(visibleBottom, visibleTop + 72);
+    const readableBottom = Math.max(readableTop, visibleBottom - 112);
+    let firstVisible: HTMLElement | undefined;
+    let firstVisibleTop = Number.POSITIVE_INFINITY;
+    let firstReadableSentence: HTMLElement | undefined;
+    let firstReadableSentenceTop = Number.POSITIVE_INFINITY;
+    let firstReadableFigure: HTMLElement | undefined;
+    let firstReadableFigureTop = Number.POSITIVE_INFINITY;
+    for (const marker of positionMarkers) {
+      const rect = elementRect(marker, visibleTop, visibleTop + 100);
+      if (rect.bottom <= visibleTop || rect.top >= visibleBottom) continue;
+      if (rect.top < firstVisibleTop) {
+        firstVisible = marker;
+        firstVisibleTop = rect.top;
+      }
+      const isFigure = marker.dataset.readerPositionKind === "figure";
+      const markerCenter = rect.top + rect.height / 2;
+      const isReadableFigure = isFigure && markerCenter >= readableTop && markerCenter <= readableBottom;
+      const isCompleteSentence = !isFigure && rect.top >= readableTop && rect.bottom <= readableBottom;
+      if (isReadableFigure && rect.top < firstReadableFigureTop) {
+        firstReadableFigure = marker;
+        firstReadableFigureTop = rect.top;
+      }
+      if (isCompleteSentence && rect.top < firstReadableSentenceTop) {
+        firstReadableSentence = marker;
+        firstReadableSentenceTop = rect.top;
+      }
+    }
+    const followingSentence = firstReadableFigure && firstReadableSentence
+      && Number(firstReadableSentence.dataset.sourceStart) > Number(firstReadableFigure.dataset.sourceStart)
+      ? firstReadableSentence
+      : undefined;
+    const selected = preferReadableTop
+      ? followingSentence || firstReadableFigure || firstReadableSentence || firstVisible
+      : firstVisible;
+    if (!selected) return;
+    const sourceOffset = Number(selected.dataset.sourceStart);
+    if (!Number.isFinite(sourceOffset)) return;
+    currentPosition = selected.dataset.readerPositionKind === "figure"
+      ? {
+        kind: "figure",
+        sourceOffset,
+        figureIndex: Number(selected.dataset.figureIndex),
+      }
+      : { kind: "text", sourceOffset };
+    currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
+    if (progressLabel && sourceText) {
+      progressLabel.textContent = `${globalThis.Engine.calculateReadingProgress(
+        currentPosition.sourceOffset,
+        sourceText.length,
+      )}%`;
+    }
+  }
+
+  function restoreTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[]): void {
+    const figureIndex = currentPosition.kind === "figure" ? currentPosition.figureIndex : -1;
+    const target = currentPosition.kind === "figure"
+      ? positionMarkers.find((marker) => (
+        marker.dataset.readerPositionKind === "figure"
+        && Number(marker.dataset.figureIndex) === figureIndex
+      ))
+      : positionMarkers.find((marker) => (
+        marker.dataset.readerPositionKind === "text"
+        && Number(marker.dataset.sourceStart) <= currentPosition.sourceOffset
+        && Number(marker.dataset.sourceEnd) > currentPosition.sourceOffset
+      )) || [...positionMarkers].reverse().find((marker) => (
+        Number(marker.dataset.sourceStart) <= currentPosition.sourceOffset
+      ));
+    const fallback = target || positionMarkers[0];
+    if (!fallback) return;
+    const targetRect = elementRect(fallback, 0, 100);
+    const scrollerRect = elementRect(scroller, 0, scroller.clientHeight || 500);
+    const targetY = targetRect.top - scrollerRect.top + scroller.scrollTop;
+    scroller.scrollTop = Math.max(0, targetY - 72);
+  }
+
+  function elementRect(element: HTMLElement, fallbackTop: number, fallbackBottom: number): DOMRect {
+    if (typeof element.getBoundingClientRect === "function") return element.getBoundingClientRect();
+    return {
+      top: fallbackTop,
+      bottom: fallbackBottom,
+      left: 0,
+      right: 0,
+      width: 0,
+      height: fallbackBottom - fallbackTop,
+      x: 0,
+      y: fallbackTop,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
+
+  function renderCurrentFlowItem(): boolean {
+    const item = flowItems[flowIndex];
+    if (!item) {
+      pause();
+      return true;
+    }
+    if (item.kind === "figure") {
+      const figure = figures[item.figureIndex];
+      if (figure) {
+        showFigure(figure, item.figureIndex);
+        return true;
+      }
+    }
+    dismissFigurePanel();
+    currentUnitIndex = item.kind === "unit" ? item.unitIndex : currentUnitIndex;
+    renderCurrentUnit();
+    return false;
   }
 
   function renderCurrentUnit() {
@@ -1015,7 +1195,7 @@
 
     const unit = units[currentUnitIndex];
     if (!unit) return;
-    currentOffset = unit.start;
+    currentPosition = { kind: "text", sourceOffset: unit.start };
     if (unit.sentenceIndex !== contextSentenceIndex) {
       const context = globalThis.Engine.surroundingSentences(units, currentUnitIndex);
       if (previousContext) {
@@ -1031,8 +1211,9 @@
     display.textContent = unit.text;
     display.dataset.sourceStart = String(unit.start);
     display.dataset.sourceEnd = String(unit.end);
+    display.dataset.readerPositionKind = "text";
     applyUnitStyle(unit.kind);
-    updateMinimap(unit.start, unit.end);
+    updateMinimap(currentPosition.sourceOffset);
   }
 
   function fadeContext(element: HTMLElement): void {
@@ -1061,11 +1242,17 @@
     const nextLimit = maxGraphemesForViewport();
     if (nextLimit === currentGraphemeLimit && units.length > 0) return false;
 
-    const offset = units[currentUnitIndex]?.start ?? currentOffset;
+    const position = currentPosition;
     currentGraphemeLimit = nextLimit;
     units = globalThis.Engine.splitLongUnits(baseUnits, segmentationLocale, currentGraphemeLimit);
-    currentUnitIndex = globalThis.Engine.findUnitIndex(units, offset);
-    currentOffset = units[currentUnitIndex]?.start ?? offset;
+    flowItems = globalThis.Engine.buildReadingFlow(units, figures);
+    flowIndex = globalThis.Engine.findFlowIndexForPosition(flowItems, units, position);
+    if (flowIndex < 0) flowIndex = 0;
+    const item = flowItems[flowIndex];
+    currentPosition = item
+      ? globalThis.Engine.positionForFlowItem(item, units)
+      : { kind: "text", sourceOffset: position.sourceOffset };
+    currentUnitIndex = globalThis.Engine.findUnitIndex(units, currentPosition.sourceOffset);
     return true;
   }
 
@@ -1091,21 +1278,21 @@
     }
   }
 
-  function updateMinimap(currentOffset: number, currentEnd: number): void {
-    if (headingNodes.length === 0) return;
-
+  function updateMinimap(currentSourceOffset: number): void {
     const activeHeadingIndex = globalThis.Engine.findActiveHeadingIndex(
       sectionTransitions,
-      currentOffset,
+      currentSourceOffset,
       initialHeadingIndex,
     );
 
-    const progress = globalThis.Engine.calculateReadingProgress(
-      currentEnd,
-      units[units.length - 1]?.end || 0,
-    );
-    if (progressLabel) progressLabel.textContent = `${progress}%`;
-    if (progressBar) progressBar.style.width = `${progress}%`;
+    if (progressLabel && sourceText) {
+      const progress = globalThis.Engine.calculateReadingProgress(
+        currentPosition.sourceOffset,
+        sourceText.length,
+      );
+      progressLabel.textContent = `${progress}%`;
+    }
+    if (headingNodes.length === 0) return;
     headingNodes.forEach((node, index) => {
       const active = index === activeHeadingIndex;
       const heading = headings[index];
@@ -1123,42 +1310,23 @@
     stopTimer();
     if (playbackState !== "playing") return;
 
-    const currentUnit = units[currentUnitIndex];
+    const currentItem = flowItems[flowIndex];
+    const currentUnit = currentItem?.kind === "unit" ? units[currentItem.unitIndex] : undefined;
     if (!currentUnit) {
       pause();
       return;
     }
-    const followingUnit = units[currentUnitIndex + 1];
+    const nextItem = flowItems[flowIndex + 1];
+    const followingUnit = nextItem?.kind === "unit" ? units[nextItem.unitIndex] : undefined;
 
     timerId = globalThis.setTimeout(() => {
       if (playbackState !== "playing") return;
-
-      const nextFigure = figures[nextFigureIndex];
-      const displayedUnit = units[currentUnitIndex];
-      if (!displayedUnit) {
+      if (flowIndex >= flowItems.length - 1) {
         pause();
         return;
       }
-      const unitAfterDisplayed = units[currentUnitIndex + 1];
-      const reachesFigure = nextFigure && (
-        nextFigure.sourceOffset <= displayedUnit.end
-        || (unitAfterDisplayed
-          ? nextFigure.sourceOffset <= unitAfterDisplayed.start
-          : nextFigure.sourceOffset <= sourceText.length)
-      );
-      if (nextFigure && reachesFigure) {
-        nextFigureIndex += 1;
-        showFigure(nextFigure);
-        return;
-      }
-
-      if (currentUnitIndex >= units.length - 1) {
-        pause();
-        return;
-      }
-
-      currentUnitIndex += 1;
-      renderCurrentUnit();
+      flowIndex += 1;
+      if (renderCurrentFlowItem()) return;
       scheduleNext();
     }, globalThis.Engine.displayDuration(
       currentUnit,
@@ -1176,9 +1344,16 @@
     );
   }
 
-  function showFigure(figure: ReaderFigure): void {
+  function showFigure(figure: ReaderFigure, figureIndex: number): void {
     if (!readerMain || !display) return;
     pause();
+
+    currentPosition = {
+      kind: "figure",
+      sourceOffset: figure.sourceOffset,
+      figureIndex,
+    };
+    updateMinimap(currentPosition.sourceOffset);
 
     animateOpacity(display, 1, 0, 180);
     display.style.pointerEvents = "none";
@@ -1186,6 +1361,9 @@
     figurePanel = document.createElement("figure");
     figurePanel.setAttribute("aria-label", "本文画像");
     figurePanel.dataset.sourceStart = String(figure.sourceOffset);
+    figurePanel.dataset.sourceEnd = String(figure.sourceEnd);
+    figurePanel.dataset.readerPositionKind = "figure";
+    figurePanel.dataset.figureIndex = String(figureIndex);
     Object.assign(figurePanel.style, {
       position: "absolute",
       inset: "52px 0 64px",
@@ -1225,30 +1403,15 @@
     animateOpacity(figurePanel, 0, 1, 180);
   }
 
-  function resumeAfterFigure() {
+  function advanceFromFigure() {
     if (!figurePanel) return;
-    const shownOffset = Number(figurePanel.dataset.sourceStart);
     dismissFigurePanel();
-    const displayedUnit = units[currentUnitIndex];
-    const nextFigure = figures[nextFigureIndex];
-    const resumesBeforeCurrentUnit = Boolean(displayedUnit) && shownOffset <= (displayedUnit?.start ?? 0);
-    const nextFigureThreshold = resumesBeforeCurrentUnit ? displayedUnit?.start : displayedUnit?.end;
-    if (nextFigure && nextFigureThreshold !== undefined && nextFigure.sourceOffset <= nextFigureThreshold) {
-      nextFigureIndex += 1;
-      showFigure(nextFigure);
-      return;
-    }
-    if (resumesBeforeCurrentUnit) {
-      play();
-      return;
-    }
-    if (currentUnitIndex >= units.length - 1) {
+    if (flowIndex >= flowItems.length - 1) {
       pause();
       return;
     }
-    currentUnitIndex += 1;
-    renderCurrentUnit();
-    play();
+    flowIndex += 1;
+    if (!renderCurrentFlowItem()) play();
   }
 
   function dismissFigurePanel() {
@@ -1264,21 +1427,9 @@
     }
   }
 
-  function syncNextFigureIndex() {
-    const currentOffset = units[currentUnitIndex]?.start ?? 0;
-    nextFigureIndex = figures.findIndex((figure) => figure.sourceOffset >= currentOffset);
-    if (nextFigureIndex < 0) nextFigureIndex = figures.length;
-  }
-
   function play() {
-    if (units.length === 0) return;
-    const currentUnit = units[currentUnitIndex];
-    const nextFigure = figures[nextFigureIndex];
-    if (!figurePanel && currentUnit && nextFigure && nextFigure.sourceOffset <= currentUnit.start) {
-      nextFigureIndex += 1;
-      showFigure(nextFigure);
-      return;
-    }
+    const currentItem = flowItems[flowIndex];
+    if (!currentItem || currentItem.kind === "figure") return;
     playbackState = "playing";
     updatePlayPauseButton();
     scheduleNext();
@@ -1292,7 +1443,7 @@
 
   function togglePlayPause() {
     if (figurePanel) {
-      resumeAfterFigure();
+      advanceFromFigure();
       return;
     }
     if (playbackState === "playing") {
@@ -1309,14 +1460,22 @@
       dismissFigurePanel();
       const unitBeforeFigure = globalThis.Engine.findUnitIndex(units, Math.max(0, figureOffset - 1));
       currentUnitIndex = globalThis.Engine.findSentenceStart(units, unitBeforeFigure);
-      syncNextFigureIndex();
+      flowIndex = globalThis.Engine.findFlowIndexForPosition(
+        flowItems,
+        units,
+        { kind: "text", sourceOffset: units[currentUnitIndex]?.start ?? 0 },
+      );
       renderCurrentUnit();
       play();
       return;
     }
     dismissFigurePanel();
     currentUnitIndex = globalThis.Engine.findPreviousSentenceStart(units, currentUnitIndex);
-    syncNextFigureIndex();
+    flowIndex = globalThis.Engine.findFlowIndexForPosition(
+      flowItems,
+      units,
+      { kind: "text", sourceOffset: units[currentUnitIndex]?.start ?? 0 },
+    );
     renderCurrentUnit();
     if (playbackState === "playing") scheduleNext();
   }
@@ -1329,7 +1488,11 @@
     const targetIndex = units.findIndex((unit) => unit.end > targetOffset);
     stopTimer();
     currentUnitIndex = targetIndex < 0 ? units.length - 1 : targetIndex;
-    syncNextFigureIndex();
+    flowIndex = globalThis.Engine.findFlowIndexForPosition(
+      flowItems,
+      units,
+      { kind: "text", sourceOffset: units[currentUnitIndex]?.start ?? targetOffset },
+    );
     renderCurrentUnit();
     if (playbackState === "playing") scheduleNext();
   }
@@ -1438,8 +1601,12 @@
     playPauseButton = null;
     headingNodes = [];
     progressLabel = null;
-    progressBar = null;
     figurePanel = null;
+    textScroller = null;
+    textPositionMarkers = [];
+    textPositionDirty = false;
+    textRestoreScrollTop = null;
+    textRestoring = false;
   }
 
   function close() {
@@ -1453,12 +1620,13 @@
     sectionTransitions = [];
     initialHeadingIndex = -1;
     figures = [];
-    nextFigureIndex = 0;
+    flowItems = [];
+    flowIndex = 0;
     playbackState = "idle";
     sourceText = "";
     blocks = [];
     baseUnits = [];
-    currentOffset = 0;
+    currentPosition = { kind: "text", sourceOffset: 0 };
     segmentationLocale = "ja";
     currentGraphemeLimit = 12;
     launchFocus = null;

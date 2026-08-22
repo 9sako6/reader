@@ -447,6 +447,35 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   assert.match(firstCompleteUnit.textContent, /さらに後/u);
 });
 
+test("Safari reader uses shared text and figure position markers", async () => {
+  const { context, documentElement } = createSafariReaderHarness();
+  await context.MobileViewer.open();
+  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  modeButton.dispatchEvent({ type: "click" });
+
+  const scroller = findElement(documentElement, (element) => element.className === "text-view");
+  const anchors = findElements(scroller, (element) => element.attributes["data-reader-text-anchor"] === "true");
+  const figureMarker = findElement(scroller, (element) => element.dataset.readerPositionKind === "figure");
+  assert.equal(anchors.length, 3);
+  assert.equal(figureMarker.dataset.figureIndex, "0");
+  assert.equal(figureMarker.dataset.sourceStart, "27");
+  assert.ok(anchors.every((anchor) => anchor.dataset.readerPositionKind === "text"));
+
+  scroller.rect = { top: 0, bottom: 500, left: 20, right: 370, width: 350, height: 500 };
+  anchors[0].rect = { top: -160, bottom: -60, left: 20, right: 370, width: 350, height: 100 };
+  anchors[1].rect = { top: -120, bottom: -20, left: 20, right: 370, width: 350, height: 100 };
+  figureMarker.rect = { top: 120, bottom: 260, left: 20, right: 370, width: 350, height: 140 };
+  anchors[2].rect = { top: 540, bottom: 640, left: 20, right: 370, width: 350, height: 100 };
+  scroller.scrollTop = 120;
+  scroller.dispatchEvent({ type: "scroll" });
+  modeButton.dispatchEvent({ type: "click" });
+
+  const figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
+  assert.ok(figurePanel);
+  assert.equal(figurePanel.dataset.figureIndex, "0");
+  assert.equal(figurePanel.dataset.sourceStart, "27");
+});
+
 test("Safari reader caches one article and extracts again after navigation", async () => {
   const harness = createSafariReaderHarness();
   const { context, documentElement, createdElements } = harness;
