@@ -9,6 +9,7 @@ test("Chrome build contains the shared pipeline and only the desktop viewer", ()
   const manifest = JSON.parse(fs.readFileSync(path.join(output, "manifest.json"), "utf8"));
   assert.equal(manifest.name, "reader");
   assert.equal(manifest.background.service_worker, "service-worker.js");
+  assert.equal(manifest.host_permissions, undefined);
   assert.deepEqual(manifest.web_accessible_resources, [{
     resources: ["reader_session_bg.wasm"],
     matches: ["<all_urls>"],

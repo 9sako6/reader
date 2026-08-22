@@ -19,7 +19,7 @@ run = "pnpm exec quint typecheck packages/session/spec/reader_session.qnt"
 
 [tasks."spec:test"]
 description = "Run ReaderSession named Quint tests"
-run = "pnpm exec quint test packages/session/spec/reader_session.qnt --match '^(closeThenLateTick|closeThenLatePreparationSuccess|newRequestSupersedesOldRequest|newRequestRejectsLatePreparationFailure|playUntilFigureAndResume|consecutiveFiguresAndResume|duplicateFigureTickDoesNotConsume|previousSentenceWhilePlaying|switchModeAtFigure|switchModeAfterFigure|pausedModeRoundTrip|rebuildUnitsWhilePlaying|visibilityHiddenPauses|visibilityHiddenDuringPreparation|visibilityHiddenDuringPreparationThenFailure|visibilityHiddenDuringPreparationIsIdempotent)$' --seed=180018 --max-samples=1"
+run = "pnpm exec quint test packages/session/spec/reader_session.qnt --match '^(closeThenLateTick|closeThenLatePreparationSuccess|newRequestSupersedesOldRequest|newRequestRejectsLatePreparationFailure|playUntilFigureAndResume|consecutiveFiguresAndResume|duplicateFigureTickDoesNotConsume|previousSentenceWhilePlaying|previousSentenceFromPaused|previousSentenceFromFigure|pausedTickDoesNotAdvance|staleGenerationTickDoesNotAdvance|cancelThenLatePreparationSuccess|switchModeAtFigure|switchModeAfterFigure|pausedModeRoundTrip|rebuildUnitsWhilePlaying|visibilityHiddenPauses|visibilityHiddenDuringPreparation|visibilityHiddenDuringPreparationThenFailure|visibilityHiddenDuringPreparationIsIdempotent)$' --seed=180018 --max-samples=1"
 
 [tasks."spec:simulate"]
 description = "Run the fixed-seed ReaderSession Quint simulation"
@@ -156,6 +156,11 @@ run = "pnpm exec vitest run"
 description = "Run the real-browser viewer tests"
 depends = ["build"]
 run = "pnpm exec playwright test"
+
+[tasks."test:chrome-extension"]
+description = "Run the generated Chrome MV3 extension in a real Chromium context"
+depends = ["build:chrome"]
+run = "node scripts/test-chrome-extension-smoke.mjs"
 
 [tasks."release:chrome"]
 description = "Release the current Chrome version"
