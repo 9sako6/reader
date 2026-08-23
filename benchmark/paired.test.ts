@@ -64,6 +64,26 @@ test("paired benchmark requires main and candidate samples to alternate on one r
   );
 });
 
+test("paired benchmark rejects a candidate duration of zero", () => {
+  assert.throws(
+    () => summarizePairedSamples([
+      { ...alternatingSamples[0], candidateMs: 0 },
+      ...alternatingSamples.slice(1),
+    ]),
+    /paired sample 0 has an invalid duration/,
+  );
+});
+
+test("paired benchmark rejects a main duration of zero", () => {
+  assert.throws(
+    () => summarizePairedSamples([
+      { ...alternatingSamples[0], mainMs: 0 },
+      ...alternatingSamples.slice(1),
+    ]),
+    /paired sample 0 has an invalid duration/,
+  );
+});
+
 test("paired benchmark aggregates Vitest JSON percentile statistics when raw samples are omitted", () => {
   const { evaluateVitestReport } = require("./paired.mjs");
   const benchmarks = [];
