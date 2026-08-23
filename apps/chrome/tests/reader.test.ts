@@ -2892,9 +2892,11 @@ test("reader shows an extracted title before a different first block", () => {
   findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
   const titleHeadings = findElements(textShell, (element) => element.tagName === "H1");
+  const article = findElement(textShell, (element) => element.tagName === "ARTICLE");
 
   assert.equal(titleHeadings.length, 1);
   assert.equal(titleHeadings[0].textContent, title);
+  assert.deepEqual(article.children.map((element) => element.tagName), ["H1", "P"]);
   assert.equal(findElement(textShell, (element) => element.tagName === "P").children.length, 2);
 });
 
