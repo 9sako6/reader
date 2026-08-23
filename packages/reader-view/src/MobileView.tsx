@@ -74,7 +74,11 @@ export function MobileView({ model, handlers }: { model: ReaderViewModel; handle
                 <MobileContext position="previous" text={model.previous} reducedMotion={model.reducedMotion === true} />
                 {model.figure
                   ? <Figure figureView={model.figure} handlers={handlers} text={false} />
-                  : <div className={`rsvp-unit ${model.unit?.kind || "body"}`} data-reader-unit="true" data-reader-position-kind="text" data-source-start={model.unit ? String(model.unit.start) : "0"} data-source-end={model.unit ? String(model.unit.end) : "0"} aria-live="off" aria-atomic="false">{model.unit?.text || ""}</div>}
+                  : <div className={`rsvp-unit ${model.unit?.kind || "body"}`} data-reader-unit="true" data-reader-position-kind="text" data-source-start={model.unit ? String(model.unit.start) : "0"} data-source-end={model.unit ? String(model.unit.end) : "0"} aria-live="off" aria-atomic="false">
+                    {model.unit?.kind === "code"
+                      ? <code data-reader-inline-code="true" tabIndex={0}>{model.unit.text}</code>
+                      : model.unit?.text || ""}
+                  </div>}
                 <MobileContext position="next" text={model.next} reducedMotion={model.reducedMotion === true} />
               </div>
             </div>

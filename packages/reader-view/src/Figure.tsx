@@ -1,21 +1,53 @@
-import type { ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { figureDescription } from "./figure-description";
 import type { ReaderFigureView, ReaderViewHandlers } from "./types";
 
 export function Figure({ figureView, handlers, text }: { figureView: ReaderFigureView; handlers: ReaderViewHandlers; text: boolean }): ReactElement {
   const { figure, figureIndex, status, token } = figureView;
+  const kind = figure.kind || "image";
+  const [textAssetFailed, setTextAssetFailed] = useState(false);
+  useEffect(() => setTextAssetFailed(false), [figure.src]);
   const loading = status === "loading";
   const loadingVisible = figureView.loadingVisible === true;
-  const failed = status === "failed";
+  const failed = status === "failed" || (text && textAssetFailed);
   const revealed = figureView.brightness === "revealed";
-  const surface = failed ? null : (
+  const codeFallback = kind === "code" || (kind === "mermaid" && (!figure.src || failed));
+  const label = kind === "code" ? "コードブロック" : kind === "mermaid" ? "Mermaid図" : "本文画像";
+  const surfaceLabel = kind === "image" ? "画像" : label;
+  const codeSurface = codeFallback ? (
+    <pre
+      data-reader-code-block="true"
+      data-reader-mermaid-fallback={kind === "mermaid" ? "true" : undefined}
+      tabIndex={0}
+      style={{
+        width: "min(100%, 760px)",
+        maxHeight: text ? "72vh" : "min(58vh, 600px)",
+        margin: "0 auto",
+        padding: text ? "18px" : "20px",
+        overflow: "auto",
+        boxSizing: "border-box",
+        border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: text ? "10px" : "12px",
+        background: "rgba(255,255,255,0.055)",
+        color: "rgba(255,255,255,0.92)",
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+        fontSize: text ? "0.84em" : "clamp(13px, 1.8vw, 18px)",
+        lineHeight: "1.55",
+        textAlign: "left",
+        whiteSpace: "pre",
+      }}
+    >
+      <code>{figure.code || (kind === "mermaid" ? "Mermaid図を表示できませんでした" : "")}</code>
+    </pre>
+  ) : null;
+  const imageSurface = !codeFallback && !failed ? (
     <button
       type="button"
       data-reader-image-surface="true"
       data-reader-ignore-gesture="true"
       aria-pressed={revealed}
-      aria-label={revealed ? "画像を暗く表示" : "画像を明るく表示"}
-      title={revealed ? "画像を暗く表示" : "画像を明るく表示"}
+      aria-label={revealed ? surfaceLabel + "を暗く表示" : surfaceLabel + "を明るく表示"}
+      title={revealed ? surfaceLabel + "を暗く表示" : surfaceLabel + "を明るく表示"}
       hidden={loading || failed}
       disabled={loading || failed}
       aria-hidden={loading ? "true" : undefined}
@@ -39,14 +71,14 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
         src={figure.src}
         srcSet={figure.srcset}
         sizes={figure.sizes}
-        alt={figure.alt || figure.caption || "本文画像"}
+        alt={figure.alt || figure.caption || label}
         width={figure.width}
         height={figure.height}
         decoding="async"
         loading={text ? "lazy" : undefined}
         data-reader-source={text ? figure.src : undefined}
         onLoad={text ? undefined : () => handlers.figureLoad(figureIndex, token)}
-        onError={text ? undefined : () => handlers.figureError(figureIndex, token)}
+        onError={text ? () => setTextAssetFailed(true) : () => handlers.figureError(figureIndex, token)}
         ref={(element) => {
           if (element) handlers.figureImage?.(element, figureIndex, token);
         }}
@@ -70,11 +102,13 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
         }}
       />
     </button>
-  );
+  ) : null;
+  const showFailureStatus = failed && kind === "image";
   return (
     <figure
-      aria-label="本文画像"
+      aria-label={label}
       data-reader-position-kind="figure"
+      data-reader-content-kind={kind}
       data-source-start={String(figure.sourceOffset)}
       data-source-end={String(figure.sourceEnd)}
       data-figure-index={String(figureIndex)}
@@ -86,19 +120,19 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
       }}
       style={text
         ? { margin: "2em 0" }
-        : { position: "absolute", inset: "52px 0 64px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "12px", padding: "20px 16px 8px", boxSizing: "border-box" }}
+        : { position: "absolute", inset: "52px 0 64px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "12px", margin: "0", padding: "20px 8px 8px", boxSizing: "border-box" }}
     >
-      {surface}
+      {codeSurface || imageSurface}
       <div
         data-reader-figure-status="true"
         role="status"
         aria-live="polite"
-        hidden={!loadingVisible && !failed}
-        style={{ display: loadingVisible || failed ? "flex" : "none", alignItems: "center", gap: "8px", color: "rgba(255,255,255,0.72)", fontSize: "14px", lineHeight: "1.4" }}
+        hidden={!loadingVisible && !showFailureStatus && !(failed && kind === "mermaid")}
+        style={{ display: loadingVisible || showFailureStatus || (failed && kind === "mermaid") ? "flex" : "none", alignItems: "center", gap: "8px", color: "rgba(255,255,255,0.72)", fontSize: "14px", lineHeight: "1.4" }}
       >
-        {failed ? "画像を読み込めませんでした" : loading ? (
+        {failed && kind === "mermaid" ? "Mermaid図を表示できなかったため、元のコードを表示しています" : showFailureStatus ? "画像を読み込めませんでした" : loading ? (
           <>
-            画像を準備しています
+            {kind === "mermaid" ? "Mermaid図を準備しています" : "画像を準備しています"}
             <span
               data-reader-figure-indicator="true"
               aria-hidden="true"
@@ -109,14 +143,16 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
           </>
         ) : null}
       </div>
-      <div
-        data-reader-figure-description="true"
-        hidden={!loadingVisible && !failed}
-        style={{ color: "rgba(255,255,255,0.72)", fontSize: "14px", lineHeight: "1.45", textAlign: "center" }}
-      >
-        {figureDescription(figure)}
-      </div>
-      {figure.caption ? <figcaption hidden={loading || failed}>{figure.caption}</figcaption> : null}
+      {kind === "image" ? (
+        <div
+          data-reader-figure-description="true"
+          hidden={!loadingVisible && !showFailureStatus}
+          style={{ color: "rgba(255,255,255,0.72)", fontSize: "14px", lineHeight: "1.45", textAlign: "center" }}
+        >
+          {figureDescription(figure)}
+        </div>
+      ) : null}
+      {figure.caption ? <figcaption hidden={loading || showFailureStatus}>{figure.caption}</figcaption> : null}
     </figure>
   );
 }

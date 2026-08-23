@@ -2776,6 +2776,137 @@ test("reader pauses on an article image and exposes its context", () => {
   assert.deepEqual(Array.from(display.animations.at(-1).keyframes, ({ opacity }) => opacity), [1, 0]);
 });
 
+test("reader pauses on a code block and keeps it once in the article flow", () => {
+  const { document, messageListener, timers, sessionState } = createFigureReaderHarness();
+  const leading = "Before the example.";
+  const code = "const result = await client.readFully();";
+  const trailing = "Continue after understanding it.";
+  const sourceOffset = leading.length + 1;
+  const text = `${leading}\n${code}\n${trailing}`;
+  const readingContext = {
+    blocks: [
+      { text: leading, kind: "paragraph", level: null, start: 0, end: leading.length },
+      { text: code, kind: "preformatted", level: null, start: sourceOffset, end: sourceOffset + code.length },
+      { text: trailing, kind: "paragraph", level: null, start: sourceOffset + code.length + 1, end: text.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    inlineCodes: [],
+    figures: [{
+      kind: "code",
+      src: "",
+      alt: "コードブロック",
+      caption: "",
+      code,
+      language: "typescript",
+      sourceOffset,
+      sourceEnd: sourceOffset + code.length,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "code-block" });
+  messageListener({ type: "START_RSVP", text, requestId: "code-block", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  let codePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "コードブロック");
+  for (let step = 0; !codePanel && step < 10; step += 1) {
+    const [timerId, timer] = [...timers.entries()][0];
+    assert.ok(timer, "the code block is reached before playback timers end");
+    timers.delete(timerId);
+    timer.callback();
+    codePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "コードブロック");
+  }
+
+  assert.ok(codePanel);
+  assert.equal(sessionState().currentKind, "figure");
+  assert.equal(sessionState().playback, "paused");
+  assert.equal(findElement(codePanel, (element) => element.attributes["data-reader-code-block"] === "true").textContent, code);
+  assert.ok(findElementByText(overlay, "続きを読む"));
+
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const articleCodeBlocks = findElements(textShell, (element) => element.attributes["data-reader-code-block"] === "true");
+  assert.equal(articleCodeBlocks.length, 1);
+  assert.equal(articleCodeBlocks[0].textContent, code);
+});
+
+test("reader shows the original Mermaid source when its rendered diagram fails", () => {
+  const { document, messageListener } = createFigureReaderHarness();
+  const mermaid = "flowchart LR\n  source --> sink";
+  const trailing = "Continue after the diagram.";
+  const text = `${mermaid}\n${trailing}`;
+  const readingContext = {
+    blocks: [
+      { text: mermaid, kind: "preformatted", level: null, start: 0, end: mermaid.length },
+      { text: trailing, kind: "paragraph", level: null, start: mermaid.length + 1, end: text.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    inlineCodes: [],
+    figures: [{
+      kind: "mermaid",
+      src: "data:image/svg+xml,%3Csvg%3Ebroken%3C%2Fsvg%3E",
+      alt: "Mermaid図",
+      caption: "",
+      code: mermaid,
+      language: "mermaid",
+      sourceOffset: 0,
+      sourceEnd: mermaid.length,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mermaid-fallback" });
+  messageListener({ type: "START_RSVP", text, requestId: "mermaid-fallback", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const mermaidPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "Mermaid図");
+  const image = findElement(mermaidPanel, (element) => element.tagName === "IMG");
+  image.dispatchEvent({ type: "error" });
+
+  const fallback = findElement(overlay, (element) => element.attributes["data-reader-mermaid-fallback"] === "true");
+  assert.equal(fallback.textContent, mermaid);
+  assert.ok(findElementByText(overlay, "Mermaid図を表示できなかったため、元のコードを表示しています"));
+});
+
+test("reader keeps a long inline code expression atomic in RSVP and marks it in article text", () => {
+  const { document, messageListener, timers, sessionState } = createFigureReaderHarness();
+  const code = "extraordinarily_long_identifier.withNamespace()";
+  const text = `Use ${code} before continuing.`;
+  const start = 4;
+  const readingContext = {
+    blocks: [{ text, kind: "paragraph", level: null, start: 0, end: text.length }],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [],
+    inlineCodes: [{ text: code, start, end: start + code.length }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "inline-code" });
+  messageListener({ type: "START_RSVP", text, requestId: "inline-code", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  let codeUnit = findElement(overlay, (element) => element.attributes["data-reader-unit-kind"] === "code");
+  for (let step = 0; !codeUnit && step < 10; step += 1) {
+    const [timerId, timer] = [...timers.entries()][0];
+    assert.ok(timer, "the inline code is reached before playback timers end");
+    timers.delete(timerId);
+    timer.callback();
+    codeUnit = findElement(overlay, (element) => element.attributes["data-reader-unit-kind"] === "code");
+  }
+
+  assert.ok(codeUnit);
+  assert.equal(codeUnit.textContent, code);
+  assert.equal(sessionState().playback, "playing");
+  const scrollableCode = findElement(codeUnit, (element) => element.attributes["data-reader-inline-code"] === "true");
+  assert.equal(scrollableCode.style.overflowX, "auto");
+  assert.equal(scrollableCode.style.whiteSpace, "nowrap");
+
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const inlineCode = findElement(textShell, (element) => element.attributes["data-reader-inline-code"] === "true");
+  assert.equal(inlineCode.textContent, code);
+});
+
 test("reader reveals figure loading feedback after 100ms and resumes after a load failure", () => {
   const { document, messageListener, timers } = createFigureReaderHarness();
   const text = "前の文です。\n図1\n後の文です。";

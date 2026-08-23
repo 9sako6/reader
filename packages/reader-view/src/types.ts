@@ -29,7 +29,7 @@ export type ReaderViewModel =
     mobile?: boolean;
   };
 
-export type ReaderViewBlock = ReaderBlock & { sentenceSpans: SentenceSpan[] };
+export type ReaderViewBlock = ReaderBlock & { sentenceSpans: SentenceSpan[]; inlineCodes?: ReaderInlineCode[] };
 
 export type ReaderFigureView = {
   figure: ReaderFigure;

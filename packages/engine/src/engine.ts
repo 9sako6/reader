@@ -137,7 +137,32 @@
 
   function splitLongUnits(units: ReaderUnit[], locale = "ja", maxGraphemes = MAX_GRAPHEMES_PER_UNIT): ReaderUnit[] {
     const limit = Math.max(1, Number.isInteger(maxGraphemes) ? maxGraphemes : MAX_GRAPHEMES_PER_UNIT);
-    return units.flatMap((unit) => splitUnitAtGraphemeLimit(unit, locale, limit));
+    return units.flatMap((unit) => unit.kind === "code" ? [{ ...unit }] : splitUnitAtGraphemeLimit(unit, locale, limit));
+  }
+
+  function preserveInlineCode(units: ReaderUnit[], text: string, ranges: ReaderInlineCode[]): ReaderUnit[] {
+    if (!Array.isArray(units) || !Array.isArray(ranges) || ranges.length === 0) return [...units];
+    const safeRanges = ranges
+      .filter((range) => Number.isInteger(range?.start) && Number.isInteger(range?.end) && range.start >= 0 && range.end > range.start && range.end <= text.length)
+      .sort((left, right) => left.start - right.start || left.end - right.end)
+      .filter((range, index, all) => index === 0 || range.start >= (all[index - 1]?.end ?? 0));
+    if (safeRanges.length === 0) return [...units];
+    const preserved: ReaderUnit[] = [];
+    for (const unit of units) {
+      if (safeRanges.some((range) => unit.start >= range.start && unit.end <= range.end)) continue;
+      preserved.push({ ...unit });
+    }
+    for (const range of safeRanges) {
+      const overlapping = units.find((unit) => unit.end > range.start && unit.start < range.end);
+      preserved.push({
+        text: text.slice(range.start, range.end),
+        sentenceIndex: overlapping?.sentenceIndex ?? 0,
+        kind: "code",
+        start: range.start,
+        end: range.end,
+      });
+    }
+    return preserved.sort((left, right) => left.start - right.start || left.end - right.end);
   }
 
   function splitUnitAtGraphemeLimit(unit: ReaderUnit, locale: string, limit: number): ReaderUnit[] {
@@ -513,6 +538,7 @@
     segmentText,
     splitSentenceSpans,
     splitLongUnits,
+    preserveInlineCode,
     splitStructuralSpans,
     buildReadingFlow,
     findFlowIndexForPosition,

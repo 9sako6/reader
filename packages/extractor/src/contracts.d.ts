@@ -15,6 +15,7 @@ declare global {
   }
 
   interface ReaderFigure {
+    kind?: "image" | "code" | "mermaid";
     src: string;
     srcset?: string;
     sizes?: string;
@@ -22,6 +23,8 @@ declare global {
     height?: number;
     alt: string;
     caption: string;
+    code?: string;
+    language?: string;
     sourceOffset: number;
     sourceEnd: number;
   }
@@ -35,6 +38,7 @@ declare global {
     sectionTransitions: ReaderSectionTransition[];
     initialHeadingIndex: number;
     figures: ReaderFigure[];
+    inlineCodes: ReaderInlineCode[];
   }
 
   interface ReaderContent {

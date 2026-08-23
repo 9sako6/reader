@@ -225,11 +225,17 @@
       if (figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) {
         invalidateFigureLoad();
         const token = figureLoadToken;
-        figureViewState = { kind: "loading", token, figureIndex: item.figureIndex };
-        figureLoadRevealTimerId = global.setTimeout(() => {
-          figureLoadRevealTimerId = null;
-          if (figureViewState.kind === "loading" && figureViewState.token === token) renderReactView();
-        }, 100);
+        const figure = content?.readingContext.figures?.[item.figureIndex];
+        if (figure?.kind === "code" || (figure?.kind === "mermaid" && !figure.src)) {
+          figureViewState = { kind: "ready", token, figureIndex: item.figureIndex, brightness: "revealed" };
+          reactFigureBrightness = "revealed";
+        } else {
+          figureViewState = { kind: "loading", token, figureIndex: item.figureIndex };
+          figureLoadRevealTimerId = global.setTimeout(() => {
+            figureLoadRevealTimerId = null;
+            if (figureViewState.kind === "loading" && figureViewState.token === token) renderReactView();
+          }, 100);
+        }
       }
     } else if (figureViewState.kind !== "idle") {
       invalidateFigureLoad();
@@ -398,6 +404,8 @@
       .rsvp-unit { min-height: 1.5em; max-width: calc(100vw - 40px); position: relative; z-index: 0; display: grid; place-items: center; font-size: var(--reader-rsvp-font-size, 40px); font-weight: 650; line-height: 1.25; word-break: keep-all; overflow-wrap: normal; }
       .rsvp-unit.quote::before { content: ""; position: absolute; z-index: -1; inset: -12px -16px; border-radius: 14px; background: rgba(255,255,255,.055); }
       .rsvp-unit.aside { color: var(--reader-secondary); }
+      .rsvp-unit.code { width: calc(100vw - 40px); overflow-x: auto; display: block; font-size: clamp(18px, 6vw, 28px); text-align: left; }
+      .rsvp-unit.code code { display: block; width: max-content; min-width: 100%; padding: .5em .65em; border-radius: 12px; background: rgba(255,255,255,.08); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 500; white-space: nowrap; }
       .rsvp-figure { position: absolute; z-index: 2; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 20px; background: var(--reader-background); touch-action: manipulation; }
       .reader-image-surface { position: relative; width: min(100%, 720px); margin: 0 auto; overflow: hidden; border-radius: 12px; touch-action: manipulation; }
       .reader-image-surface img { display: block; width: 100%; height: auto; object-fit: contain; }
@@ -521,7 +529,12 @@
       if (!content?.text) throw new Error("content_not_found");
       const locale = content.readingContext?.language || "ja";
       const sourceBlocks = content.readingContext?.blocks?.length ? content.readingContext.blocks : fallbackBlocks(content.text);
-      viewBlocks = sourceBlocks.map((block) => ({ ...block, sentenceSpans: global.Engine.splitSentenceSpans(block.text, locale) }));
+      const inlineCodes = content.readingContext?.inlineCodes || [];
+      viewBlocks = sourceBlocks.map((block) => ({
+        ...block,
+        sentenceSpans: global.Engine.splitSentenceSpans(block.text, locale),
+        inlineCodes: inlineCodes.filter((range) => range.start >= block.start && range.end <= block.end),
+      }));
       rebuildUnits();
       markPerformance("reader:segmentation-end");
       if (units.length === 0) throw new Error("units_not_found");
@@ -1105,9 +1118,16 @@
     const previousPosition = currentPosition;
     const locale = content?.readingContext?.language || "ja";
     const articleFigures = content.readingContext?.figures || [];
+    const inlineCodes = content.readingContext?.inlineCodes || [];
     const figureBoundaries = articleFigures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
-    const segmented = global.Engine.segmentText(content.text, locale, figureBoundaries)
+    const inlineCodeBoundaries = inlineCodes.flatMap((range) => [range.start, range.end]);
+    const segmented = global.Engine.preserveInlineCode(
+      global.Engine.segmentText(content.text, locale, [...figureBoundaries, ...inlineCodeBoundaries]),
+      content.text,
+      inlineCodes,
+    )
       .map((unit) => {
+        if (unit.kind === "code") return unit;
         const value = unit.text.trim();
         const leadingWhitespace = unit.text.length - unit.text.trimStart().length;
         return { ...unit, text: value, start: unit.start + leadingWhitespace, end: unit.start + leadingWhitespace + value.length };
@@ -1136,7 +1156,11 @@
 
   function maxGraphemesForViewport() {
     const availableWidth = Math.max(160, global.innerWidth - 48);
-    return Math.min(12, Math.max(3, Math.floor(availableWidth / RSVP_FONT_SIZE) + 1));
+    const locale = content?.readingContext?.language || "ja";
+    const graphemeWidth = /^(?:ja|zh|ko)(?:-|$)/iu.test(locale)
+      ? RSVP_FONT_SIZE
+      : RSVP_FONT_SIZE * 0.58;
+    return Math.min(12, Math.max(3, Math.floor(availableWidth / graphemeWidth)));
   }
 
   function handleViewportChange() {

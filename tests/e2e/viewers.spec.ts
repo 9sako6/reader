@@ -72,7 +72,17 @@ type ChromeOpenOptions = {
     sectionOffsets?: number[];
     sectionTransitions?: Array<{ offset: number; headingIndex: number }>;
     initialHeadingIndex?: number;
-    figures?: [];
+    inlineCodes?: Array<{ text: string; start: number; end: number }>;
+    figures?: Array<{
+      kind?: "image" | "code" | "mermaid";
+      src: string;
+      alt: string;
+      caption: string;
+      code?: string;
+      language?: string;
+      sourceOffset: number;
+      sourceEnd: number;
+    }>;
   };
   image?: "immediate" | "delayed" | "missing" | "broken" | "vertical" | "horizontal" | "transparent" | "huge" | "default";
   figureFirst?: boolean;
@@ -91,6 +101,7 @@ type ChromeOpenOptions = {
 
 type MobileOpenOptions = {
   text?: string;
+  readingContext?: ChromeOpenOptions["readingContext"];
   image?: "immediate" | "delayed" | "missing" | "broken" | "vertical" | "horizontal" | "transparent" | "huge" | "default";
   figureFirst?: boolean;
   alt?: string;
@@ -506,6 +517,34 @@ for (const viewportWidth of RSVP_WIDTHS) {
     expect(resizedDisplay.fontSize).toBe(snapshots[0]?.fontSize);
   });
 }
+
+test("mobile viewer keeps ordinary English words intact at phone width", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await openMobile(page, {
+    text: "functional programming",
+    readingContext: {
+      language: "en",
+      blocks: [{ text: "functional programming", kind: "paragraph", level: null, start: 0, end: 22 }],
+      headings: [],
+      sectionOffsets: [],
+      sectionTransitions: [],
+      initialHeadingIndex: -1,
+      inlineCodes: [],
+      figures: [],
+    },
+  });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await dialog.getByRole("button", { name: "一時停止" }).click();
+  const unit = dialog.locator('[data-reader-unit="true"]');
+  await expect(unit).toHaveText("functional");
+
+  await dialog.getByRole("button", { name: "再生" }).click();
+  await expect(unit).toHaveText("programming");
+  await dialog.getByRole("button", { name: "一時停止" }).click();
+  await expect(unit).toHaveText("programming");
+});
 
 test("Chrome reader keeps the loading bar hidden when preparation completes in 0ms", async ({ page }) => {
   await loadViewer(page, "chrome");
@@ -1994,6 +2033,76 @@ for (const viewer of ["chrome", "mobile"] as const) {
     });
   }
 }
+
+test("mobile RSVP gives a code block nearly the full phone width", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  const code = [
+    "action step = {",
+    "  nondet amount = 1.to(100).oneOf()",
+    "  any {",
+    "    deposit(amount),",
+    "    withdraw(amount),",
+    "  }",
+    "}",
+  ].join("\n");
+  const text = `${code}\nAfter.`;
+  await openMobile(page, {
+    text,
+    readingContext: {
+      language: "en",
+      blocks: [
+        { text: code, kind: "preformatted", level: null, start: 0, end: code.length },
+        { text: "After.", kind: "paragraph", level: null, start: code.length + 1, end: text.length },
+      ],
+      headings: [],
+      sectionOffsets: [],
+      sectionTransitions: [],
+      initialHeadingIndex: -1,
+      inlineCodes: [],
+      figures: [{
+        kind: "code",
+        src: "",
+        alt: "コードブロック",
+        caption: "",
+        code,
+        language: "quint",
+        sourceOffset: 0,
+        sourceEnd: code.length,
+      }],
+    },
+  });
+
+  const codeBlock = page.getByRole("dialog", { name: "reader" })
+    .getByRole("figure", { name: "コードブロック" })
+    .locator('[data-reader-code-block="true"]');
+  await expect(codeBlock).toBeVisible();
+  const geometry = await codeBlock.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return { left: box.left, right: box.right, width: box.width };
+  });
+  expect(geometry.width).toBeGreaterThanOrEqual(340);
+  expect(geometry.left).toBeLessThanOrEqual(25);
+  expect(390 - geometry.right).toBeLessThanOrEqual(25);
+});
+
+test("mobile RSVP gives a horizontal image nearly the full phone width", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await openMobile(page, { figureFirst: true, image: "horizontal" });
+
+  const imageSurface = page.getByRole("dialog", { name: "reader" })
+    .getByRole("figure", { name: "本文画像" })
+    .locator('[data-reader-image-surface="true"]');
+  await expect(imageSurface).toBeVisible();
+  const geometry = await imageSurface.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return { left: box.left, right: box.right, width: box.width };
+  });
+  expect(geometry.width).toBeGreaterThanOrEqual(340);
+  expect(geometry.left).toBeLessThanOrEqual(25);
+  expect(390 - geometry.right).toBeLessThanOrEqual(25);
+});
 
 test("Chrome viewer traps focus and restores the launch button after Escape", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });

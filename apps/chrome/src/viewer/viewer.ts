@@ -487,11 +487,18 @@
     initialHeadingIndex = readingContext.initialHeadingIndex;
     figures = Array.isArray(readingContext.figures) ? readingContext.figures : [];
 
+    const inlineCodes = Array.isArray(readingContext.inlineCodes) ? readingContext.inlineCodes : [];
     const figureBoundaries = figures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
+    const inlineCodeBoundaries = inlineCodes.flatMap((range) => [range.start, range.end]);
     segmentationLocale = readingContext.language;
-    viewBlocks = buildViewBlocks(blocks.length > 0 ? blocks : fallbackBlocks(sourceText), segmentationLocale);
-    baseUnits = globalThis.Engine.segmentText(content.text, segmentationLocale, figureBoundaries)
+    viewBlocks = buildViewBlocks(blocks.length > 0 ? blocks : fallbackBlocks(sourceText), segmentationLocale, inlineCodes);
+    baseUnits = globalThis.Engine.preserveInlineCode(
+      globalThis.Engine.segmentText(content.text, segmentationLocale, [...figureBoundaries, ...inlineCodeBoundaries]),
+      content.text,
+      inlineCodes,
+    )
       .map((unit) => {
+        if (unit.kind === "code") return unit;
         const value = unit.text.trim();
         const leadingWhitespace = unit.text.length - unit.text.trimStart().length;
         return { ...unit, text: value, start: unit.start + leadingWhitespace, end: unit.start + leadingWhitespace + value.length };
@@ -1308,8 +1315,12 @@
     return result;
   }
 
-  function buildViewBlocks(sourceBlocks: ReaderBlock[], locale: string): ReactReaderBlock[] {
-    return sourceBlocks.map((block) => ({ ...block, sentenceSpans: globalThis.Engine.splitSentenceSpans(block.text, locale) }));
+  function buildViewBlocks(sourceBlocks: ReaderBlock[], locale: string, inlineCodes: ReaderInlineCode[] = []): ReactReaderBlock[] {
+    return sourceBlocks.map((block) => ({
+      ...block,
+      sentenceSpans: globalThis.Engine.splitSentenceSpans(block.text, locale),
+      inlineCodes: inlineCodes.filter((range) => range.start >= block.start && range.end <= block.end),
+    }));
   }
 
   function attachReactTextFigureLoadCorrections(scroller: HTMLElement): void {
@@ -1553,7 +1564,10 @@
     const displayAreaWidth = display?.clientWidth || globalThis.innerWidth || 0;
     const availableWidth = Math.max(160, displayAreaWidth - 32);
     const fontSize = computedFixedFontSize();
-    return Math.min(12, Math.max(3, Math.floor(availableWidth / fontSize)));
+    const graphemeWidth = /^(?:ja|zh|ko)(?:-|$)/iu.test(segmentationLocale)
+      ? fontSize
+      : fontSize * 0.58;
+    return Math.min(12, Math.max(3, Math.floor(availableWidth / graphemeWidth)));
   }
 
   function rebuildUnitsForViewport(): boolean {
@@ -1593,6 +1607,10 @@
     if (figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) {
       invalidateFigureLoad();
       const token = ++figureLoadToken;
+      if (figure.kind === "code" || (figure.kind === "mermaid" && !figure.src)) {
+        figureViewState = { kind: "ready", token, figureIndex: item.figureIndex, brightness: "revealed" };
+        return;
+      }
       figureViewState = { kind: "loading", token, figureIndex: item.figureIndex };
       figureLoadRevealTimerId = globalThis.setTimeout(() => {
         figureLoadRevealTimerId = null;

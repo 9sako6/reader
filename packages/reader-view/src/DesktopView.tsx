@@ -42,7 +42,9 @@ export function DesktopView({ model, handlers }: { model: Extract<ReaderViewMode
                 aria-atomic="false"
                 style={model.figure
                   ? { position: "absolute", inset: "0", width: "100%", height: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", whiteSpace: "nowrap", overflow: "visible" }
-                  : rsvpUnitStyle}
+                  : model.unit?.kind === "code"
+                    ? { ...rsvpUnitStyle, height: "auto", overflow: "visible", fontSize: "inherit" }
+                    : rsvpUnitStyle}
               >
                 {model.figure ? <Figure figureView={model.figure} handlers={handlers} text={false} /> : <RsvpUnit unit={model.unit} />}
             </div>

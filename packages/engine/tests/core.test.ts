@@ -7,6 +7,7 @@ const {
   MAX_GRAPHEMES_PER_UNIT,
   segmentText,
   splitLongUnits,
+  preserveInlineCode,
   splitSentenceSpans,
   splitStructuralSpans,
   findSentenceStart,
@@ -14,6 +15,28 @@ const {
   findActiveHeadingIndex,
   calculateReadingProgress,
 } = require("../../../.build/packages/engine/src/engine.js");
+
+test("a long inline code expression remains one scrollable RSVP unit", () => {
+  const source = "Use extraordinarily_long_identifier.withNamespace() before continuing.";
+  const code = "extraordinarily_long_identifier.withNamespace()";
+  const start = source.indexOf(code);
+  const segmented = segmentText(source, "en", [start, start + code.length]);
+
+  const units = splitLongUnits(
+    preserveInlineCode(segmented, source, [{ text: code, start, end: start + code.length }]),
+    "en",
+    6,
+  );
+
+  const codeUnits = units.filter((unit) => unit.kind === "code");
+  assert.deepEqual(codeUnits, [{
+    text: "extraordinarily_long_identifier.withNamespace()",
+    sentenceIndex: 0,
+    kind: "code",
+    start: 4,
+    end: 51,
+  }]);
+});
 
 test("segmentText preserves the selected source text and offsets", () => {
   const source = "Redisを利用して排他制御を実現する場合（ただし、一部は別処理です）。";

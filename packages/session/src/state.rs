@@ -18,6 +18,7 @@ pub enum ReaderUnitKind {
     Body,
     Quote,
     Aside,
+    Code,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

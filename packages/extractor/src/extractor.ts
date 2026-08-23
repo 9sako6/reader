@@ -29,7 +29,10 @@
     indexedSource: IndexedSource;
     text: string;
     leadingTrim: number;
+    mermaidSources: string[];
   }
+
+  const MERMAID_START = /^(?:---[\s\S]*?---\s*)?(?:graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|quadrantChart|requirementDiagram|gitGraph|mindmap|timeline|zenuml|sankey-beta|xychart-beta|block-beta|packet-beta|architecture-beta|kanban)\b/iu;
 
   function fromText(text: string, readingContext: Partial<ReadingContext> | null = {}): ReaderContent | null {
     const value = typeof text === "string" ? text.trim() : "";
@@ -159,7 +162,7 @@
     const trailingTrim = rawText.length - rawText.trimEnd().length;
     const text = rawText.slice(leadingTrim, rawText.length - trailingTrim);
     if (!text) return null;
-    return { contentRoot, indexedSource, text, leadingTrim };
+    return { contentRoot, indexedSource, text, leadingTrim, mermaidSources: embeddedMermaidSources(sourceDocument) };
   }
 
   function buildReaderContent(
@@ -167,7 +170,7 @@
     result: ParsedPageResult,
     canonical: CanonicalPageData,
   ): ReaderContent {
-    const { contentRoot, indexedSource, text, leadingTrim } = canonical;
+    const { contentRoot, indexedSource, text, leadingTrim, mermaidSources } = canonical;
     const headingEntries = [...contentRoot.querySelectorAll("h1, h2, h3, h4, h5, h6")]
       .map((element) => {
         const indexedRange = indexedSource.ranges.get(element);
@@ -209,7 +212,8 @@
         sectionOffsets,
         sectionTransitions,
         initialHeadingIndex: includeTitle ? 0 : -1,
-        figures: extractFigures(sourceDocument, contentRoot, text, leadingTrim, indexedSource),
+        figures: extractFigures(sourceDocument, contentRoot, text, leadingTrim, indexedSource, mermaidSources),
+        inlineCodes: extractInlineCodes(sourceDocument, contentRoot, text, leadingTrim, indexedSource),
       }),
     };
   }
@@ -315,6 +319,7 @@
         ? value.initialHeadingIndex
         : -1,
       figures: Array.isArray(value?.figures) ? value.figures : [],
+      inlineCodes: Array.isArray(value?.inlineCodes) ? value.inlineCodes : [],
     };
   }
 
@@ -451,6 +456,7 @@
     text: string,
     leadingTrim: number,
     indexedSource: IndexedSource,
+    mermaidSources: string[],
   ): ReaderFigure[] {
     if (typeof contentRoot.querySelectorAll !== "function") return [];
     const figures: ReaderFigure[] = [];
@@ -483,7 +489,128 @@
       if (height !== undefined) figure.height = height;
       figures.push(figure);
     }
-    return figures.sort((left, right) => left.sourceOffset - right.sourceOffset);
+    for (const pre of contentRoot.querySelectorAll("pre")) {
+      if (String(pre.tagName || "").toUpperCase() !== "PRE") continue;
+      const indexedRange = indexedSource.ranges.get(pre);
+      const blockRange = indexedRange
+        ? trimIndexedNodeRange(text, indexedRange, leadingTrim)
+        : fallbackNodeRange(sourceDocument, contentRoot, pre, text, leadingTrim, indexedSource);
+      if (!blockRange.value) continue;
+      const codeElement = pre.querySelector?.("code");
+      const code = String(codeElement?.textContent || pre.textContent || blockRange.value).trim();
+      if (!code) continue;
+      const className = `${pre.getAttribute?.("class") || ""} ${codeElement?.getAttribute?.("class") || ""}`;
+      const languageMatch = className.match(/(?:lang(?:uage)?-)([\w+-]+)/iu);
+      const language = languageMatch?.[1] || "";
+      const mermaid = /(?:^|\s)mermaid(?:\s|$)/iu.test(className) || language.toLowerCase() === "mermaid" || MERMAID_START.test(code);
+      figures.push({
+        kind: mermaid ? "mermaid" : "code",
+        src: "",
+        alt: mermaid ? "Mermaid図" : "コードブロック",
+        caption: "",
+        code,
+        language: mermaid ? "mermaid" : language,
+        sourceOffset: blockRange.start,
+        sourceEnd: blockRange.end,
+      });
+    }
+    for (const svg of contentRoot.querySelectorAll("svg[aria-roledescription]")) {
+      if (String(svg.tagName || "").toUpperCase() !== "SVG") continue;
+      const roleDescription = String(svg.getAttribute?.("aria-roledescription") || "");
+      if (!/(?:mermaid|flowchart|diagram|graph|gantt|mindmap|timeline|chart)/iu.test(roleDescription)) continue;
+      const container = svg.parentElement || svg;
+      const indexedRange = indexedSource.ranges.get(svg);
+      const sourceOffset = indexedRange
+        ? toTextOffset(indexedRange.start, leadingTrim, text.length)
+        : offsetBefore(sourceDocument, contentRoot, svg, text.length, leadingTrim, indexedSource);
+      const sourceEnd = indexedRange
+        ? toTextOffset(indexedRange.contentEnd, leadingTrim, text.length)
+        : sourceOffset;
+      const source = mermaidSource(container, svg) || mermaidSources[figures.filter((figure) => figure.kind === "mermaid").length] || "";
+      const serialized = typeof svg.outerHTML === "string" ? svg.outerHTML.trim() : "";
+      figures.push({
+        kind: "mermaid",
+        src: serialized ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}` : "",
+        alt: String(svg.getAttribute?.("aria-label") || "Mermaid図").trim() || "Mermaid図",
+        caption: "",
+        code: source,
+        language: "mermaid",
+        sourceOffset,
+        sourceEnd,
+      });
+    }
+    return figures
+      .filter((figure, index, all) => figure.kind !== "mermaid" || !all.some((candidate, candidateIndex) => (
+        candidateIndex < index
+        && candidate.kind === figure.kind
+        && candidate.sourceOffset === figure.sourceOffset
+        && candidate.sourceEnd === figure.sourceEnd
+      )))
+      .sort((left, right) => left.sourceOffset - right.sourceOffset);
+  }
+
+  function mermaidSource(container: Element, svg: Element): string {
+    for (const element of [container, svg]) {
+      for (const attribute of ["data-mermaid", "data-source", "data-code"]) {
+        const value = String(element.getAttribute?.(attribute) || "").trim();
+        if (MERMAID_START.test(value)) return value;
+      }
+    }
+    const siblingCode = container.querySelector?.("pre.mermaid, code.language-mermaid");
+    const value = String(siblingCode?.textContent || "").trim();
+    return MERMAID_START.test(value) ? value : "";
+  }
+
+  function embeddedMermaidSources(sourceDocument: Document): string[] {
+    if (typeof sourceDocument.querySelectorAll !== "function") return [];
+    const sources: string[] = [];
+    for (const script of sourceDocument.querySelectorAll("script")) {
+      if (String(script.tagName || "").toUpperCase() !== "SCRIPT") continue;
+      const raw = String(script.textContent || "");
+      const pushStart = raw.indexOf("push(");
+      if (pushStart < 0 || !raw.endsWith(")")) continue;
+      let payload = "";
+      try {
+        const parsed = JSON.parse(raw.slice(pushStart + 5, -1));
+        payload = Array.isArray(parsed) && typeof parsed[1] === "string" ? parsed[1] : "";
+      } catch {
+        continue;
+      }
+      const startPattern = /(?:^|["\s])((?:---[\s\S]*?---\s*)?(?:graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|quadrantChart|requirementDiagram|gitGraph|mindmap|timeline|zenuml|sankey-beta|xychart-beta|block-beta|packet-beta|architecture-beta)\b)/giu;
+      for (const match of payload.matchAll(startPattern)) {
+        const start = (match.index || 0) + match[0].length - (match[1]?.length || 0);
+        const end = payload.indexOf('"}],"\\n"', start);
+        if (end <= start) continue;
+        const source = payload.slice(start, end)
+          .replace(/\\\\n/gu, "\n")
+          .replace(/\\"/gu, '"')
+          .replace(/\\\\/gu, "\\")
+          .trim();
+        if (MERMAID_START.test(source) && !sources.includes(source)) sources.push(source);
+      }
+    }
+    return sources;
+  }
+
+  function extractInlineCodes(
+    sourceDocument: Document,
+    contentRoot: DocumentFragment | HTMLElement,
+    text: string,
+    leadingTrim: number,
+    indexedSource: IndexedSource,
+  ): ReaderInlineCode[] {
+    if (typeof contentRoot.querySelectorAll !== "function") return [];
+    return [...contentRoot.querySelectorAll("code")]
+      .filter((element) => String(element.tagName || "").toUpperCase() === "CODE")
+      .filter((element) => !element.closest?.("pre"))
+      .map((element) => {
+        const indexedRange = indexedSource.ranges.get(element);
+        const range = indexedRange
+          ? trimIndexedNodeRange(text, indexedRange, leadingTrim)
+          : fallbackNodeRange(sourceDocument, contentRoot, element, text, leadingTrim, indexedSource);
+        return range.value ? { text: range.value, start: range.start, end: range.end } : null;
+      })
+      .filter((range): range is ReaderInlineCode => range !== null);
   }
 
   function optionalAttribute(element: Element, name: string): string | undefined {

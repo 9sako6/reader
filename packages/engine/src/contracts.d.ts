@@ -1,12 +1,18 @@
 export {};
 
 declare global {
-  type ReaderUnitKind = "body" | "quote" | "aside";
+  type ReaderUnitKind = "body" | "quote" | "aside" | "code";
 
   interface SentenceSpan {
     start: number;
     end: number;
     sentenceIndex: number;
+  }
+
+  interface ReaderInlineCode {
+    text: string;
+    start: number;
+    end: number;
   }
 
   interface ReaderUnit {
@@ -54,6 +60,7 @@ declare global {
     readonly DEFAULT_TIMING_PROFILE: Readonly<ReaderTimingProfile>;
     segmentText(text: string, locale?: string, boundaries?: number[]): ReaderUnit[];
     splitLongUnits(units: ReaderUnit[], locale?: string, maxGraphemes?: number): ReaderUnit[];
+    preserveInlineCode(units: ReaderUnit[], text: string, ranges: ReaderInlineCode[]): ReaderUnit[];
     splitSentenceSpans(text: string, locale?: string): SentenceSpan[];
     splitStructuralSpans(text: string): Array<{ text: string; kind: ReaderUnitKind; start: number; end: number }>;
     buildReadingFlow(units: ReaderUnit[], figures: ReaderFigure[]): ReaderFlowItem[];

@@ -73,6 +73,11 @@ function createTextNode(value) {
 }
 
 function selectorMatches(element, selector) {
+  const attributeSelector = selector.trim().match(/^([a-z][\w-]*)\[([\w-]+)\]$/iu);
+  if (attributeSelector) {
+    return String(element.tagName || "").toUpperCase() === attributeSelector[1].toUpperCase()
+      && element.getAttribute?.(attributeSelector[2]) !== null;
+  }
   return selector
     .split(",")
     .map((value) => value.trim().toUpperCase())
@@ -175,6 +180,7 @@ test("fromText produces the same Content contract as page extraction", () => {
       sectionTransitions: [],
       initialHeadingIndex: -1,
       figures: [],
+      inlineCodes: [],
     },
   });
 });
@@ -187,6 +193,78 @@ test("fromText keeps a valid BCP 47-like language and rejects empty or malformed
   assert.equal(fromText("本文", { language: "en-US" }).readingContext.language, "en-US");
   assert.equal(fromText("本文", { language: "  " }).readingContext.language, "ja");
   assert.equal(fromText("本文", { language: "not a language" }).readingContext.language, "ja");
+});
+
+test("extractPage keeps inline code atomic and promotes code and Mermaid blocks into the reading flow", () => {
+  const inlineCode = createElementNode("code", [createTextNode("client.readFully()")]);
+  const paragraph = createElementNode("p", [
+    createTextNode("Call "),
+    inlineCode,
+    createTextNode(" before parsing."),
+  ]);
+  const codeBlock = createElementNode("pre", [
+    createElementNode("code", [createTextNode("const value = await load();")], { class: "language-typescript" }),
+  ]);
+  const mermaidBlock = createElementNode("pre", [
+    createElementNode("code", [createTextNode("flowchart LR\n  A --> B")], { class: "language-mermaid" }),
+  ]);
+  const { document, Defuddle } = createFixturePage([paragraph, codeBlock, mermaidBlock]);
+
+  const result = extractPage(document, Defuddle);
+
+  assert.deepEqual(result.readingContext.inlineCodes, [{
+    text: "client.readFully()",
+    start: 5,
+    end: 23,
+  }]);
+  assert.deepEqual(result.readingContext.figures.map((figure) => ({
+    kind: figure.kind,
+    code: figure.code,
+    language: figure.language,
+    source: result.text.slice(figure.sourceOffset, figure.sourceEnd),
+  })), [
+    {
+      kind: "code",
+      code: "const value = await load();",
+      language: "typescript",
+      source: "const value = await load();",
+    },
+    {
+      kind: "mermaid",
+      code: "flowchart LR\n  A --> B",
+      language: "mermaid",
+      source: "flowchart LR\n  A --> B",
+    },
+  ]);
+});
+
+test("extractPage keeps a rendered Mermaid diagram and its embedded original source together", () => {
+  const svg = createElementNode("svg", [
+    createElementNode("text", [createTextNode("Source")]),
+    createElementNode("text", [createTextNode("Sink")]),
+  ], { "aria-roledescription": "flowchart-v2" });
+  (svg as any).outerHTML = '<svg viewBox="0 0 100 40" aria-roledescription="flowchart-v2"><text>Source</text><text>Sink</text></svg>';
+  const diagram = createElementNode("div", [svg]);
+  const paragraph = createElementNode("p", [createTextNode("After the diagram.")]);
+  const fixture = createFixturePage([diagram, paragraph]);
+  const payload = '1:["$","Mermaid",null,{"chart":"flowchart LR \\\\n  Source --> Sink"}],"\\n",["$","p"]';
+  (fixture.document as any).querySelectorAll = (selector: string) => selector === "script"
+    ? [{ tagName: "SCRIPT", textContent: `self.__next_f.push(${JSON.stringify([1, payload])})` }]
+    : [];
+
+  const result = extractPage(fixture.document, fixture.Defuddle);
+
+  assert.deepEqual(result.readingContext.figures.map((figure) => ({
+    kind: figure.kind,
+    source: figure.code,
+    rendered: figure.src.startsWith("data:image/svg+xml;charset=utf-8,"),
+    sourceText: result.text.slice(figure.sourceOffset, figure.sourceEnd),
+  })), [{
+    kind: "mermaid",
+    source: "flowchart LR \n  Source --> Sink",
+    rendered: true,
+    sourceText: "SourceSink",
+  }]);
 });
 
 test("extractPage keeps a br inside a block in the canonical source range", () => {
@@ -291,6 +369,16 @@ test("extractPage shares canonical ranges across nested blocks and figures", () 
     { text: "line 1\n  line 2", kind: "preformatted", level: null, start: 30, end: 45 },
   ]);
   assert.deepEqual(result.readingContext.figures, [
+    {
+      kind: "code",
+      src: "",
+      alt: "コードブロック",
+      caption: "",
+      code: "line 1\n  line 2",
+      language: "",
+      sourceOffset: 30,
+      sourceEnd: 45,
+    },
     {
       src: "https://example.com/caption.png",
       srcset: "https://example.com/caption-2x.png 2x",
@@ -426,6 +514,7 @@ test("extractPage returns article text and heading offsets", () => {
       ],
       initialHeadingIndex: -1,
       figures: [],
+      inlineCodes: [],
     },
   });
   assert.equal(defuddleDocument, document);

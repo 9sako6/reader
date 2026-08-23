@@ -290,7 +290,7 @@
             return Promise.reject(new Error(reason));
           }
           const content = typeof mobileFixtureOptions.text === "string"
-            ? customFixtureContent(mobileFixtureOptions.text)
+            ? customFixtureContent(mobileFixtureOptions.text, mobileFixtureOptions.readingContext)
             : fixtureContent({ image: mobileFixtureOptions.image || imageFixture, figureFirst: mobileFixtureOptions.figureFirst || figureFirst, alt: mobileFixtureOptions.alt, caption: mobileFixtureOptions.caption, cacheKey: mobileFixtureOptions.cacheKey, srcset: mobileFixtureOptions.srcset, sizes: mobileFixtureOptions.sizes, imageDelay: mobileFixtureOptions.imageDelay });
           return defaultDelay === 0
             ? content
