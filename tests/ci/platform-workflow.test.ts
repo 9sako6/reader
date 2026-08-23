@@ -17,11 +17,18 @@ function jobBlock(jobName) {
   return workflow.slice(start, next < 0 ? workflow.length : next);
 }
 
+function topLevelEventKeys(source) {
+  const onStart = source.indexOf("\non:\n");
+  const permissionsStart = source.indexOf("\npermissions:\n", onStart);
+  assert.ok(onStart >= 0, "workflow must define top-level on");
+  assert.ok(permissionsStart > onStart, "workflow event block must precede permissions");
+  return [...source.slice(onStart, permissionsStart).matchAll(/^  ([a-z][a-z0-9_-]*):$/gmu)]
+    .map((match) => match[1]);
+}
+
 test("platform workflow runs only on a daily schedule or manual dispatch and checks out main", () => {
-  assert.match(workflow, /\n  schedule:\n/);
+  assert.deepEqual(topLevelEventKeys(workflow), ["schedule", "workflow_dispatch"]);
   assert.match(workflow, /\n    - cron: "[^"]+"/);
-  assert.match(workflow, /\n  workflow_dispatch:\n/);
-  assert.doesNotMatch(workflow, /\n  push:\n|\n  pull_request:/u);
   assert.match(jobBlock("e2e"), /ref: main/);
   assert.match(jobBlock("ios"), /ref: main/);
 });
@@ -40,6 +47,12 @@ test("platform workflow preserves Chromium E2E, Chrome smoke, timing artifact, a
   assert.match(e2e, /if: success\(\)/);
   assert.match(e2e, /if-no-files-found: error/);
   assert.match(e2e, /name: Upload browser diagnostics/);
+
+  const chromiumE2e = e2e.indexOf("run: mise run test:e2e -- --project=chromium");
+  const chromeSmoke = e2e.indexOf("run: mise run test:chrome-extension");
+  const timingUpload = e2e.indexOf("name: Upload Chromium reader timing reports");
+  const diagnostics = e2e.indexOf("name: Upload browser diagnostics");
+  assert.ok(chromiumE2e >= 0 && chromiumE2e < chromeSmoke && chromeSmoke < timingUpload && timingUpload < diagnostics);
 });
 
 test("platform workflow preserves WebKit E2E, iOS build, Safari smoke, artifacts, and timeout", () => {
@@ -55,4 +68,11 @@ test("platform workflow preserves WebKit E2E, iOS build, Safari smoke, artifacts
   assert.match(ios, /xcodebuild[\s\S]*CODE_SIGNING_ALLOWED=NO[\s\S]*build/);
   assert.match(ios, /run: READER_REQUIRE_IOS_EXTENSION_BUNDLE=1 mise run test:safari-package-runtime/);
   assert.match(ios, /name: Upload browser diagnostics/);
+
+  const webkitE2e = ios.indexOf("run: mise run test:e2e -- --project=webkit");
+  const timingUpload = ios.indexOf("name: Upload WebKit reader timing reports");
+  const build = ios.indexOf("name: Build for iOS Simulator");
+  const safariSmoke = ios.indexOf("name: Verify generated Safari package runtime");
+  const diagnostics = ios.indexOf("name: Upload browser diagnostics");
+  assert.ok(webkitE2e >= 0 && webkitE2e < timingUpload && timingUpload < build && build < safariSmoke && safariSmoke < diagnostics);
 });
