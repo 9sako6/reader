@@ -1044,8 +1044,6 @@ test("Chrome RSVP keeps structural units centered and unclipped at 125% reader z
     { kind: "quote", text: "「引用文です。」" },
     { kind: "aside", text: "（補足です。）" },
   ] as const;
-  const viewportWidth = await page.evaluate(() => window.innerWidth);
-
   for (const structuralCase of cases) {
     await loadViewer(page, "chrome");
     await openChrome(page, { text: structuralCase.text, paused: true });
