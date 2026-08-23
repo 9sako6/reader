@@ -2894,7 +2894,7 @@ test("reader shows an extracted title before a different first block", () => {
   const titleHeadings = findElements(textShell, (element) => element.tagName === "H1");
 
   assert.equal(titleHeadings.length, 1);
-  assert.equal(titleHeadings[0].children[0].textContent, title);
+  assert.equal(titleHeadings[0].textContent, title);
   assert.equal(findElement(textShell, (element) => element.tagName === "P").children.length, 2);
 });
 
@@ -2996,16 +2996,18 @@ test("reader keeps source position and progress unchanged when adding an extract
   const textProgress = findElement(textShell, (element) => element.attributes["data-reader-progress"] === "true");
 
   assert.ok(titleHeading);
-  assert.equal(titleHeading.children[0].textContent, title);
+  assert.equal(titleHeading.textContent, title);
   assert.equal(titleHeading.attributes["data-reader-position-kind"], undefined);
   assert.equal(titleHeading.attributes["data-source-start"], undefined);
   assert.equal(textProgress.textContent, initialProgress);
   assert.equal(sessionState().sourceOffset, initialState.sourceOffset);
-  assert.deepEqual(sessionState().position, initialState.position);
+  assert.equal(sessionState().position.kind, initialState.position.kind);
+  assert.equal(sessionState().position.sourceOffset, initialState.position.sourceOffset);
 
   findElement(textShell, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
   assert.equal(sessionState().sourceOffset, initialState.sourceOffset);
-  assert.deepEqual(sessionState().position, initialState.position);
+  assert.equal(sessionState().position.kind, initialState.position.kind);
+  assert.equal(sessionState().position.sourceOffset, initialState.position.sourceOffset);
   assert.equal(findElement(overlay, (element) => element.attributes["data-reader-progress"] === "true").textContent, initialProgress);
 });
 

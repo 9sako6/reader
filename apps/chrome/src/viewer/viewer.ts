@@ -52,6 +52,7 @@
   let figureLoadToken = 0;
   let figureLoadRevealTimerId: number | null = null;
   let sourceText = "";
+  let articleTitle = "";
   let blocks: ReaderBlock[] = [];
   let viewBlocks: ReactReaderBlock[] = [];
   let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
@@ -268,6 +269,7 @@
     }
     const state = readingSessionState();
     if (state?.mode === "text") {
+      const title = articleTitle.trim();
       return {
         kind: "text",
         blocks: viewBlocks,
@@ -275,7 +277,7 @@
         language: segmentationLocale,
         position: currentPosition,
         progress: readingProgress(currentPosition),
-        title: "",
+        title: title && viewBlocks[0]?.text.trim() !== title ? title : "",
       };
     }
     const item = state ? flowItems[state.flowIndex] : flowItems[0];
@@ -478,6 +480,7 @@
     }
     const readingContext = content.readingContext;
     sourceText = content.text;
+    articleTitle = typeof readingContext.title === "string" ? readingContext.title.trim() : "";
     blocks = Array.isArray(readingContext.blocks) ? readingContext.blocks : [];
     headings = readingContext.headings;
     sectionTransitions = readingContext.sectionTransitions;
@@ -1913,6 +1916,7 @@
           figures = [];
           flowItems = [];
           sourceText = "";
+          articleTitle = "";
           blocks = [];
           viewBlocks = [];
           baseUnits = [];
