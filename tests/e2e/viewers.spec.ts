@@ -384,6 +384,43 @@ test("Chrome image progress follows its source offset and the minimap has no dup
   await expect(dialog.locator('[data-reader-minimap="true"] [data-reader-progress="true"], [data-reader-minimap="true"] [role="progressbar"], [data-reader-minimap="true"] .progress')).toHaveCount(0);
 });
 
+test("Chrome heading jump updates progress to the selected section offset", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true, outline: "two" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const progress = dialog.locator('[data-reader-progress="true"]');
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const article = dialog.locator("article.article");
+  const sourceLength = await article.locator("[data-source-end]").evaluateAll((elements) => Math.max(
+    ...elements.map((element) => Number(element.getAttribute("data-source-end"))),
+  ));
+  const selectedSectionOffset = Number(await article.locator("p.paragraph[data-source-start][data-source-end]").last().getAttribute("data-source-start"));
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+
+  const minimap = dialog.locator('[data-reader-minimap="true"]');
+  await expect(minimap).toBeVisible();
+  await minimap.getByRole("button", { name: "画像のある節" }).click();
+
+  await expect(progress).toHaveCount(1);
+  await expect(progress).toHaveText(`${Math.round((selectedSectionOffset / sourceLength) * 100)}%`);
+  await expect(minimap.locator('[data-reader-progress="true"], [role="progressbar"], .progress')).toHaveCount(0);
+  const progressGeometry = await progress.evaluate((element) => {
+    const progressElement = element as HTMLElement;
+    const container = progressElement.offsetParent;
+    if (!container) throw new Error("progress container not found");
+    const progressRectangle = element.getBoundingClientRect();
+    const containerRectangle = container.getBoundingClientRect();
+    return {
+      rightGap: containerRectangle.right - progressRectangle.right,
+      bottomGap: containerRectangle.bottom - progressRectangle.bottom,
+    };
+  });
+  expect(Math.abs(progressGeometry.rightGap - 16)).toBeLessThanOrEqual(1);
+  expect(Math.abs(progressGeometry.bottomGap - 16)).toBeLessThanOrEqual(1);
+});
+
 test("Chrome extraction errors keep retry and close actions readable in more contrast", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ contrast: "more" });
