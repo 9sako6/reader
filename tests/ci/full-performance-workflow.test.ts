@@ -23,8 +23,13 @@ test("full browser benchmark is only scheduled or manually dispatched and matrix
 });
 
 test("full browser benchmark keeps each fixture group serial on its runner", () => {
-  assert.match(workflow, /--maxWorkers=1/);
-  assert.match(workflow, /--no-file-parallelism/);
+  assert.match(workflow, /max-parallel: 5/);
+  assert.match(workflow, /run: node benchmark\/full-browser\.mjs/);
   assert.match(workflow, /READER_PERFORMANCE_GROUP/);
-  assert.doesNotMatch(workflow, /READER_PERFORMANCE_RUNS: [0-9](?!0)/);
+  assert.match(workflow, /READER_PERFORMANCE_BASELINE_ROOT/);
+  assert.match(workflow, /READER_PERFORMANCE_BASE_COMMIT=/);
+  assert.match(workflow, /READER_PERFORMANCE_CANDIDATE_COMMIT=/);
+  assert.match(workflow, /git worktree add --detach/);
+  assert.match(workflow, /name: Remove main benchmark baseline[\s\S]*if: always\(\)/);
+  assert.doesNotMatch(workflow, /READER_PERFORMANCE_RUNS:\s+[0-9](?:\s|$)/);
 });

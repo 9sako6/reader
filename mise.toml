@@ -139,9 +139,22 @@ depends = ["build"]
 run = "node scripts/measure-bundle.mjs"
 
 [tasks."measure:performance"]
-description = "Record browser extraction and startup baselines"
+description = "Record the full browser extraction and startup benchmark"
 depends = ["build"]
-run = "node scripts/measure-performance.mjs"
+run = "node benchmark/full-browser.mjs"
+
+[tasks."benchmark:fast"]
+description = "Run the short paired Node benchmark gate"
+depends = ["compile"]
+run = [
+  "node_modules/.bin/vitest bench benchmark/fast.bench.ts --outputJson test-results/performance/fast-vitest.json --maxWorkers=1 --no-file-parallelism",
+  "node benchmark/check-fast.mjs",
+]
+
+[tasks."benchmark:full"]
+description = "Run the full browser benchmark and retain its report"
+depends = ["build"]
+run = "node benchmark/full-browser.mjs"
 
 [tasks."measure:timing"]
 description = "Generate the Reader timing corpus report"

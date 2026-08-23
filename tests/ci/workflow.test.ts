@@ -45,6 +45,7 @@ test("required CI exposes a short single-runner paired benchmark job", () => {
   assert.match(performanceJob, /benchmark\/check-fast\.mjs/);
   assert.match(performanceJob, /--maxWorkers=1/);
   assert.match(performanceJob, /--no-file-parallelism/);
+  assert.match(performanceJob, /name: Remove main benchmark worktree[\s\S]*if: always\(\)/);
 });
 
 test("CI uploads WebKit reader timing reports before the iOS build", () => {

@@ -1,4 +1,4 @@
-import { percentile } from "./performance-sample.mjs";
+import { percentile } from "./sample.mjs";
 
 export const FEEDBACK_ABSOLUTE_BUDGET_MS = 100;
 export const FEEDBACK_PAIRED_P50_BUDGET_MS = 16;

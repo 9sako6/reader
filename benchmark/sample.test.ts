@@ -1,7 +1,7 @@
 export {};
 
 const assert = require("node:assert/strict");
-const { buildPerformanceSample, median, percentile } = require("../../scripts/performance-sample.mjs");
+const { buildPerformanceSample, median, percentile } = require("./sample.mjs");
 
 test("performance aggregation keeps missing phase values null", () => {
   assert.equal(median([null, undefined]), null);

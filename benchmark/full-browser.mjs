@@ -3,9 +3,10 @@ import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import { chromium } from "@playwright/test";
-import { buildPairedMemorySamples, evaluateFeedbackBudget, evaluateReactMemoryGate, evaluateReactMigrationGate, REACT_FIXED_HEAP_BUDGET_BYTES, summarizeMemorySamples } from "./performance-budget.mjs";
-import { clearPerformanceEntries } from "./performance-entry-cleanup.mjs";
-import { buildPerformanceSample, median, percentile } from "./performance-sample.mjs";
+import { buildPairedMemorySamples, evaluateFeedbackBudget, evaluateReactMemoryGate, evaluateReactMigrationGate, REACT_FIXED_HEAP_BUDGET_BYTES, summarizeMemorySamples } from "./budget.mjs";
+import { clearPerformanceEntries } from "./entry-cleanup.mjs";
+import { buildPerformanceSample, median, percentile } from "./sample.mjs";
+import { selectPerformanceGroup } from "./full-groups.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const outputPath = resolve(repositoryRoot, "test-results/performance/reader.json");
@@ -91,6 +92,12 @@ const fixtures = [
   { name: "dominant-article", nodeCount: 10_000, extraction: "dominant" },
   { name: "defuddle-fallback", nodeCount: 10_000, extraction: "fallback" },
 ];
+const fixtureGroup = process.env.READER_PERFORMANCE_GROUP || "all";
+const selectedGroup = selectPerformanceGroup(fixtureGroup, fixtures.map(({ name }) => name), nodeCounts);
+const selectedFixtures = fixtures.filter((fixture) => selectedGroup.fixtures.includes(fixture.name));
+const selectedNodeCounts = selectedGroup.nodeCounts;
+const shouldMeasureCleanup = selectedGroup.cleanup;
+const shouldMeasurePassive = selectedGroup.passive;
 
 async function measureBundleBytes(root) {
   const result = { raw: {}, gzip9: {} };
@@ -526,7 +533,7 @@ try {
   }
   const fixtureReports = {};
   const pairedComparison = { fixtures: {}, nodeBenchmarks: {} };
-  for (const fixture of fixtures) {
+  for (const fixture of selectedFixtures) {
     const baselineRuns = [];
     for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) {
       const baselineFirst = warmup % 2 === 0;
@@ -573,7 +580,7 @@ try {
   }
 
   const nodeReports = {};
-  for (const nodeCount of nodeCounts) {
+  for (const nodeCount of selectedNodeCounts) {
     const fixture = { name: `nodes-${nodeCount}`, nodeCount, extraction: "dominant" };
     const baselineRuns = [];
     for (let warmup = 0; warmup < warmupRunsPerCase; warmup += 1) {
@@ -623,10 +630,12 @@ try {
   const cleanupCycles = {};
   let fixedOverheadSummary = null;
   let secondRootOverheadSummary = null;
-  if (baselineRoot) {
+  if (baselineRoot && shouldMeasureCleanup) {
     const representativeFixtures = [
-      fixtures[0],
-      { name: "nodes-100000", nodeCount: 100_000, extraction: "dominant" },
+      ...(selectedFixtures[0] ? [selectedFixtures[0]] : []),
+      ...(selectedNodeCounts.length > 0
+        ? [{ name: `nodes-${selectedNodeCounts.at(-1)}`, nodeCount: selectedNodeCounts.at(-1), extraction: "dominant" }]
+        : []),
     ];
     for (const fixture of representativeFixtures) {
       cleanupCycles[fixture.name] = await measureRepresentativeCleanup(browser, fixture, cleanupCyclesPerCase);
@@ -685,16 +694,16 @@ try {
     initializationReports,
   });
 
-  const passiveBaseline = baselineRoot ? await measurePassivePage(browser, false, "baseline") : null;
-  const passiveWithBootstrap = await measurePassivePage(browser);
-  const passiveControl = await measurePassivePage(browser, true);
-  const passive = {
+  const passiveBaseline = baselineRoot && shouldMeasurePassive ? await measurePassivePage(browser, false, "baseline") : null;
+  const passiveWithBootstrap = shouldMeasurePassive ? await measurePassivePage(browser) : null;
+  const passiveControl = shouldMeasurePassive ? await measurePassivePage(browser, true) : null;
+  const passive = passiveWithBootstrap && passiveControl ? {
     withBootstrap: passiveWithBootstrap,
     control: passiveControl,
     delta: Object.fromEntries(["passiveScriptTransferBytes", "passiveScriptDecodedBytes", "longTaskTotalMs", "scriptDurationMs", "taskDurationMs", "layoutDurationMs", "heapUsedBytes", "scrollDispatchMs"]
       .map((key) => [key, passiveWithBootstrap[key] === null || passiveControl[key] === null ? null : passiveWithBootstrap[key] - passiveControl[key]])),
-  };
-  if (baselineRoot) {
+  } : null;
+  if (baselineRoot && shouldMeasurePassive && passiveBaseline && passiveWithBootstrap) {
     pairedComparison.passive = {
       baseline: passiveBaseline,
       candidate: passiveWithBootstrap,
@@ -710,12 +719,12 @@ try {
     .flatMap(([nodeCount, nodeReport]) => Object.entries(nodeReport.budget.metrics)
       .filter(([, metric]) => metric.regression)
       .map(([metricName]) => ({ nodeCount, metric: metricName })));
-  const passiveRegressions = [
+  const passiveRegressions = passiveWithBootstrap ? [
     passiveWithBootstrap.bootstrapRequestCount !== 1 ? "bootstrap-request-count" : null,
     passiveWithBootstrap.heavyGlobalsBeforeTap.length > 0 ? "heavy-global-before-tap" : null,
     passiveWithBootstrap.bootstrapDecodedBytes > (passiveBaseline?.bootstrapDecodedBytes ?? baseline.passive.bootstrapDecodedBytes) * (1 + budgetMargin) ? "bootstrap-decoded-bytes" : null,
     passiveWithBootstrap.longTaskCount > (passiveBaseline?.longTaskCount ?? baseline.passive.longTaskCount) ? "passive-long-task" : null,
-  ].filter(Boolean);
+  ].filter(Boolean) : [];
   const reactRegressions = reactMigration.failures.map((reason) => ({ metric: `react:${reason}` }));
   const allRegressions = [
     ...regressions,
@@ -726,6 +735,7 @@ try {
   const report = {
     schemaVersion: 2,
     generatedAt: new Date().toISOString(),
+    fixtureGroup,
     runsPerCase,
     warmupRunsPerCase,
     baseline: baselineRoot ? {

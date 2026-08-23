@@ -1,7 +1,7 @@
 export {};
 
 const assert = require("node:assert/strict");
-const { clearPerformanceEntries } = require("../../scripts/performance-entry-cleanup.mjs");
+const { clearPerformanceEntries } = require("./entry-cleanup.mjs");
 
 function fakePerformance() {
   const calls = [];
