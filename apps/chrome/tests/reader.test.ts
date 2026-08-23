@@ -238,6 +238,25 @@ class FakeElement {
   }
 }
 
+function installTextFigureGeometry() {
+  const original = FakeElement.prototype.getBoundingClientRect;
+  FakeElement.prototype.getBoundingClientRect = function () {
+    if (this.attributes["data-reader-text-scroller"] === "true") {
+      return { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
+    }
+    if (this.attributes["data-reader-text-figure"] === "true") {
+      let scroller = this.parent;
+      while (scroller && scroller.attributes["data-reader-text-scroller"] !== "true") scroller = scroller.parent;
+      const scrollTop = scroller?.scrollTop || 0;
+      return { top: 420 - scrollTop, bottom: 540 - scrollTop, left: 0, right: 300, width: 300, height: 120 };
+    }
+    return original.call(this);
+  };
+  return () => {
+    FakeElement.prototype.getBoundingClientRect = original;
+  };
+}
+
 function findElement(root, predicate) {
   if (!root) return null;
   if (root.nodeType === 1 && predicate(root)) return root;
@@ -3081,19 +3100,41 @@ test("reader preserves an article-leading figure through a text round trip", () 
   assert.equal(sessionState()?.position.kind, "figure");
   assert.equal(sessionState()?.position.sourceOffset, 0);
 
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const textFigure = findElement(textShell, (element) => element.attributes["data-reader-text-figure"] === "true");
-  assert.ok(textFigure);
-  assert.equal(textFigure.dataset.figureIndex, "0");
-  assert.equal(textFigure.dataset.sourceStart, "0");
+  const restoreGeometry = installTextFigureGeometry();
+  try {
+    findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
+    const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+    const textFigure = findElement(textShell, (element) => element.attributes["data-reader-text-figure"] === "true");
+    const textScroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
+    assert.ok(textFigure && textScroller);
+    assert.equal(textFigure.dataset.figureIndex, "0");
+    assert.equal(textFigure.dataset.sourceStart, "0");
+    const firstGeometry = textFigure.getBoundingClientRect();
+    const firstScrollerGeometry = textScroller.getBoundingClientRect();
+    assert.ok(textScroller.scrollTop > 0);
+    assert.ok(firstGeometry.top >= firstScrollerGeometry.top + 72);
+    assert.ok(firstGeometry.bottom <= firstScrollerGeometry.bottom - 112);
 
-  findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
-  const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
-  assert.ok(restoredFigure);
-  assert.equal(restoredFigure.dataset.figureIndex, "0");
-  assert.equal(sessionState()?.currentKind, "figure");
-  assert.equal(sessionState()?.playback, "paused");
+    findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
+    const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+    assert.ok(restoredFigure);
+    assert.equal(restoredFigure.dataset.figureIndex, "0");
+    assert.equal(sessionState()?.currentKind, "figure");
+    assert.equal(sessionState()?.playback, "paused");
+
+    findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
+    const restoredTextShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+    const restoredTextFigure = findElement(restoredTextShell, (element) => element.attributes["data-reader-text-figure"] === "true");
+    const restoredTextScroller = findElement(restoredTextShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
+    assert.ok(restoredTextFigure && restoredTextScroller);
+    const restoredGeometry = restoredTextFigure.getBoundingClientRect();
+    const restoredScrollerGeometry = restoredTextScroller.getBoundingClientRect();
+    assert.ok(restoredTextScroller.scrollTop > 0);
+    assert.ok(restoredGeometry.top >= restoredScrollerGeometry.top + 72);
+    assert.ok(restoredGeometry.bottom <= restoredScrollerGeometry.bottom - 112);
+  } finally {
+    restoreGeometry();
+  }
 });
 
 test("reader preserves an article-ending figure through a text round trip", () => {
@@ -3131,19 +3172,41 @@ test("reader preserves an article-ending figure through a text round trip", () =
   assert.equal(initialFigure.dataset.figureIndex, "0");
   assert.equal(initialFigure.dataset.sourceStart, String(figureOffset));
 
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const textFigure = findElement(textShell, (element) => element.attributes["data-reader-text-figure"] === "true");
-  assert.ok(textFigure);
-  assert.equal(textFigure.dataset.figureIndex, "0");
-  assert.equal(textFigure.dataset.sourceStart, String(figureOffset));
+  const restoreGeometry = installTextFigureGeometry();
+  try {
+    findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
+    const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+    const textFigure = findElement(textShell, (element) => element.attributes["data-reader-text-figure"] === "true");
+    const textScroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
+    assert.ok(textFigure && textScroller);
+    assert.equal(textFigure.dataset.figureIndex, "0");
+    assert.equal(textFigure.dataset.sourceStart, String(figureOffset));
+    const firstGeometry = textFigure.getBoundingClientRect();
+    const firstScrollerGeometry = textScroller.getBoundingClientRect();
+    assert.ok(textScroller.scrollTop > 0);
+    assert.ok(firstGeometry.top >= firstScrollerGeometry.top + 72);
+    assert.ok(firstGeometry.bottom <= firstScrollerGeometry.bottom - 112);
 
-  findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
-  const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
-  assert.ok(restoredFigure);
-  assert.equal(restoredFigure.dataset.figureIndex, "0");
-  assert.equal(sessionState()?.currentKind, "figure");
-  assert.equal(sessionState()?.playback, "paused");
+    findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
+    const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+    assert.ok(restoredFigure);
+    assert.equal(restoredFigure.dataset.figureIndex, "0");
+    assert.equal(sessionState()?.currentKind, "figure");
+    assert.equal(sessionState()?.playback, "paused");
+
+    findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
+    const restoredTextShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+    const restoredTextFigure = findElement(restoredTextShell, (element) => element.attributes["data-reader-text-figure"] === "true");
+    const restoredTextScroller = findElement(restoredTextShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
+    assert.ok(restoredTextFigure && restoredTextScroller);
+    const restoredGeometry = restoredTextFigure.getBoundingClientRect();
+    const restoredScrollerGeometry = restoredTextScroller.getBoundingClientRect();
+    assert.ok(restoredTextScroller.scrollTop > 0);
+    assert.ok(restoredGeometry.top >= restoredScrollerGeometry.top + 72);
+    assert.ok(restoredGeometry.bottom <= restoredScrollerGeometry.bottom - 112);
+  } finally {
+    restoreGeometry();
+  }
 });
 
 test("reader returns from an image to the previous sentence and stays paused", async () => {
