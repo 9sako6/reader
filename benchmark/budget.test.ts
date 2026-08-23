@@ -7,7 +7,7 @@ const {
   evaluateReactMemoryGate,
   evaluateReactMigrationGate,
   summarizeMemorySamples,
-} = require("../../scripts/performance-budget.mjs");
+} = require("./budget.mjs");
 
 test("feedback budget accepts a p90 outlier when paired median remains stable", () => {
   const result = evaluateFeedbackBudget({ observedP90: 99, pairedP50DeltaMs: 0.3 });
