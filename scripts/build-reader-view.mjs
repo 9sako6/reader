@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 
 await build({
-  entryPoints: ["packages/reader-view/src/reader-view-entry.tsx"],
+  entryPoints: ["packages/reader-view/src/index.tsx"],
   bundle: true,
   format: "iife",
   platform: "browser",
