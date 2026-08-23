@@ -75,7 +75,6 @@
   let sourcePageLock: {
     documentElementOverflow: string;
     bodyOverflow: string;
-    scroll: { left: number; top: number };
   } | null = null;
   let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
   let backgroundInert = false;
@@ -1092,7 +1091,6 @@
     sourcePageLock = {
       documentElementOverflow: document.documentElement.style.overflow,
       bodyOverflow: document.body.style.overflow,
-      scroll,
     };
     sourceScrollPosition = scroll;
     document.documentElement.style.overflow = "hidden";
