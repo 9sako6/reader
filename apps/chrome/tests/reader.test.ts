@@ -2872,6 +2872,143 @@ test("reader preserves same-offset figure order in text mode", () => {
   assert.deepEqual(figureMarkers.map((element) => element.dataset.figureIndex), ["0", "1", "2"]);
 });
 
+test("reader shows an extracted title before a different first block", () => {
+  const { document, messageListener } = createFigureReaderHarness();
+  const title = "抽出された記事タイトル";
+  const text = "本文の最初の段落です。本文の続きです。";
+  const readingContext = {
+    title,
+    blocks: [{ text, kind: "paragraph", level: null, start: 0, end: text.length }],
+    headings: [],
+    sectionOffsets: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "title-different-block" });
+  messageListener({ type: "START_RSVP", text, requestId: "title-different-block", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const titleHeadings = findElements(textShell, (element) => element.tagName === "H1");
+
+  assert.equal(titleHeadings.length, 1);
+  assert.equal(titleHeadings[0].children[0].textContent, title);
+  assert.equal(findElement(textShell, (element) => element.tagName === "P").children.length, 2);
+});
+
+test("reader does not duplicate an extracted title already present in the first h1 block", () => {
+  const { document, messageListener } = createFigureReaderHarness();
+  const title = "記事の見出し";
+  const text = `${title}\n本文です。`;
+  const readingContext = {
+    title,
+    blocks: [
+      { text: title, kind: "heading", level: 1, start: 0, end: title.length },
+      { text: "本文です。", kind: "paragraph", level: null, start: title.length + 1, end: text.length },
+    ],
+    headings: [{ text: title, level: 1 }],
+    sectionOffsets: [0],
+    sectionTransitions: [{ offset: 0, headingIndex: 0 }],
+    initialHeadingIndex: 0,
+    figures: [],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "title-existing-heading" });
+  messageListener({ type: "START_RSVP", text, requestId: "title-existing-heading", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const titleHeadings = findElements(textShell, (element) => element.tagName === "H1");
+
+  assert.equal(titleHeadings.length, 1);
+});
+
+test("reader omits an empty extracted title", () => {
+  const { document, messageListener } = createFigureReaderHarness();
+  const text = "選択範囲の本文です。";
+  const readingContext = {
+    title: "",
+    blocks: [{ text, kind: "paragraph", level: null, start: 0, end: text.length }],
+    headings: [],
+    sectionOffsets: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "title-empty" });
+  messageListener({ type: "START_RSVP", text, requestId: "title-empty", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+
+  assert.equal(findElements(textShell, (element) => element.tagName === "H1").length, 0);
+  assert.ok(findElement(textShell, (element) => element.tagName === "P"));
+});
+
+test("reader omits an empty title for a selection range", () => {
+  const { document, messageListener } = createOutlineReaderHarness();
+  const text = "選択範囲から起動した本文です。";
+  const readingContext = {
+    title: "",
+    blocks: [{ text, kind: "paragraph", level: null, start: 0, end: text.length }],
+    headings: [],
+    sectionOffsets: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "selection-title-empty" });
+  messageListener({ type: "START_RSVP", text, requestId: "selection-title-empty", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+
+  assert.equal(findElements(textShell, (element) => element.tagName === "H1").length, 0);
+  assert.ok(findElement(textShell, (element) => element.tagName === "P"));
+});
+
+test("reader keeps source position and progress unchanged when adding an extracted title", () => {
+  const { document, messageListener, sessionState } = createFigureReaderHarness();
+  const title = "抽出された記事タイトル";
+  const text = "本文の最初の文です。本文の次の文です。";
+  const readingContext = {
+    title,
+    blocks: [{ text, kind: "paragraph", level: null, start: 0, end: text.length }],
+    headings: [],
+    sectionOffsets: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "title-position" });
+  messageListener({ type: "START_RSVP", text, requestId: "title-position", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const initialState = sessionState();
+  const initialProgress = findElement(overlay, (element) => element.attributes["data-reader-progress"] === "true").textContent;
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const titleHeading = findElement(textShell, (element) => element.tagName === "H1");
+  const textProgress = findElement(textShell, (element) => element.attributes["data-reader-progress"] === "true");
+
+  assert.ok(titleHeading);
+  assert.equal(titleHeading.children[0].textContent, title);
+  assert.equal(titleHeading.attributes["data-reader-position-kind"], undefined);
+  assert.equal(titleHeading.attributes["data-source-start"], undefined);
+  assert.equal(textProgress.textContent, initialProgress);
+  assert.equal(sessionState().sourceOffset, initialState.sourceOffset);
+  assert.deepEqual(sessionState().position, initialState.position);
+
+  findElement(textShell, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+  assert.equal(sessionState().sourceOffset, initialState.sourceOffset);
+  assert.deepEqual(sessionState().position, initialState.position);
+  assert.equal(findElement(overlay, (element) => element.attributes["data-reader-progress"] === "true").textContent, initialProgress);
+});
+
 test("reader preserves an article-leading figure through a text round trip", () => {
   const { document, messageListener, sessionState } = createFigureReaderHarness();
   const text = "図A\n本文です。";
