@@ -2841,6 +2841,130 @@ test("reader preserves the order of figures that share one source offset", () =>
   assert.ok(findElement(secondPanel, (element) => element.textContent === "図B"));
 });
 
+test("reader preserves same-offset figure order in text mode", () => {
+  const { document, messageListener } = createFigureReaderHarness();
+  const text = "前の文です。図図図後の文です。";
+  const readingContext = {
+    blocks: [
+      { text: "前の文です。", kind: "paragraph", level: null, start: 0, end: 6 },
+      { text: "後の文です。", kind: "paragraph", level: null, start: 9, end: text.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [
+      { src: "https://example.com/one.png", alt: "一枚目", caption: "図A", sourceOffset: 7, sourceEnd: 8 },
+      { src: "https://example.com/two.png", alt: "二枚目", caption: "図B", sourceOffset: 7, sourceEnd: 8 },
+      { src: "https://example.com/three.png", alt: "三枚目", caption: "図C", sourceOffset: 7, sourceEnd: 8 },
+    ],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-same-offset-figures" });
+  messageListener({ type: "START_RSVP", text, requestId: "text-same-offset-figures", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const figureMarkers = findElements(
+    textShell,
+    (element) => element.dataset.readerPositionKind === "figure",
+  );
+
+  assert.deepEqual(figureMarkers.map((element) => element.dataset.figureIndex), ["0", "1", "2"]);
+});
+
+test("reader preserves an article-leading figure through a text round trip", () => {
+  const { document, messageListener, sessionState } = createFigureReaderHarness();
+  const text = "図A\n本文です。";
+  const readingContext = {
+    blocks: [
+      { text: "本文です。", kind: "paragraph", level: null, start: 3, end: text.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [{
+      src: "https://example.com/leading.png",
+      alt: "先頭画像",
+      caption: "図A",
+      sourceOffset: 0,
+      sourceEnd: 2,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "leading-figure-round-trip" });
+  messageListener({ type: "START_RSVP", text, requestId: "leading-figure-round-trip", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const initialFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  assert.ok(initialFigure);
+  assert.equal(initialFigure.dataset.figureIndex, "0");
+  assert.equal(sessionState()?.position.kind, "figure");
+  assert.equal(sessionState()?.position.sourceOffset, 0);
+
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const textFigure = findElement(textShell, (element) => element.attributes["data-reader-text-figure"] === "true");
+  assert.ok(textFigure);
+  assert.equal(textFigure.dataset.figureIndex, "0");
+  assert.equal(textFigure.dataset.sourceStart, "0");
+
+  findElement(textShell, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+  const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  assert.ok(restoredFigure);
+  assert.equal(restoredFigure.dataset.figureIndex, "0");
+  assert.equal(sessionState()?.currentKind, "figure");
+  assert.equal(sessionState()?.playback, "paused");
+});
+
+test("reader preserves an article-ending figure through a text round trip", () => {
+  const { document, messageListener, timers, sessionState } = createFigureReaderHarness();
+  const leadingText = "本文です。";
+  const figureOffset = leadingText.length + 1;
+  const text = `${leadingText}\n図A`;
+  const readingContext = {
+    blocks: [
+      { text: leadingText, kind: "paragraph", level: null, start: 0, end: leadingText.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [{
+      src: "https://example.com/ending.png",
+      alt: "末尾画像",
+      caption: "図A",
+      sourceOffset: figureOffset,
+      sourceEnd: text.length,
+    }],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ending-figure-round-trip" });
+  messageListener({ type: "START_RSVP", text, requestId: "ending-figure-round-trip", readingContext });
+
+  while (sessionState()?.currentKind !== "figure") {
+    const entry = [...timers.entries()][0];
+    assert.ok(entry, "the ending figure is reached before playback timers end");
+    timers.delete(entry[0]);
+    entry[1].callback();
+  }
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const initialFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  assert.ok(initialFigure);
+  assert.equal(initialFigure.dataset.figureIndex, "0");
+  assert.equal(initialFigure.dataset.sourceStart, String(figureOffset));
+
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const textFigure = findElement(textShell, (element) => element.attributes["data-reader-text-figure"] === "true");
+  assert.ok(textFigure);
+  assert.equal(textFigure.dataset.figureIndex, "0");
+  assert.equal(textFigure.dataset.sourceStart, String(figureOffset));
+
+  findElement(textShell, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+  const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
+  assert.ok(restoredFigure);
+  assert.equal(restoredFigure.dataset.figureIndex, "0");
+  assert.equal(sessionState()?.currentKind, "figure");
+  assert.equal(sessionState()?.playback, "paused");
+});
+
 test("reader returns from an image to the previous sentence and stays paused", async () => {
   const { document, documentElement, messageListener, timers } = createFigureReaderHarness();
   const readingContext = {
