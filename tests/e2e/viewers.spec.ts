@@ -556,9 +556,10 @@ test("Chrome viewer preserves the first complete sentence after 50 mode round tr
 test("Chrome viewer resumes at the first complete sentence below a partially visible sentence", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 600 });
   await loadViewer(page, "chrome");
-  const firstSentence = "上端で途中まで見える最初の文です、文章ビューの上端に一部だけ残り、下には次の文を全文表示できるように十分な長さを持たせています、さらに行をまたいで続きます、読書領域の選択規則を確かめるためここまで続きます。";
+  const firstSentence = "上端で途中まで見える最初の文です、文章ビューの上端に一部だけ残り、下には次の文を全文表示できるように十分な長さを持たせています、さらに行をまたいで続きます、読書領域の選択規則を確かめるためここまで続きます、".repeat(2) + "最後まで続きます。";
   const secondSentence = "完全に見える二番目の文です。";
-  const thirdSentence = "さらに後ろの文です。";
+  const secondSentenceStart = firstSentence.length + 1;
+  const thirdSentence = "さらに後ろの文です、スクロール領域を確実に作るための後続本文です、".repeat(20) + "最後の後続文です。";
   const text = `${firstSentence}\n${secondSentence}\n${thirdSentence}`;
   await openChrome(page, {
     text,
@@ -566,7 +567,7 @@ test("Chrome viewer resumes at the first complete sentence below a partially vis
     readingContext: {
       blocks: [
         { text: firstSentence, kind: "paragraph", level: null, start: 0, end: firstSentence.length },
-        { text: secondSentence, kind: "paragraph", level: null, start: firstSentence.length + 1, end: firstSentence.length + 1 + secondSentence.length },
+        { text: secondSentence, kind: "paragraph", level: null, start: secondSentenceStart, end: secondSentenceStart + secondSentence.length },
         { text: thirdSentence, kind: "paragraph", level: null, start: firstSentence.length + secondSentence.length + 2, end: text.length },
       ],
     },
@@ -600,16 +601,17 @@ test("Chrome viewer resumes at the first complete sentence below a partially vis
   expect(geometry[1]?.bottom).toBeLessThanOrEqual((geometry[1]?.scrollerBottom ?? 0) - 112);
 
   await dialog.getByRole("button", { name: "RSVPで読む" }).click();
-  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
-  await dialog.getByRole("button", { name: "一時停止" }).click();
-  await expect(dialog.locator('[data-reader-unit]:visible').first()).toHaveText(secondSentence);
+  await pauseReaderIfPlaying(dialog);
+  const selectedUnit = dialog.locator('[data-reader-unit]:visible').first();
+  await expect(selectedUnit).toHaveAttribute("data-source-start", String(secondSentenceStart));
+  await expect(selectedUnit).toContainText("完全に見える二番目の");
 });
 
 test("Chrome viewer falls back to the visible sentence when one long sentence cannot fit", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 500 });
   await loadViewer(page, "chrome");
   const leadingSentence = "画面より前の文です。";
-  const longSentence = "画面より高い長文がここから始まり、読書領域に全文を収めることができないまま何行も続き、上端から見えているこの文の文頭へ戻れることを確認するための内容をさらに重ね、まだまだ下へ伸びていく文章として表示されます、最後まで一つの文として扱います。";
+  const longSentence = "画面より高い長文がここから始まり、読書領域に全文を収めることができないまま何行も続き、上端から見えているこの文の文頭へ戻れることを確認するための内容をさらに重ね、まだまだ下へ伸びていく文章として表示されます、".repeat(12) + "最後まで一つの文として扱います。";
   const trailingSentence = "長文の後ろの文です。";
   const text = `${leadingSentence}\n${longSentence}\n${trailingSentence}`;
   await openChrome(page, {
@@ -649,8 +651,7 @@ test("Chrome viewer falls back to the visible sentence when one long sentence ca
   expect(longMarkerGeometry.markerBottom - longMarkerGeometry.markerTop).toBeGreaterThan(longMarkerGeometry.scrollerHeight);
 
   await dialog.getByRole("button", { name: "RSVPで読む" }).click();
-  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
-  await dialog.getByRole("button", { name: "一時停止" }).click();
+  await pauseReaderIfPlaying(dialog);
   await expect(dialog.locator('[data-reader-unit]:visible').first()).toContainText("画面より高い長文");
 });
 
@@ -658,9 +659,10 @@ test("Chrome viewer preserves sentence selection across heading quote and prefor
   await page.setViewportSize({ width: 1280, height: 600 });
   await loadViewer(page, "chrome");
   const heading = "構造化された本文";
-  const quote = "「引用ブロックの文です。」";
+  const quote = "「引用ブロックの文です、構造化本文の選択対象を確認するための引用です、」".repeat(8) + "最後の引用文です。」";
   const preformatted = "preformatted blockの文です。";
-  const following = "最後に続く本文です。";
+  const preformattedStart = heading.length + quote.length + 2;
+  const following = "最後に続く本文です、後続のスクロール領域を作るための文章です、".repeat(16) + "最後の本文です。";
   const text = `${heading}\n${quote}\n${preformatted}\n${following}`;
   await openChrome(page, {
     text,
@@ -669,7 +671,7 @@ test("Chrome viewer preserves sentence selection across heading quote and prefor
       blocks: [
         { text: heading, kind: "heading", level: 1, start: 0, end: heading.length },
         { text: quote, kind: "quote", level: null, start: heading.length + 1, end: heading.length + 1 + quote.length },
-        { text: preformatted, kind: "preformatted", level: null, start: heading.length + quote.length + 2, end: heading.length + quote.length + 2 + preformatted.length },
+        { text: preformatted, kind: "preformatted", level: null, start: preformattedStart, end: preformattedStart + preformatted.length },
         { text: following, kind: "paragraph", level: null, start: heading.length + quote.length + preformatted.length + 3, end: text.length },
       ],
     },
@@ -703,17 +705,18 @@ test("Chrome viewer preserves sentence selection across heading quote and prefor
   expect(preGeometry.markerBottom).toBeLessThanOrEqual(preGeometry.scrollerBottom - 112);
 
   await dialog.getByRole("button", { name: "RSVPで読む" }).click();
-  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
-  await dialog.getByRole("button", { name: "一時停止" }).click();
-  await expect(dialog.locator('[data-reader-unit]:visible').first()).toHaveText(preformatted);
+  await pauseReaderIfPlaying(dialog);
+  const selectedUnit = dialog.locator('[data-reader-unit]:visible').first();
+  await expect(selectedUnit).toHaveAttribute("data-source-start", String(preformattedStart));
 });
 
 test("Chrome viewer does not move to the previous sentence during repeated text and RSVP round trips", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 600 });
   await loadViewer(page, "chrome");
-  const firstSentence = "最初の前文です。";
+  const firstSentence = "最初の前文です、選択文の上に十分な行を作り、スクロールしても選択対象の文頭を明確に判定できるようにするための前置きです、".repeat(2) + "前文の最後です。";
   const selectedSentence = "往復しても前の文へ戻らない選択文です。";
-  const followingSentence = "選択文の後ろです。";
+  const selectedSentenceStart = firstSentence.length + 1;
+  const followingSentence = "選択文の後ろです、往復テストのスクロール領域を維持するための後続本文です、".repeat(18) + "後続文の最後です。";
   const text = `${firstSentence}\n${selectedSentence}\n${followingSentence}`;
   await openChrome(page, {
     text,
@@ -721,7 +724,7 @@ test("Chrome viewer does not move to the previous sentence during repeated text 
     readingContext: {
       blocks: [
         { text: firstSentence, kind: "paragraph", level: null, start: 0, end: firstSentence.length },
-        { text: selectedSentence, kind: "paragraph", level: null, start: firstSentence.length + 1, end: firstSentence.length + 1 + selectedSentence.length },
+        { text: selectedSentence, kind: "paragraph", level: null, start: selectedSentenceStart, end: selectedSentenceStart + selectedSentence.length },
         { text: followingSentence, kind: "paragraph", level: null, start: firstSentence.length + selectedSentence.length + 2, end: text.length },
       ],
     },
@@ -742,16 +745,15 @@ test("Chrome viewer does not move to the previous sentence during repeated text 
   });
 
   await dialog.getByRole("button", { name: "RSVPで読む" }).click();
-  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
-  await dialog.getByRole("button", { name: "一時停止" }).click();
-  await expect(dialog.locator('[data-reader-unit]:visible').first()).toHaveText(selectedSentence);
+  await pauseReaderIfPlaying(dialog);
+  const selectedUnit = dialog.locator('[data-reader-unit]:visible').first();
+  await expect(selectedUnit).toHaveAttribute("data-source-start", String(selectedSentenceStart));
 
   for (let roundTrip = 0; roundTrip < 6; roundTrip += 1) {
     await dialog.getByRole("button", { name: "文章で読む" }).click();
     await dialog.getByRole("button", { name: "RSVPで読む" }).click();
-    await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
-    await dialog.getByRole("button", { name: "一時停止" }).click();
-    await expect(dialog.locator('[data-reader-unit]:visible').first()).toHaveText(selectedSentence);
+    await pauseReaderIfPlaying(dialog);
+    await expect(selectedUnit).toHaveAttribute("data-source-start", String(selectedSentenceStart));
   }
 });
 
