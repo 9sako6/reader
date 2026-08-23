@@ -238,37 +238,9 @@ class FakeElement {
   }
 }
 
-function evaluateElementPredicate(element, predicate) {
-  let readsTextContent = false;
-  const probe = new Proxy(element, {
-    get(target, property, receiver) {
-      if (property === "textContent") readsTextContent = true;
-      return Reflect.get(target, property, receiver);
-    },
-    set(target, property, value, receiver) {
-      if (property === "textContent") readsTextContent = true;
-      return Reflect.set(target, property, value, receiver);
-    },
-  });
-  return { matches: Boolean(predicate(probe)), readsTextContent };
-}
-
 function findElement(root, predicate) {
   if (!root) return null;
-  if (root.nodeType === 1) {
-    const result = evaluateElementPredicate(root, predicate);
-    if (result.matches && !result.readsTextContent) return root;
-    if (root.shadowRoot) {
-      const shadowMatch = findElement(root.shadowRoot, predicate);
-      if (shadowMatch) return shadowMatch;
-    }
-    for (const child of root.children) {
-      const match = findElement(child, predicate);
-      if (match) return match;
-    }
-    if (result.matches) return root;
-    return null;
-  }
+  if (root.nodeType === 1 && predicate(root)) return root;
   if (root.shadowRoot) {
     const shadowMatch = findElement(root.shadowRoot, predicate);
     if (shadowMatch) return shadowMatch;
@@ -278,6 +250,32 @@ function findElement(root, predicate) {
     if (match) return match;
   }
   return null;
+}
+
+function findElementByText(root, text) {
+  if (!root) return null;
+  if (root.shadowRoot) {
+    const shadowMatch = findElementByText(root.shadowRoot, text);
+    if (shadowMatch) return shadowMatch;
+  }
+  for (const child of root.children) {
+    const match = findElementByText(child, text);
+    if (match) return match;
+  }
+  return root.nodeType === 1 && root.textContent === text ? root : null;
+}
+
+function findElementContainingText(root, text) {
+  if (!root) return null;
+  if (root.shadowRoot) {
+    const shadowMatch = findElementContainingText(root.shadowRoot, text);
+    if (shadowMatch) return shadowMatch;
+  }
+  for (const child of root.children) {
+    const match = findElementContainingText(child, text);
+    if (match) return match;
+  }
+  return root.nodeType === 1 && root.textContent.includes(text) ? root : null;
 }
 
 function findElements(root, predicate) {
@@ -874,7 +872,7 @@ test("reader keeps the 100ms loading state to an indeterminate bar", () => {
 
   assert.ok(findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true"));
   assert.equal(findElement(overlay, (element) => element.attributes["data-reader-loading-label"] === "true"), null);
-  assert.equal(findElement(overlay, (element) => element.textContent === "中止"), null);
+  assert.equal(findElementByText(overlay, "中止"), null);
 });
 
 test("reader adds slow preparation status and a cancel action at 400ms", () => {
@@ -893,7 +891,7 @@ test("reader adds slow preparation status and a cancel action at 400ms", () => {
     findElement(overlay, (element) => element.attributes["data-reader-loading-label"] === "true").textContent,
     "文章を準備しています",
   );
-  assert.ok(findElement(overlay, (element) => element.textContent === "中止"));
+  assert.ok(findElementByText(overlay, "中止"));
 });
 
 test("reader cancel closes loading and sends the request id to the service worker", () => {
@@ -905,7 +903,7 @@ test("reader cancel closes loading and sends the request id to the service worke
   const slowTimer = [...timers.entries()].find(([, timer]) => timer.delay === 400);
   timers.delete(slowTimer[0]);
   slowTimer[1].callback();
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "中止").dispatchEvent({ type: "click" });
+  findElementByText(document.getElementById("__rsvp-reader-root"), "中止").dispatchEvent({ type: "click" });
 
   assert.equal(runtimeMessages.length, 1);
   assert.equal(runtimeMessages[0].type, "CANCEL_RSVP");
@@ -1117,7 +1115,7 @@ const chromeLateTimerScenarios = [
     },
     operate(harness) {
       const overlay = harness.document.getElementById("__rsvp-reader-root");
-      findElement(overlay, (element) => element.textContent === "文章で読む")
+      findElementByText(overlay, "文章で読む")
         .dispatchEvent({ type: "click" });
     },
   },
@@ -1250,9 +1248,9 @@ test("reader renders content-not-found errors with retry and return actions", ()
   messageListener({ type: "RSVP_ERROR", requestId: "error-request", reason: "content_not_found" });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  assert.ok(findElement(overlay, (element) => element.textContent === "文章を読み取れませんでした"));
-  const retry = findElement(overlay, (element) => element.textContent === "やり直す");
-  const returnButton = findElement(overlay, (element) => element.textContent === "元に戻る");
+  assert.ok(findElementByText(overlay, "文章を読み取れませんでした"));
+  const retry = findElementByText(overlay, "やり直す");
+  const returnButton = findElementByText(overlay, "元に戻る");
   assert.ok(retry);
   assert.ok(returnButton);
 });
@@ -1265,9 +1263,9 @@ test("reader renders unsupported-page errors with retry and return actions", () 
   messageListener({ type: "RSVP_ERROR", requestId: "unsupported-request", reason: "unsupported_page" });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  assert.ok(findElement(overlay, (element) => element.textContent === "このページはまだ開けません"));
-  assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
-  assert.ok(findElement(overlay, (element) => element.textContent === "元に戻る"));
+  assert.ok(findElementByText(overlay, "このページはまだ開けません"));
+  assert.ok(findElementByText(overlay, "やり直す"));
+  assert.ok(findElementByText(overlay, "元に戻る"));
 });
 
 test("reader renders extraction-failed errors with retry and return actions", () => {
@@ -1278,9 +1276,9 @@ test("reader renders extraction-failed errors with retry and return actions", ()
   messageListener({ type: "RSVP_ERROR", requestId: "extraction-request", reason: "extraction_failed" });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  assert.ok(findElement(overlay, (element) => element.textContent === "文章を準備できませんでした"));
-  assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
-  assert.ok(findElement(overlay, (element) => element.textContent === "元に戻る"));
+  assert.ok(findElementByText(overlay, "文章を準備できませんでした"));
+  assert.ok(findElementByText(overlay, "やり直す"));
+  assert.ok(findElementByText(overlay, "元に戻る"));
 });
 
 test("reader rejects a delayed start after session initialization fails", async () => {
@@ -1292,7 +1290,7 @@ test("reader rejects a delayed start after session initialization fails", async 
   await Promise.resolve();
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  assert.ok(findElement(overlay, (element) => element.textContent === "文章を準備できませんでした"));
+  assert.ok(findElementByText(overlay, "文章を準備できませんでした"));
   messageListener({
     type: "START_RSVP",
     text: "遅延して届いた本文です。",
@@ -1300,7 +1298,7 @@ test("reader rejects a delayed start after session initialization fails", async 
   });
 
   assert.equal(findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true"), null);
-  assert.ok(findElement(overlay, (element) => element.textContent === "やり直す"));
+  assert.ok(findElementByText(overlay, "やり直す"));
 });
 
 test("reader retries a classified error without replacing its launch focus", () => {
@@ -1313,7 +1311,7 @@ test("reader retries a classified error without replacing its launch focus", () 
 
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "error-request" });
   messageListener({ type: "RSVP_ERROR", requestId: "error-request", reason: "unsupported_page" });
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "やり直す").dispatchEvent({ type: "click" });
+  findElementByText(document.getElementById("__rsvp-reader-root"), "やり直す").dispatchEvent({ type: "click" });
 
   assert.equal(runtimeMessages[0].type, "RETRY_RSVP");
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "retry-request" });
@@ -1460,7 +1458,7 @@ test("reader renders controls with their literal dimensions", () => {
   const playPauseButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
   const backButton = findElement(overlay, (element) => element.attributes["aria-label"] === "1文戻る");
   const closeButton = findElement(overlay, (element) => element.attributes["aria-label"] === "readerを閉じる");
-  const modeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
+  const modeButton = findElementByText(overlay, "文章で読む");
   const transport = playPauseButton.parent;
   assert.equal(transport.style.gridTemplateColumns, "1fr 56px 1fr");
   assert.equal(transport.style.width, "min(100%, 264px)");
@@ -1609,7 +1607,7 @@ test("reader does not scale controls when reduced motion is enabled", () => {
   });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  const modeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
+  const modeButton = findElementByText(overlay, "文章で読む");
   const playButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
   modeButton.dispatchEvent({ type: "pointerdown" });
   playButton.dispatchEvent({ type: "pointerdown" });
@@ -1670,7 +1668,7 @@ test("reader keeps a fast error dialog focused and restores inert state after Es
   messageListener({ type: "RSVP_ERROR", requestId: "fast-error-request" });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  const closeButton = findElement(overlay, (element) => element.textContent === "元に戻る");
+  const closeButton = findElementByText(overlay, "元に戻る");
   assert.equal(document.activeElement, closeButton);
   assert.equal(body.inert, true);
   assert.equal(head.inert, true);
@@ -1889,7 +1887,7 @@ test("reader keeps keyboard focus trapped after switching to text mode", () => {
   });
 
   const rsvpOverlay = document.getElementById("__rsvp-reader-root");
-  const textModeButton = findElement(rsvpOverlay, (element) => element.textContent === "文章で読む");
+  const textModeButton = findElementByText(rsvpOverlay, "文章で読む");
   textModeButton.dispatchEvent({ type: "click" });
 
   const textOverlay = document.getElementById("__rsvp-reader-root");
@@ -1898,7 +1896,7 @@ test("reader keeps keyboard focus trapped after switching to text mode", () => {
     (element) => element.attributes["data-reader-text-shell"] === "true",
   );
   const closeButton = findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる");
-  const rsvpModeButton = findElement(textShell, (element) => element.textContent === "RSVPで読む");
+  const rsvpModeButton = findElementByText(textShell, "RSVPで読む");
   assert.ok(textShell);
   assert.equal(document.activeElement, closeButton);
 
@@ -1943,16 +1941,13 @@ test("reader restores the RSVP mode control and follows session autoplay", () =>
     requestId: "mode-focus-request",
   });
   const overlay = document.getElementById("__rsvp-reader-root");
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textOverlay = document.getElementById("__rsvp-reader-root");
-  const textModeButton = findElement(textOverlay, (element) => element.textContent === "RSVPで読む");
+  const textModeButton = findElementByText(textOverlay, "RSVPで読む");
   textModeButton.focus();
   textModeButton.dispatchEvent({ type: "click" });
 
-  const rsvpModeButton = findElement(
-    document.getElementById("__rsvp-reader-root"),
-    (element) => element.textContent === "文章で読む",
-  );
+  const rsvpModeButton = findElementByText(document.getElementById("__rsvp-reader-root"), "文章で読む");
   assert.equal(document.activeElement, rsvpModeButton);
   assert.deepEqual(
     sessionCommands
@@ -2081,7 +2076,7 @@ test("reader follows page headings and switches to text mode", () => {
   assert.equal(pageOutline.children[1].attributes["aria-current"], "location");
   assert.match(pageDisplay.textContent, /次の節/);
 
-  const pageModeButton = findElement(pageOverlay, (element) => element.textContent === "文章で読む");
+  const pageModeButton = findElementByText(pageOverlay, "文章で読む");
   pageModeButton.dispatchEvent({ type: "click" });
   const textShell = findElement(
     document.getElementById("__rsvp-reader-root"),
@@ -2092,7 +2087,7 @@ test("reader follows page headings and switches to text mode", () => {
     textShell,
     (element) => element.attributes["data-reader-text-scroller"] === "true",
   );
-  const rsvpModeButton = findElement(textShell, (element) => element.textContent === "RSVPで読む");
+  const rsvpModeButton = findElementByText(textShell, "RSVPで読む");
   assert.ok(textScroller);
   assert.equal(rsvpModeButton.parent.attributes["data-reader-topbar"], "true");
   assert.ok(findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる"));
@@ -2126,13 +2121,13 @@ test("reader uses sentence and figure markers to preserve a shared position", ()
   messageListener({ type: "START_RSVP", text, requestId: "position-request", readingContext });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  const modeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
+  const modeButton = findElementByText(overlay, "文章で読む");
   modeButton.dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
   const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
   const figureMarker = findElement(textShell, (element) => element.dataset.readerPositionKind === "figure");
   const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
-  const textModeButton = findElement(textShell, (element) => element.textContent === "RSVPで読む");
+  const textModeButton = findElementByText(textShell, "RSVPで読む");
 
   assert.equal(textMarkers.length, 3);
   assert.equal(figureMarker.dataset.figureIndex, "0");
@@ -2182,7 +2177,7 @@ test("reader keeps the current figure anchor ahead of earlier readable text", ()
     entry[1].callback();
   }
 
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
   const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
   const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
@@ -2192,7 +2187,7 @@ test("reader keeps the current figure anchor ahead of earlier readable text", ()
   figureMarker.rect = { top: 180, bottom: 320, left: 0, right: 300, width: 300, height: 140 };
   textMarkers[1].rect = { top: 360, bottom: 400, left: 0, right: 300, width: 300, height: 40 };
 
-  findElement(textShell, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+  findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
 
   const figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   assert.ok(figurePanel);
@@ -2228,12 +2223,12 @@ test("reader ignores a clipped figure even when its center is readable", () => {
   messageListener({ type: "START_RSVP", text, requestId: "clipped-figure-request", readingContext });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
   const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
   const figureMarker = findElement(textShell, (element) => element.dataset.readerPositionKind === "figure");
   const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
-  const textModeButton = findElement(textShell, (element) => element.textContent === "RSVPで読む");
+  const textModeButton = findElementByText(textShell, "RSVPで読む");
 
   scroller.rect = { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
   textMarkers[0].rect = { top: -160, bottom: -60, left: 0, right: 300, width: 300, height: 100 };
@@ -2734,7 +2729,7 @@ test("reader pauses on an article image and exposes its context", () => {
   )[0];
   assert.equal(image.src, "https://example.com/chart.png");
   assert.equal(image.alt, "処理時間の比較グラフ");
-  assert.ok(findElement(figurePanel, (element) => element.textContent === "図1 処理時間"));
+  assert.ok(findElementByText(figurePanel, "図1 処理時間"));
   assert.ok(resumeButton);
   assert.equal(progress.textContent, `${Math.round((figureOffset / text.length) * 100)}%`);
   assert.ok(findElement(figurePanel, (element) => element.tagName === "BUTTON"));
@@ -2842,9 +2837,9 @@ test("reader ignores a stale figure completion after switching modes", async () 
     oldPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   }
   const oldImage = findElement(oldPanel, (element) => element.tagName === "IMG");
-  const modeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
+  const modeButton = findElementByText(overlay, "文章で読む");
   modeButton.dispatchEvent({ type: "click" });
-  findElement(overlay, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "RSVPで読む").dispatchEvent({ type: "click" });
   const currentPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   const currentStatus = findElement(currentPanel, (element) => element.attributes["data-reader-figure-status"] === "true");
   oldImage.dispatchEvent({ type: "load" });
@@ -2883,7 +2878,7 @@ test("reader preserves the order of figures that share one source offset", () =>
   findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む").dispatchEvent({ type: "click" });
   const secondPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   assert.equal(secondPanel.dataset.figureIndex, "1");
-  assert.ok(findElement(secondPanel, (element) => element.textContent === "図B"));
+  assert.ok(findElementByText(secondPanel, "図B"));
 });
 
 test("reader returns from an image to the previous sentence and stays paused", async () => {
@@ -2994,7 +2989,7 @@ test("reader keeps the article image and veil in text mode", () => {
   });
   const overlay = document.getElementById("__rsvp-reader-root");
 
-  const textModeButton = findElement(overlay, (element) => element.textContent === "文章で読む");
+  const textModeButton = findElementByText(overlay, "文章で読む");
   textModeButton.dispatchEvent({ type: "click" });
   const textFigure = findElement(
     overlay,
@@ -3007,7 +3002,7 @@ test("reader keeps the article image and veil in text mode", () => {
   );
   assert.equal(textImage.src, "https://example.com/chart.png");
   assert.equal(textVeil.style.background, "rgba(0,0,0,0.46)");
-  assert.ok(findElement(textFigure, (element) => element.textContent === "図1 処理時間"));
+  assert.ok(findElementByText(textFigure, "図1 処理時間"));
 });
 
 test("reader preserves the text marker when an earlier responsive text image changes layout", () => {
@@ -3045,7 +3040,7 @@ test("reader preserves the text marker when an earlier responsive text image cha
   const figureImage = findElement(figurePanel, (element) => element.tagName === "IMG");
   figureImage.dispatchEvent({ type: "error" });
   findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む").dispatchEvent({ type: "click" });
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
 
   const scroller = findElement(overlay, (element) => element.attributes["data-reader-text-scroller"] === "true");
   const afterImageMarker = findElement(
@@ -3105,7 +3100,7 @@ test("reader leaves scroll position unchanged for a text image below the marker"
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-correction-after" });
   messageListener({ type: "START_RSVP", text, requestId: "text-correction-after", readingContext });
   const overlay = document.getElementById("__rsvp-reader-root");
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const scroller = findElement(overlay, (element) => element.attributes["data-reader-text-scroller"] === "true");
   const textFigure = findElement(scroller, (element) => element.attributes["data-reader-text-figure"] === "true");
   const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
@@ -3146,5 +3141,5 @@ test("reader removes closed content, ignores a saved timer, and reopens fresh co
     (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
   );
   assert.match(secondDisplay.textContent, /新しい本文/u);
-  assert.equal(findElement(secondOverlay, (element) => /最初の本文/u.test(element.textContent)), null);
+  assert.equal(findElementContainingText(secondOverlay, "最初の本文"), null);
 });
