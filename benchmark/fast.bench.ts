@@ -3,21 +3,21 @@ import { resolve } from "node:path";
 import { bench } from "vitest";
 
 const require = createRequire(import.meta.url);
-const PAIR_COUNT = 6;
-const BATCH_SIZE = 32;
-const SAMPLE_ITERATIONS = 10;
+const PAIR_COUNT = 20;
+const BATCH_SIZE = 8;
+const SAMPLE_ITERATIONS = 5;
 const benchmarkOptions = {
   time: 0,
   iterations: SAMPLE_ITERATIONS,
   warmupTime: 0,
-  warmupIterations: 10,
+  warmupIterations: 5,
 };
 
 const source = [
   "Readerの短い本文を同じ条件で分割します。",
   "paired benchmarkはmainとcandidateを同じrunnerで交互に測定します。",
   "このfixtureはNode上で完結し、ブラウザやheapの長時間計測を含みません。",
-].join(" ").repeat(4);
+].join(" ").repeat(8);
 const figures = [
   { sourceOffset: 120, sourceEnd: 120 },
   { sourceOffset: 420, sourceEnd: 420 },

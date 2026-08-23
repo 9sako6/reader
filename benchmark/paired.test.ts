@@ -13,7 +13,7 @@ const alternatingSamples = [
   { fixture: "reader-text", run: 3, order: "candidate-main", mainMs: 10, candidateMs: 14 },
 ];
 
-function makeFastReport(fixtures = ["segment", "flow"], pairCount = 6) {
+function makeFastReport(fixtures = ["segment", "flow"], pairCount = 20) {
   const benchmarks = [];
   for (const fixture of fixtures) {
     for (let run = 0; run < pairCount; run += 1) {
@@ -69,7 +69,7 @@ test("paired benchmark aggregates Vitest JSON percentile statistics when raw sam
   const { evaluateVitestReport } = require("./paired.mjs");
   const benchmarks = [];
   for (const fixture of ["segment", "flow"]) {
-    for (let run = 0; run < 6; run += 1) {
+    for (let run = 0; run < 20; run += 1) {
       const first = run % 2 === 0 ? "main" : "candidate";
       const second = first === "main" ? "candidate" : "main";
       for (const side of [first, second]) {
@@ -118,8 +118,8 @@ test("paired benchmark rejects a Vitest report missing one flow pair", () => {
   const { evaluateVitestReport } = require("./paired.mjs");
 
   assert.throws(
-    () => evaluateVitestReport(makeFastReport(["flow", "segment"], 5)),
-    /flow.*expected 6 paired samples.*received 5/,
+    () => evaluateVitestReport(makeFastReport(["flow", "segment"], 19)),
+    /flow.*expected 20 paired samples.*received 19/,
   );
 });
 
@@ -127,7 +127,7 @@ test("paired benchmark rejects a Vitest report with an extra flow pair", () => {
   const { evaluateVitestReport } = require("./paired.mjs");
 
   assert.throws(
-    () => evaluateVitestReport(makeFastReport(["segment", "flow"], 7)),
-    /flow.*expected 6 paired samples.*received 7/,
+    () => evaluateVitestReport(makeFastReport(["segment", "flow"], 21)),
+    /flow.*expected 20 paired samples.*received 21/,
   );
 });

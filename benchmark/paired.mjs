@@ -4,7 +4,7 @@ export const FAST_PAIRED_BUDGET = Object.freeze({
   p90DeltaPercent: 25,
 });
 export const FAST_FIXTURES = Object.freeze(["segment", "flow"]);
-export const FAST_PAIR_COUNT = 6;
+export const FAST_PAIR_COUNT = 20;
 
 const ORDERS = ["main-candidate", "candidate-main"];
 
