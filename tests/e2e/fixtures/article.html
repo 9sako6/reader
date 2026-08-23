@@ -70,6 +70,7 @@
         const figureOffset = leading.length + (leading ? 1 : 0);
         const trailingOffset = figureOffset + configuredCaption.length + 1;
         const text = leading ? `${leading}\n${configuredCaption}\n${trailing}` : `${configuredCaption}\n${trailing}`;
+        const outline = options.outline === "two";
         const configuredImage = typeof options.image === "string" ? options.image : imageFixture;
         const configuredAlt = typeof options.alt === "string" ? options.alt : "本文の読書フロー図";
         const imagePath = configuredImage === "default"
@@ -97,9 +98,13 @@
               ...(leading ? [{ text: leading, kind: "paragraph", level: null, start: 0, end: leading.length }] : []),
               { text: trailing, kind: "paragraph", level: null, start: trailingOffset, end: text.length },
             ],
-            headings: [{ text: "実ブラウザで読む", level: 1 }],
+            headings: outline
+              ? [{ text: "実ブラウザで読む", level: 1 }, { text: "画像のある節", level: 2 }]
+              : [{ text: "実ブラウザで読む", level: 1 }],
             sectionOffsets: [],
-            sectionTransitions: [],
+            sectionTransitions: outline
+              ? [{ offset: 0, headingIndex: 0 }, { offset: trailingOffset, headingIndex: 1 }]
+              : [],
             initialHeadingIndex: 0,
             figures: [{
               src: imageUrl.href,
@@ -186,6 +191,7 @@
             : fixtureContent({
               image: options.image || imageFixture,
               figureFirst: options.figureFirst || figureFirst,
+              outline: options.outline,
               alt: options.alt,
               caption: options.caption,
               cacheKey: options.cacheKey,

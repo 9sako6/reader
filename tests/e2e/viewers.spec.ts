@@ -60,6 +60,7 @@ type ChromeOpenOptions = {
   text?: string;
   image?: "immediate" | "delayed" | "missing" | "broken" | "vertical" | "horizontal" | "transparent" | "huge" | "default";
   figureFirst?: boolean;
+  outline?: "two";
   alt?: string;
   caption?: string;
   cacheKey?: string;
@@ -133,6 +134,175 @@ const RSVP_SHORT_TEXT = "短い。";
 const RSVP_NEAR_LIMIT_TEXT = "上限付近。";
 const RSVP_LONG_URL = "https://example.com/path/to/a/very/long/resource?token=abcdefghijklmnopqrstuvwxyz0123456789";
 const RSVP_WIDTH_SOURCE = `${RSVP_SHORT_TEXT}${RSVP_NEAR_LIMIT_TEXT}${RSVP_LONG_URL}。`;
+
+test("Chrome RSVP controls and outline distinguish active, inactive, and keyboard focus in more contrast", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.emulateMedia({ contrast: "no-preference" });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true, outline: "two" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  const normal = await dialog.evaluate((reader) => {
+    const read = (selector: string) => {
+      const element = reader.querySelector<HTMLElement>(selector);
+      if (!element) throw new Error(`missing ${selector}`);
+      const style = getComputedStyle(element);
+      return { color: style.color, background: style.backgroundColor, outline: style.outlineColor };
+    };
+    return {
+      mode: read('[data-reader-mode-button="true"]'),
+      close: read('[data-reader-topbar] button[aria-label="readerを閉じる"]'),
+      previous: read('[aria-label="1文戻る"]'),
+      play: read('[aria-label="再生"]'),
+      previousContext: read('[data-reader-context-previous="true"]'),
+      nextContext: read('[data-reader-context-next="true"]'),
+      progress: read('[data-reader-progress="true"]'),
+      activeHeading: read('[data-reader-minimap] button[aria-current="location"]'),
+      inactiveHeading: read('[data-reader-minimap] button[aria-current="false"]'),
+    };
+  });
+
+  await page.emulateMedia({ contrast: "more" });
+  await page.reload();
+  await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
+  await openChrome(page, { paused: true, outline: "two" });
+  const highContrastDialog = page.getByRole("dialog", { name: "reader" });
+  await expect(highContrastDialog).toBeVisible();
+  await expect(highContrastDialog.getByRole("button", { name: "再生" })).toBeVisible();
+
+  const highContrast = await highContrastDialog.evaluate((reader) => {
+    const read = (selector: string) => {
+      const element = reader.querySelector<HTMLElement>(selector);
+      if (!element) throw new Error(`missing ${selector}`);
+      const style = getComputedStyle(element);
+      return {
+        color: style.color,
+        background: style.backgroundColor,
+        outlineStyle: style.outlineStyle,
+        outlineWidth: style.outlineWidth,
+        outlineColor: style.outlineColor,
+      };
+    };
+    return {
+      mode: read('[data-reader-mode-button="true"]'),
+      close: read('[data-reader-topbar] button[aria-label="readerを閉じる"]'),
+      previous: read('[aria-label="1文戻る"]'),
+      play: read('[aria-label="再生"]'),
+      previousContext: read('[data-reader-context-previous="true"]'),
+      nextContext: read('[data-reader-context-next="true"]'),
+      progress: read('[data-reader-progress="true"]'),
+      activeHeading: read('[data-reader-minimap] button[aria-current="location"]'),
+      inactiveHeading: read('[data-reader-minimap] button[aria-current="false"]'),
+    };
+  });
+
+  expect(normal.mode.background).not.toBe(highContrast.mode.background);
+  expect(normal.previous.color).not.toBe(highContrast.previous.color);
+  expect(normal.previousContext.color).not.toBe(highContrast.previousContext.color);
+  expect(normal.progress.color).not.toBe(highContrast.progress.color);
+  expect(highContrast.mode.color).toBe("rgb(0, 0, 0)");
+  expect(highContrast.mode.background).toBe("rgb(255, 255, 255)");
+  expect(highContrast.close.color).toBe("rgb(255, 255, 255)");
+  expect(highContrast.previous.color).toBe("rgb(255, 255, 255)");
+  expect(highContrast.play.color).toBe("rgb(255, 255, 255)");
+  expect(highContrast.previousContext.color).toBe("rgb(255, 255, 255)");
+  expect(highContrast.nextContext.color).toBe("rgb(255, 255, 255)");
+  expect(highContrast.progress.color).toBe("rgb(255, 255, 255)");
+  expect(highContrast.activeHeading.color).toBe("rgb(0, 0, 0)");
+  expect(highContrast.activeHeading.background).toBe("rgb(255, 255, 255)");
+  expect(highContrast.inactiveHeading.color).toBe("rgb(255, 255, 255)");
+  expect(highContrast.inactiveHeading.background).toBe("rgba(0, 0, 0, 0)");
+  expect(highContrast.activeHeading.color).not.toBe(highContrast.inactiveHeading.color);
+
+  await highContrastDialog.getByRole("button", { name: "文章で読む" }).focus();
+  await page.keyboard.press("Tab");
+  const focusedClose = highContrastDialog.getByRole("button", { name: "readerを閉じる" });
+  await expect(focusedClose).toBeFocused();
+  await expect(focusedClose).toHaveCSS("outline-style", "solid");
+  await expect(focusedClose).toHaveCSS("outline-width", "2px");
+  await expect(focusedClose).toHaveCSS("outline-color", "rgb(255, 255, 255)");
+});
+
+test("Chrome text content and progress become readable in more contrast", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.emulateMedia({ contrast: "more" });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog.getByRole("button", { name: "文章で読む" })).toBeVisible();
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  await expect(dialog.locator('[data-reader-text-shell="true"]')).toBeVisible();
+
+  await expect(dialog.locator("article.article")).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(dialog.locator("[data-reader-position-kind=\"text\"]").first()).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(dialog.locator('[data-reader-progress="true"]')).toHaveCSS("color", "rgb(255, 255, 255)");
+});
+
+test("Chrome figure caption, loading status, and description become readable in more contrast", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.emulateMedia({ contrast: "more" });
+  const releaseImage = await openFigureViewer(page, "chrome", { paused: true, cacheKey: "contrast-figure" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const figure = dialog.getByRole("figure", { name: "本文画像" });
+  const status = figure.locator("[data-reader-figure-status]");
+  const description = figure.locator("[data-reader-figure-description]");
+  await expect(status).toBeVisible();
+  await expect(description).toBeVisible();
+  await expect(status).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(description).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(figure.locator("[data-reader-figure-indicator]")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+
+  await releaseImage();
+  await expect(status).toBeHidden({ timeout: 5_000 });
+  await expect(figure.locator("figcaption")).toBeVisible();
+  await expect(figure.locator("figcaption")).toHaveCSS("color", "rgb(255, 255, 255)");
+});
+
+test("Chrome preparation loading feedback becomes readable in more contrast", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.emulateMedia({ contrast: "more" });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 2_000 });
+
+  await expect(page.locator('[data-reader-loading-label="true"]')).toHaveText("文章を準備しています");
+  await expect(page.locator('[data-reader-loading-cancel="true"]')).toBeVisible();
+  await expect(page.locator('[data-reader-loading-label="true"]')).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(page.locator('[data-reader-loading-cancel="true"]')).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(page.locator('[data-reader-loading-bar="true"]')).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(page.locator('[data-reader-loading-indicator="true"]')).toHaveCSS("background-color", "rgb(255, 255, 255)");
+
+  await page.getByRole("button", { name: "中止" }).click();
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+});
+
+test("Chrome extraction errors keep retry and close actions readable in more contrast", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.emulateMedia({ contrast: "more" });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { error: true, reason: "unsupported_page" });
+
+  const error = page.locator('[data-reader-error="true"]');
+  await expect(error).toBeVisible();
+  await expect(page.getByRole("button", { name: "やり直す" })).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(page.getByRole("button", { name: "readerを閉じる" })).toHaveCSS("color", "rgb(255, 255, 255)");
+});
+
+test("Chrome keeps high contrast colors while reduced motion disables loading animation", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.emulateMedia({ contrast: "more", reducedMotion: "reduce" });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { delay: 1_200 });
+
+  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
+  const indicator = page.locator('[data-reader-loading-indicator="true"]');
+  await expect(indicator).toBeVisible();
+  await expect(indicator).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  expect(await indicator.evaluate((element) => element.getAnimations().length)).toBe(0);
+});
 
 for (const viewportWidth of RSVP_WIDTHS) {
   test(`Chrome viewer caps RSVP units at ${viewportWidth}px without changing font size`, async ({ page }) => {
