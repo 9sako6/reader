@@ -37,10 +37,38 @@ test("paired benchmark requires main and candidate samples to alternate on one r
   assert.throws(
     () => summarizePairedSamples([
       alternatingSamples[0],
-      alternatingSamples[2],
-      alternatingSamples[1],
-      alternatingSamples[3],
+      { ...alternatingSamples[1], order: "main-candidate" },
+      { ...alternatingSamples[2], order: "candidate-main" },
+      { ...alternatingSamples[3], order: "main-candidate" },
     ]),
     /alternate main-candidate and candidate-main/,
   );
+});
+
+test("paired benchmark aggregates Vitest JSON percentile statistics when raw samples are omitted", () => {
+  const { evaluateVitestReport } = require("./paired.mjs");
+  const benchmarks = [];
+  for (let run = 0; run < 4; run += 1) {
+    const first = run % 2 === 0 ? "main" : "candidate";
+    const second = first === "main" ? "candidate" : "main";
+    for (const side of [first, second]) {
+      const median = side === "main" ? 10 : 11;
+      benchmarks.push({
+        name: `fast/parser/pair-${run}/${side}`,
+        median,
+        p99: median + 1,
+        samples: [],
+      });
+    }
+  }
+
+  const result = evaluateVitestReport({ files: [{ groups: [{ benchmarks }] }] }, {
+    p50DeltaMs: 2,
+    p90DeltaMs: 2,
+    p90DeltaPercent: 20,
+  });
+
+  assert.equal(result.status, "pass");
+  assert.equal(result.groups[0].report.deltaMs.p50, 1);
+  assert.equal(result.groups[0].report.deltaMs.p90, 1);
 });

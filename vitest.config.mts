@@ -1,6 +1,10 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  benchmark: {
+    include: ["benchmark/**/*.bench.ts"],
+    includeSamples: true,
+  },
   test: {
     environment: "node",
     globals: true,
