@@ -942,6 +942,14 @@ test("Safari reader acknowledges the tap at the page edge before 200ms", async (
   ), null);
 });
 
+test("Safari reader keeps a short inline code background close to the centered text", () => {
+  const harness = createSafariReaderHarness();
+  const readerStyle = harness.createdElements.find((element) => element.tagName === "STYLE");
+
+  assert.match(readerStyle.textContent, /\.rsvp-unit\.code \{[^}]*text-align: center;/u);
+  assert.match(readerStyle.textContent, /\.rsvp-unit\.code code \{[^}]*display: inline-block;[^}]*width: max-content;[^}]*max-width: 100%;[^}]*min-width: 0;/u);
+});
+
 test("Safari reader shows only the thin progress bar from 200ms", async () => {
   const harness = createSafariReaderHarness(Engine, "ja", { extractionElapsedMs: 200 });
   await harness.context.MobileViewer.open();
@@ -1102,6 +1110,49 @@ test("Safari viewer segments with the ReaderContent language", async () => {
   await harness.context.MobileViewer.open();
 
   assert.deepEqual(locales, ["en-US"]);
+});
+
+test("Safari viewer highlights a code block when extraction provides its language", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement } = harness;
+  const code = "const result = await client.readFully();";
+  const trailing = "Continue after the example.";
+  const text = `${code}\n${trailing}`;
+  harness.setActiveContent({
+    text,
+    readingContext: {
+      language: "en",
+      title: "",
+      blocks: [
+        { text: code, kind: "preformatted", level: null, start: 0, end: code.length },
+        { text: trailing, kind: "paragraph", level: null, start: code.length + 1, end: text.length },
+      ],
+      headings: [],
+      sectionOffsets: [],
+      sectionTransitions: [],
+      initialHeadingIndex: -1,
+      figures: [{
+        kind: "code",
+        alt: "コードブロック",
+        caption: "",
+        code,
+        language: "typescript",
+        sourceOffset: 0,
+        sourceEnd: code.length,
+      }],
+    },
+  });
+
+  await context.MobileViewer.open();
+
+  const codePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "コードブロック");
+  const highlightedCode = findElement(codePanel, (element) => element.attributes["data-reader-highlighted-code"] === "true");
+  const languageLabel = findElement(codePanel, (element) => element.attributes["data-reader-code-language-label"] === "true");
+  const keyword = findElement(codePanel, (element) => element.attributes["data-reader-syntax-token"] === "keyword");
+  assert.equal(highlightedCode.attributes["data-reader-code-language"], "typescript");
+  assert.equal(languageLabel.textContent, "TypeScript");
+  assert.equal(keyword.textContent, "const");
+  assert.equal(findElement(codePanel, (element) => element.attributes["data-reader-code-block"] === "true").textContent, code);
 });
 
 test("Safari reader exposes modal semantics, traps keyboard actions, and restores inert state", async () => {

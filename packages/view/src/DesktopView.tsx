@@ -11,6 +11,20 @@ import type { ReaderViewHandlers, ReaderViewModel } from "./types";
 
 export function DesktopView({ model, handlers }: { model: Extract<ReaderViewModel, { kind: "rsvp" | "text" }>; handlers: ReaderViewHandlers }): ReactElement {
   const rsvp = model.kind === "rsvp";
+  const closeButton = (
+    <Button
+      label="閉じる"
+      onClick={handlers.close}
+      extra={{ pointerEvents: "auto", width: "52px", height: "52px", padding: "0", borderRadius: "18px", border: "0", background: "rgba(9,9,9,0.72)", color: "rgba(245,245,247,0.76)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", boxShadow: "none" }}
+    />
+  );
+  const modeButton = (
+    <Button
+      label={rsvp ? "文章で読む" : "RSVPで読む"}
+      onClick={rsvp ? handlers.switchToText : handlers.switchToRsvp}
+      extra={{ pointerEvents: "auto", minWidth: "132px", minHeight: "46px", borderRadius: "15px", border: "0", background: "rgba(9,9,9,0.72)", color: "rgba(245,245,247,0.72)", fontWeight: "600", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", boxShadow: "none", "data-reader-mode-button": "true" }}
+    />
+  );
   return (
     <div
       data-reader-stage={rsvp ? "true" : undefined}
@@ -18,15 +32,14 @@ export function DesktopView({ model, handlers }: { model: Extract<ReaderViewMode
       className={rsvp ? "rsvp-view" : "text-view"}
       style={rsvp
         ? { position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(980px, calc(100% - 48px))", height: "calc(100% - 48px)", display: "grid", gridTemplateColumns: model.headings.length > 0 ? "280px minmax(0, 1fr)" : "minmax(0, 1fr)", columnGap: model.headings.length > 0 ? "32px" : "0", alignItems: "stretch" }
-        : { width: "min(900px, calc(100% - 32px))", height: "calc(100% - 32px)", margin: "16px auto", position: "relative", boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.10)", borderRadius: "24px", background: "rgba(24,24,24,0.92)", overflow: "hidden" }}
+        : { width: "100%", height: "100%", margin: "0", position: "relative", boxSizing: "border-box", border: "0", borderRadius: "0", background: "transparent", overflow: "hidden" }}
     >
       {rsvp ? (
         <>
           <Minimap model={model} handlers={handlers} />
-          <main style={{ position: "relative", minWidth: "0", height: "100%" }}>
-            <div data-reader-topbar="true" style={{ position: "absolute", top: "8px", left: "0", right: "0", height: "44px", zIndex: "2", pointerEvents: "none", display: "flex", justifyContent: "space-between" }}>
-              <Button label="文章で読む" onClick={handlers.switchToText} extra={{ pointerEvents: "auto", minWidth: "112px", "data-reader-mode-button": "true" }} />
-              <Button label="閉じる" onClick={handlers.close} extra={{ pointerEvents: "auto", width: "44px", height: "44px", padding: "0", background: "transparent" }} />
+          <main data-reader-reading-pane="true" style={{ position: "relative", minWidth: "0", height: "100%" }}>
+            <div data-reader-topbar="true" style={{ position: "absolute", top: "8px", right: "0", zIndex: "4", pointerEvents: "none" }}>
+              {closeButton}
             </div>
             <div data-reader-context-previous="true" aria-hidden="true" style={{ position: "absolute", left: "50%", bottom: "calc(50% + 82px)", transform: "translateX(-50%)", width: "min(100%, 640px)", maxWidth: "calc(100% - 32px)", color: "rgba(255,255,255,0.26)", fontSize: "clamp(16px, 1.5vw, 20px)", lineHeight: "1.4", textAlign: "center", opacity: "0.26", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: "2", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
               {model.previous}
@@ -51,16 +64,17 @@ export function DesktopView({ model, handlers }: { model: Extract<ReaderViewMode
             <div data-reader-context-next="true" aria-hidden="true" style={{ position: "absolute", left: "50%", top: "calc(50% + 82px)", transform: "translateX(-50%)", width: "min(100%, 640px)", maxWidth: "calc(100% - 32px)", color: "rgba(255,255,255,0.26)", fontSize: "clamp(16px, 1.5vw, 20px)", lineHeight: "1.4", textAlign: "center", opacity: "0.26", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: "2", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
               {model.next}
             </div>
-            <div style={{ position: "absolute", left: "50%", bottom: "8px", transform: "translateX(-50%)", width: "min(100%, 264px)", minHeight: "56px", display: "grid", gridTemplateColumns: "1fr 56px 1fr", alignItems: "center" }}>
-              <IconButton label="1文戻る" onClick={handlers.previousSentence} extra={{ width: "52px", height: "52px", color: "rgba(245,245,247,0.66)" }} />
-              {model.figure
-                ? <Button label="続きを読む" onClick={handlers.resumeFigure} extra={{ key: "resume", minWidth: "88px" }} />
-                : <IconButton label={model.playing ? "一時停止" : "再生"} onClick={handlers.togglePlayback} extra={{ fontSize: "20px", width: "56px", height: "56px", color: "rgba(245,245,247,0.66)" }} pressed={model.playing} />}
-              <span />
-            </div>
-            <span data-reader-progress="true" style={{ position: "absolute", right: "16px", bottom: "16px", zIndex: "3", color: "rgba(235,235,235,0.58)", fontSize: "13px", fontVariantNumeric: "tabular-nums", pointerEvents: "none" }}>
-              {`${model.progress}%`}
-            </span>
+            <footer data-reader-controlbar="true" style={{ position: "absolute", zIndex: "4", left: "0", right: "0", bottom: "0", height: "146px", pointerEvents: "none" }}>
+              <div data-reader-control-dock="true" style={{ position: "absolute", left: "50%", bottom: "54px", transform: "translateX(-50%)", width: "min(100% - 32px, 260px)", minHeight: "72px", display: "grid", gridTemplateColumns: "1fr 64px 1fr", alignItems: "center", padding: "4px 10px", border: "0", borderRadius: "24px", background: "transparent", boxShadow: "none", pointerEvents: "auto" }}>
+                <IconButton label="1文戻る" onClick={handlers.previousSentence} iconSize={38} extra={{ width: "60px", height: "60px", color: "rgba(245,245,247,0.68)", background: "rgba(9,9,9,0.72)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", justifySelf: "center" }} />
+                <IconButton label={model.figure ? "続きを読む" : model.playing ? "一時停止" : "再生"} onClick={model.figure ? handlers.resumeFigure : handlers.togglePlayback} iconSize={model.playing && !model.figure ? 34 : 38} extra={{ width: "64px", height: "64px", color: "rgba(245,245,247,0.82)", background: "rgba(9,9,9,0.72)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", justifySelf: "center" }} pressed={model.figure ? undefined : model.playing} />
+                <span aria-hidden="true" />
+              </div>
+              <div style={{ position: "absolute", left: "50%", bottom: "2px", transform: "translateX(-50%)", pointerEvents: "auto" }}>{modeButton}</div>
+              <span data-reader-progress="true" style={{ position: "absolute", right: "16px", bottom: "17px", color: "rgba(235,235,235,0.50)", fontSize: "13px", fontVariantNumeric: "tabular-nums", pointerEvents: "none" }}>
+                {`${model.progress}%`}
+              </span>
+            </footer>
           </main>
           {model.loadingCover ? <LoadingIndicator mobile={false} reducedMotion={model.reducedMotion === true} revealed animate={handlers.loadingAnimation} /> : null}
         </>
@@ -72,9 +86,11 @@ export function DesktopView({ model, handlers }: { model: Extract<ReaderViewMode
               {orderedTextChildren(model, handlers)}
             </article>
           </ReaderTextScroller>
-          <div data-reader-topbar="true" style={{ position: "absolute", top: "8px", left: "16px", right: "16px", height: "44px", zIndex: "2", display: "flex", justifyContent: "space-between", pointerEvents: "none" }}>
-            <Button label="RSVPで読む" onClick={handlers.switchToRsvp} extra={{ pointerEvents: "auto", "data-reader-mode-button": "true" }} />
-            <Button label="閉じる" onClick={handlers.close} extra={{ pointerEvents: "auto" }} />
+          <div data-reader-topbar="true" style={{ position: "absolute", top: "12px", right: "16px", zIndex: "4", pointerEvents: "none" }}>
+            {closeButton}
+          </div>
+          <div style={{ position: "absolute", zIndex: "4", left: "50%", bottom: "10px", transform: "translateX(-50%)", pointerEvents: "auto" }}>
+            {modeButton}
           </div>
           <span data-reader-progress="true" style={{ position: "absolute", right: "16px", bottom: "16px", zIndex: "3", color: "rgba(235,235,235,0.58)", fontSize: "13px", fontVariantNumeric: "tabular-nums", pointerEvents: "none" }}>
             {`${model.progress}%`}

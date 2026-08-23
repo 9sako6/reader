@@ -16,7 +16,7 @@
 
   const ROOT_ID = "__rsvp-reader-root";
   const DISPLAY_FONT_SIZE = "clamp(36px, 4.5vw, 64px)";
-  const LOADER_REVEAL_DELAY_MS = 100;
+  const LOADER_REVEAL_DELAY_MS = 200;
   const SLOW_PREPARATION_DELAY_MS = 400;
   const LOADING_COVER_TRANSITION_MS = 220;
 
@@ -38,7 +38,6 @@
   let loadingStartedAt: number | null = null;
   let loadingSlowVisible = false;
   let loadingCoverVisible = false;
-  let loadingCoverTimerId: number | null = null;
   let display: HTMLDivElement | null = null;
   let headings: ReaderHeading[] = [];
   let sectionTransitions: ReaderSectionTransition[] = [];
@@ -203,31 +202,23 @@
       && previousPositionKey
       && nextPositionKey
       && previousPositionKey !== nextPositionKey
+      && nextPositionKey.startsWith("figure:")
       && !prefersReducedMotion()
     ) {
-      const enteringFigure = nextPositionKey.startsWith("figure:");
       previousDisplay.animate(
-        enteringFigure ? [{ opacity: 1 }, { opacity: 0 }] : [{ opacity: 0 }, { opacity: 1 }],
+        [{ opacity: 1 }, { opacity: 0 }],
         { duration: 180, easing: "ease-out" },
       );
-      if (enteringFigure) {
-        root?.querySelector?.<HTMLElement>('[aria-label="本文画像"]')?.animate(
-          [{ opacity: 0 }, { opacity: 1 }],
-          { duration: 180, easing: "ease-out" },
-        );
-      }
+      root?.querySelector?.<HTMLElement>('[aria-label="本文画像"]')?.animate(
+        [{ opacity: 0 }, { opacity: 1 }],
+        { duration: 180, easing: "ease-out" },
+      );
     }
     const stage = root?.querySelector?.<HTMLDivElement>('[data-reader-stage="true"]');
     if (stage && model.kind === "rsvp" && wasVisibleLoading && !prefersReducedMotion()) {
       stage.animate(
         [{ opacity: 0 }, { opacity: 1 }],
         { duration: LOADING_COVER_TRANSITION_MS, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
-      );
-    }
-    if (model.kind === "rsvp" && model.next && !prefersReducedMotion()) {
-      root?.querySelector?.<HTMLDivElement>('[data-reader-context-next="true"]')?.animate(
-        [{ opacity: 0.12 }, { opacity: 0.26 }],
-        { duration: 120, easing: "ease-out" },
       );
     }
     reactLoadingRevealed = model.kind === "loading" && model.revealed !== false;
@@ -495,23 +486,16 @@
       ? globalThis.Engine.positionForFlowItem(flowItems[0], units)
       : { kind: "text", sourceOffset: 0 };
     activePreparation = { kind: "ready", requestId };
+    loadingCoverVisible = false;
     createOverlay();
     rebuildUnitsForViewport();
     renderReactView(reactViewModel());
-    if (loadingCoverVisible) {
-      if (loadingCoverTimerId !== null) globalThis.clearTimeout(loadingCoverTimerId);
-      loadingCoverTimerId = globalThis.setTimeout(() => {
-        loadingCoverTimerId = null;
-        loadingCoverVisible = false;
-        renderReactView(reactViewModel());
-      }, LOADING_COVER_TRANSITION_MS);
-    }
     dispatchSession({
       type: "prepareSucceeded",
       requestId,
       flow: sessionPreparation(),
     });
-    focusAfterPaint(findCloseButton());
+    focusAfterPaint(root);
   }
 
   function readerSessionAvailable(): boolean {
@@ -650,10 +634,6 @@
     cancelLoadingReveal();
     activePreparation = { kind: "failed", requestId, reason };
     loadingCoverVisible = false;
-    if (loadingCoverTimerId !== null) {
-      globalThis.clearTimeout(loadingCoverTimerId);
-      loadingCoverTimerId = null;
-    }
     if (!root) root = createRoot();
     renderReactView(reactViewModel());
     attachKeydownListener();
@@ -764,7 +744,7 @@
     if (!root) root = createRoot();
     renderReactView(reactViewModel());
     attachKeydownListener();
-    focusAfterPaint(findCloseButton());
+    focusAfterPaint(root);
     if (typeof globalThis.ResizeObserver === "function" && root && !displayResizeObserver) {
       displayResizeObserver = new globalThis.ResizeObserver(() => {
         if (rebuildUnitsForViewport()) renderSessionState();
@@ -792,6 +772,7 @@
     dialog.setAttribute("role", "dialog");
     dialog.setAttribute("aria-modal", "true");
     dialog.setAttribute("aria-label", "reader");
+    dialog.setAttribute("tabindex", "-1");
     Object.assign(dialog.style, {
       display: "block",
       position: "fixed",
@@ -812,6 +793,7 @@
       writingMode: "horizontal-tb",
       pointerEvents: "auto",
       overflow: "hidden",
+      outline: "none",
       WebkitFontSmoothing: "antialiased",
     });
 
@@ -855,12 +837,27 @@
         writing-mode: horizontal-tb;
         pointer-events: auto;
         overflow: hidden;
+        outline: none;
       }
 
       dialog.reader-dialog::backdrop { background: transparent; }
       nav::-webkit-scrollbar { display: none; }
       [data-reader-text-scroller] { overscroll-behavior: contain; }
       nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-offset: -2px; }
+      [data-reader-icon-button]:hover,
+      [data-reader-topbar] button:hover,
+      [data-reader-mode-button]:hover { background-color: rgba(9,9,9,0.90) !important; color: rgba(255,255,255,0.94) !important; }
+      [data-reader-icon-button]:active,
+      [data-reader-topbar] button:active,
+      [data-reader-mode-button]:active { transform: scale(0.96); }
+      [data-reader-icon-button]:focus-visible,
+      [data-reader-topbar] button:focus-visible,
+      [data-reader-mode-button]:focus-visible { outline: 2px solid rgba(138,190,255,0.92); outline-offset: 3px; }
+      @media (prefers-reduced-motion: reduce) {
+        [data-reader-icon-button],
+        [data-reader-topbar] button,
+        [data-reader-mode-button] { transition: none !important; }
+      }
       @media (max-width: 1080px) {
         [data-reader-stage] { width: calc(100% - 32px) !important; height: calc(100% - 32px) !important; grid-template-columns: minmax(0, 1fr) !important; column-gap: 0 !important; }
         [data-reader-minimap] { display: none !important; }
@@ -884,7 +881,9 @@
           border: 1px solid var(--reader-contrast-text) !important;
         }
 
-        [data-reader-topbar] [data-reader-mode-button] {
+        [data-reader-stage] [data-reader-mode-button],
+        [data-reader-stage] [data-reader-mode-button]:hover,
+        [data-reader-stage] [data-reader-mode-button]:active {
           background: var(--reader-contrast-text) !important;
           color: var(--reader-contrast-background) !important;
         }
@@ -1056,21 +1055,7 @@
   }
 
   function findCloseButton(): HTMLButtonElement | null {
-    if (!root) return null;
-    const queried = root.querySelector?.<HTMLButtonElement>('[aria-label="readerを閉じる"]');
-    if (queried) return queried;
-    const find = (element: Element): HTMLButtonElement | null => {
-      for (const child of Array.from(element.children)) {
-        const candidate = child as HTMLElement;
-        if (candidate.tagName.toLowerCase() === "button" && candidate.getAttribute?.("aria-label") === "readerを閉じる") {
-          return candidate as HTMLButtonElement;
-        }
-        const nested = find(candidate);
-        if (nested) return nested;
-      }
-      return null;
-    };
-    return find(root);
+    return findReaderButton((button) => button.getAttribute("aria-label") === "readerを閉じる");
   }
 
   function findLoadingCancelButton(): HTMLButtonElement | null {
@@ -1078,21 +1063,26 @@
   }
 
   function findModeButton(): HTMLButtonElement | null {
+    return findReaderButton((button) => button.getAttribute("data-reader-mode-button") === "true");
+  }
+
+  function findReaderButton(predicate: (button: HTMLButtonElement) => boolean): HTMLButtonElement | null {
     if (!root) return null;
-    const queried = root.querySelector?.<HTMLButtonElement>('[data-reader-mode-button="true"]');
-    if (queried) return queried;
-    const find = (element: Element): HTMLButtonElement | null => {
+    const pending: Element[] = [root];
+    const visited = new Set<Element>();
+    while (pending.length > 0) {
+      const element = pending.shift();
+      if (!element || visited.has(element)) continue;
+      visited.add(element);
       for (const child of Array.from(element.children)) {
         const candidate = child as HTMLElement;
-        if (candidate.tagName.toLowerCase() === "button" && candidate.getAttribute?.("data-reader-mode-button") === "true") {
+        if (candidate.tagName.toLowerCase() === "button" && predicate(candidate as HTMLButtonElement)) {
           return candidate as HTMLButtonElement;
         }
-        const nested = find(candidate);
-        if (nested) return nested;
+        pending.push(candidate);
       }
-      return null;
-    };
-    return find(root);
+    }
+    return null;
   }
 
   function focusAfterPaint(
@@ -1130,33 +1120,36 @@
 
   function containsReaderElement(element: HTMLElement | null): boolean {
     if (!element || !root || element === root) return false;
-    if (typeof root.contains === "function") return root.contains(element);
     let current: HTMLElement | null = element;
-    while (current) {
+    const visited = new Set<HTMLElement>();
+    while (current && !visited.has(current)) {
       if (current === root) return true;
-      current = current.parentElement;
+      visited.add(current);
+      current = current.parentElement
+        || (current as unknown as { parent?: HTMLElement | null }).parent
+        || null;
     }
     return false;
   }
 
-  function focusCloseIfNeeded(previousFocus: HTMLElement | null): void {
+  function focusSurfaceIfNeeded(previousFocus: HTMLElement | null): void {
     if (containsReaderElement(previousFocus)) return;
-    const closeButton = findCloseButton();
-    const focusClose = () => {
+    const focusSurface = () => {
       if (readerHasFocus()) return;
-      if (containsReaderElement(closeButton)) closeButton?.focus?.({ preventScroll: true });
+      root?.focus?.({ preventScroll: true });
     };
     if (typeof globalThis.requestAnimationFrame === "function") {
       globalThis.requestAnimationFrame(() => {
-        focusClose();
-        globalThis.requestAnimationFrame(focusClose);
+        focusSurface();
+        globalThis.requestAnimationFrame(focusSurface);
       });
     } else {
-      focusClose();
+      focusSurface();
     }
   }
 
   function readerHasFocus(): boolean {
+    if (readerActiveElement() === root) return true;
     if (containsReaderElement(readerActiveElement())) return true;
     return lastReaderFocusedElement !== null
       && containsReaderElement(lastReaderFocusedElement)
@@ -1184,7 +1177,6 @@
 
   function showTextView() {
     if (!root || !sourceText) return;
-    const activeElement = readerActiveElement();
     textRestoring = true;
     textRestorePending = true;
     if (!applyingSession) {
@@ -1192,14 +1184,12 @@
     }
     renderReactView(reactViewModel());
     attachKeydownListener();
-    focusCloseIfNeeded(activeElement);
+    focusAfterPaint(findModeButton());
     return;
   }
 
   function showRsvpView() {
     if (!root || units.length === 0) return;
-    const previousFocus = readerActiveElement();
-    const restoreModeFocus = previousFocus?.getAttribute?.("data-reader-mode-button") === "true";
     const modeRestorePending = textRestorePending;
     textRestorePending = false;
     let capturedPosition = currentPosition;
@@ -1215,7 +1205,7 @@
     renderReactView(reactViewModel());
     scheduleTextRestoreRelease();
     attachKeydownListener();
-    if (restoreModeFocus) focusAfterPaint(findModeButton());
+    focusAfterPaint(findModeButton());
     return;
   }
 
@@ -1606,28 +1596,27 @@
 
   function trapFocus(event: KeyboardEvent): void {
     if (!root) return;
-    const focusable = focusableReaderElements();
-    if (focusable.length === 0) return;
     const active = readerActiveElement() || eventPath(event).find((target) => (
       typeof target === "object"
       && target !== null
       && target instanceof HTMLElement
       && containsReaderElement(target)
     )) as HTMLElement | undefined;
-    const currentIndex = focusable.indexOf(active as HTMLElement);
-    const textShell = root.querySelector?.("[data-reader-text-shell]");
-    const activeTopbar = active?.parentElement?.getAttribute?.("data-reader-topbar") === "true";
-    if (textShell && activeTopbar) {
+    if (sessionMode() === "text") {
       const isCloseButton = active?.getAttribute?.("aria-label") === "readerを閉じる";
+      const isModeButton = active?.getAttribute?.("data-reader-mode-button") === "true";
       const closeButton = findCloseButton();
-      const modeButton = active?.parentElement?.querySelector?.("button:not([aria-label='readerを閉じる'])") as HTMLButtonElement | null;
-      const nextTopbarButton = event.shiftKey && !isCloseButton ? closeButton : !event.shiftKey && isCloseButton ? modeButton : null;
-      if (nextTopbarButton) {
+      const modeButton = findModeButton();
+      const nextTextControl = event.shiftKey && isModeButton ? closeButton : !event.shiftKey && isCloseButton ? modeButton : null;
+      if (nextTextControl) {
         event.preventDefault();
-        nextTopbarButton.focus?.({ preventScroll: true });
+        nextTextControl.focus?.({ preventScroll: true });
         return;
       }
     }
+    const focusable = focusableReaderElements();
+    if (focusable.length === 0) return;
+    const currentIndex = focusable.indexOf(active as HTMLElement);
     const nextIndex = event.shiftKey
       ? currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1
       : currentIndex < 0 || currentIndex >= focusable.length - 1 ? 0 : currentIndex + 1;
@@ -1644,7 +1633,10 @@
   function focusableReaderElements(): HTMLElement[] {
     if (!root) return [];
     const focusable: HTMLElement[] = [];
+    const visited = new Set<Element>();
     const visit = (element: Element): void => {
+      if (visited.has(element)) return;
+      visited.add(element);
       for (const child of Array.from(element.children)) {
         const candidate = child as HTMLElement;
         if (isFocusableReaderElement(candidate)) focusable.push(candidate);
@@ -1754,10 +1746,6 @@
   function removeOverlay() {
     cancelLoadingReveal();
     invalidateFigureLoad();
-    if (loadingCoverTimerId !== null) {
-      globalThis.clearTimeout(loadingCoverTimerId);
-      loadingCoverTimerId = null;
-    }
     detachKeydownListener();
     displayResizeObserver?.disconnect();
     displayResizeObserver = null;

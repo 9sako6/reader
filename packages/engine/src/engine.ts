@@ -9,6 +9,7 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
 })(globalThis, function createEngine(): ReaderEngine {
   const MAX_WORDS_PER_UNIT = 7;
   const MAX_GRAPHEMES_PER_UNIT = 12;
+  const MAX_LATIN_WORD_GRAPHEMES_PER_UNIT = 24;
   const MIN_WORDS_BEFORE_BOUNDARY = 3;
   const SOFT_BOUNDARY_WORDS = new Set(["を","に","へ","と","から","まで","より","が","は","も","て","で","ので","のに","なら","れば","けど","けれど"]);
   const PHRASE_BOUNDARY_PUNCTUATION = new Set(["、","，",";","；",":","："]);
@@ -177,8 +178,9 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
       ...graphemes.map((piece, index) => [piece.index, index] as const),
       [unit.text.length, graphemes.length],
     ]);
+    const wordPieces = [...new Intl.Segmenter(locale, { granularity: "word" }).segment(unit.text)];
     const wordBoundaries = new Set<number>();
-    for (const piece of new Intl.Segmenter(locale, { granularity: "word" }).segment(unit.text)) {
+    for (const piece of wordPieces) {
       if (piece.index > 0) wordBoundaries.add(piece.index);
       const pieceEnd = piece.index + piece.segment.length;
       wordBoundaries.add(pieceEnd);
@@ -195,7 +197,21 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
       const wordBoundary = [...wordBoundaries]
         .filter((offset) => offset > start && offset <= candidateEnd && graphemeIndexByOffset.has(offset))
         .sort((left, right) => right - left)[0];
-      const end = wordBoundary ?? candidateEnd;
+      const leadingWordIndex = wordPieces.findIndex((piece) => piece.index === start && piece.isWordLike);
+      const leadingWord = leadingWordIndex >= 0 ? wordPieces[leadingWordIndex] : undefined;
+      const leadingWordEnd = leadingWord ? leadingWord.index + leadingWord.segment.length : 0;
+      const followingPiece = leadingWordIndex >= 0 ? wordPieces[leadingWordIndex + 1] : undefined;
+      const extendedLatinWordEnd = !wordBoundary
+        && limit === MAX_GRAPHEMES_PER_UNIT
+        && leadingWord
+        && leadingWordEnd > candidateEnd
+        && /^[\p{Script=Latin}\p{M}\p{N}_]+$/u.test(leadingWord.segment)
+        && graphemeCount(leadingWord.segment, locale) <= MAX_LATIN_WORD_GRAPHEMES_PER_UNIT
+        ? followingPiece && /^\s+$/u.test(followingPiece.segment)
+          ? followingPiece.index + followingPiece.segment.length
+          : leadingWordEnd
+        : 0;
+      const end = (wordBoundary ?? extendedLatinWordEnd) || candidateEnd;
       const endGrapheme = graphemeIndexByOffset.get(end) ?? candidateGraphemeEnd;
       const safeEndGrapheme = endGrapheme > graphemeStart ? endGrapheme : candidateGraphemeEnd;
       const safeEnd = safeEndGrapheme === graphemes.length

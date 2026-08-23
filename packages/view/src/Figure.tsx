@@ -1,44 +1,73 @@
 import { useEffect, useState, type ReactElement } from "react";
 import { figureDescription } from "./figure-description";
+import { codeLanguageLabel, SyntaxHighlightedCode } from "./SyntaxHighlightedCode";
 import type { ReaderFigureView, ReaderViewHandlers } from "./types";
 
 export function Figure({ figureView, handlers, text }: { figureView: ReaderFigureView; handlers: ReaderViewHandlers; text: boolean }): ReactElement {
   const { figure, figureIndex, status, token } = figureView;
   const kind = figure.kind;
   const [textAssetFailed, setTextAssetFailed] = useState(false);
-  useEffect(() => setTextAssetFailed(false), [kind === "code" ? figure.code : figure.src]);
+  const [textRevealed, setTextRevealed] = useState(true);
+  useEffect(() => {
+    setTextAssetFailed(false);
+    setTextRevealed(true);
+  }, [kind === "code" ? figure.code : figure.src]);
   const loading = status === "loading";
   const loadingVisible = figureView.loadingVisible === true;
   const failed = status === "failed" || (text && textAssetFailed);
-  const revealed = figureView.brightness === "revealed";
+  const revealed = text ? textRevealed : figureView.brightness === "revealed";
   const codeFallback = kind === "code" || (kind === "mermaid" && (!figure.src || failed));
+  const codeLanguage = kind === "code" ? figure.language.trim() : "";
   const label = kind === "code" ? "コードブロック" : kind === "mermaid" ? "Mermaid図" : "本文画像";
   const surfaceLabel = kind === "image" ? "画像" : label;
   const codeSurface = codeFallback ? (
-    <pre
-      data-reader-code-block="true"
-      data-reader-mermaid-fallback={kind === "mermaid" ? "true" : undefined}
-      tabIndex={0}
+    <div
+      data-reader-code-surface="true"
+      data-reader-highlighted-language={codeLanguage || undefined}
       style={{
         width: "min(100%, 760px)",
-        maxHeight: text ? "72vh" : "min(58vh, 600px)",
         margin: "0 auto",
-        padding: text ? "18px" : "20px",
-        overflow: "auto",
+        position: "relative",
         boxSizing: "border-box",
-        border: "1px solid rgba(255,255,255,0.12)",
         borderRadius: text ? "10px" : "12px",
-        background: "rgba(255,255,255,0.055)",
-        color: "rgba(255,255,255,0.92)",
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-        fontSize: text ? "0.84em" : "clamp(13px, 1.8vw, 18px)",
-        lineHeight: "1.55",
-        textAlign: "left",
-        whiteSpace: "pre",
+        overflow: "hidden",
       }}
     >
-      <code>{figure.code || (kind === "mermaid" ? "Mermaid図を表示できませんでした" : "")}</code>
-    </pre>
+      {codeLanguage ? (
+        <span
+          data-reader-code-language-label="true"
+          style={{ position: "absolute", zIndex: 1, top: "11px", right: "14px", color: "rgba(210,218,226,0.58)", fontSize: "11px", fontWeight: "600", lineHeight: "1", letterSpacing: "0.05em", pointerEvents: "none" }}
+        >
+          {codeLanguageLabel(codeLanguage)}
+        </span>
+      ) : null}
+      <pre
+        data-reader-code-block="true"
+        data-reader-mermaid-fallback={kind === "mermaid" ? "true" : undefined}
+        tabIndex={0}
+        style={{
+          width: "100%",
+          maxHeight: text ? "72vh" : "min(58vh, 600px)",
+          margin: "0",
+          padding: codeLanguage ? text ? "38px 18px 18px" : "42px 20px 20px" : text ? "18px" : "20px",
+          overflow: "auto",
+          boxSizing: "border-box",
+          border: "1px solid rgba(255,255,255,0.12)",
+          borderRadius: "inherit",
+          background: "rgba(255,255,255,0.055)",
+          color: "rgba(255,255,255,0.92)",
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          fontSize: text ? "0.84em" : "clamp(13px, 1.8vw, 18px)",
+          lineHeight: "1.55",
+          textAlign: "left",
+          whiteSpace: "pre",
+        }}
+      >
+        {codeLanguage
+          ? <SyntaxHighlightedCode code={figure.code} language={codeLanguage} />
+          : <code>{figure.code || (kind === "mermaid" ? "Mermaid図を表示できませんでした" : "")}</code>}
+      </pre>
+    </div>
   ) : null;
   const imageSurface = !codeFallback && !failed ? (
     <button
@@ -51,12 +80,12 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
       hidden={loading || failed}
       disabled={loading || failed}
       aria-hidden={loading ? "true" : undefined}
-      onClick={() => handlers.toggleFigureBrightness?.(figureIndex)}
+      onClick={() => text ? setTextRevealed((value) => !value) : handlers.toggleFigureBrightness?.(figureIndex)}
       style={{
         appearance: "none",
         border: "0",
         padding: "0",
-        background: "transparent",
+        background: figure.backgroundColor || "#fff",
         color: "inherit",
         position: "relative",
         display: "block",

@@ -28,6 +28,7 @@ export interface ReaderImageFigure {
   sizes?: string;
   width?: number;
   height?: number;
+  backgroundColor?: string;
   alt: string;
   caption: string;
   sourceOffset: number;
@@ -50,6 +51,7 @@ export interface ReaderMermaidFigure {
   alt: string;
   caption: string;
   code: string;
+  backgroundColor?: string;
   sourceOffset: number;
   sourceEnd: number;
 }

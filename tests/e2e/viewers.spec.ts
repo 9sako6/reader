@@ -80,6 +80,7 @@ type ChromeOpenOptions = {
       caption: string;
       code?: string;
       language?: string;
+      backgroundColor?: string;
       sourceOffset: number;
       sourceEnd: number;
     }>;
@@ -243,7 +244,7 @@ test("Chrome RSVP controls and outline distinguish active, inactive, and keyboar
   expect(highContrast.inactiveHeading.background).toBe("rgba(0, 0, 0, 0)");
   expect(highContrast.activeHeading.color).not.toBe(highContrast.inactiveHeading.color);
 
-  await highContrastDialog.getByRole("button", { name: "文章で読む" }).focus();
+  await highContrastDialog.locator('[data-reader-minimap] button[aria-current="false"]').focus();
   await page.keyboard.press("Tab");
   const focusedClose = highContrastDialog.getByRole("button", { name: "readerを閉じる" });
   await expect(focusedClose).toBeFocused();
@@ -554,17 +555,17 @@ test("Chrome reader keeps the loading bar hidden when preparation completes in 0
   expect(await loadingBarWasRevealed(page)).toBe(0);
 });
 
-test("Chrome reader keeps the loading bar hidden when preparation completes in 99ms", async ({ page }) => {
+test("Chrome reader keeps the loading bar hidden when preparation completes in 199ms", async ({ page }) => {
   await loadViewer(page, "chrome");
-  await openChrome(page, { delay: 99 });
+  await openChrome(page, { delay: 199 });
 
   await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
   await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(0);
 });
 
-test("Chrome reader reveals a centered thin bar at the 100ms threshold", async ({ page }) => {
+test("Chrome reader reveals a centered thin bar at the iPhone 200ms threshold", async ({ page }) => {
   await loadViewer(page, "chrome");
-  await openChrome(page, { delay: 100 });
+  await openChrome(page, { delay: 200 });
 
   await expect.poll(() => loadingBarRevealSnapshot(page)).toMatchObject({ height: "2px" });
   const snapshot = await loadingBarRevealSnapshot(page);
@@ -573,6 +574,7 @@ test("Chrome reader reveals a centered thin bar at the 100ms threshold", async (
   expect(Math.abs(snapshot!.left + snapshot!.width / 2 - snapshot!.viewportWidth / 2)).toBeLessThanOrEqual(1);
   expect(Math.abs(snapshot!.top + 1 - snapshot!.viewportHeight / 2)).toBeLessThanOrEqual(1);
   await expect(page.getByRole("dialog", { name: "reader" })).toBeVisible();
+  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(0);
 });
 
 test("Chrome reader keeps only the thin bar before the slow preparation threshold", async ({ page }) => {
@@ -1720,6 +1722,57 @@ test("mobile viewer pauses for an image and exposes its context", async ({ page 
   await expect(dialog.locator("[data-reader-unit]")).toBeVisible();
 });
 
+test("mobile text mode shows a transparent diagram without a dark veil", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await openMobile(page, { figureFirst: true, image: "transparent" });
+  const dialog = page.getByRole("dialog", { name: "reader" });
+
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+
+  const figure = dialog.getByRole("figure", { name: "本文画像" });
+  const surface = figure.locator('[data-reader-image-surface="true"]');
+  await expect(figure.getByRole("img", { name: "本文の読書フロー図" })).toBeVisible();
+  await expect(surface).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(figure.locator('[data-reader-image-veil="true"]')).toHaveCSS("opacity", "0");
+});
+
+test("Chrome viewer preserves the source-page background behind a transparent Mermaid image", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  const caption = "Transparent diagram";
+  const trailing = "Continue after the diagram.";
+  const text = `${caption}\n${trailing}`;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120"><path d="M20 60h280" stroke="#242424" stroke-width="8"/></svg>';
+  await openChrome(page, {
+    text,
+    paused: true,
+    readingContext: {
+      language: "en",
+      blocks: [{ text: trailing, kind: "paragraph", level: null, start: caption.length + 1, end: text.length }],
+      headings: [],
+      sectionOffsets: [],
+      sectionTransitions: [],
+      initialHeadingIndex: -1,
+      figures: [{
+        kind: "mermaid",
+        src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+        alt: "Transparent diagram",
+        caption,
+        code: "flowchart LR\n  A --> B",
+        backgroundColor: "rgb(246, 244, 240)",
+        sourceOffset: 0,
+        sourceEnd: caption.length,
+      }],
+    },
+  });
+
+  const figure = page.getByRole("dialog", { name: "reader" }).getByRole("figure", { name: "Mermaid図" });
+  const surface = figure.locator('[data-reader-image-surface="true"]');
+  await expect(figure.getByRole("img", { name: "Transparent diagram" })).toBeVisible();
+  await expect(surface).toHaveCSS("background-color", "rgb(246, 244, 240)");
+});
+
 test("Chrome viewer toggles a ready image surface with touch and keyboard", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/tests/e2e/fixtures/article.html?viewer=chrome&image=immediate&figure=first");
@@ -2074,6 +2127,9 @@ test("mobile RSVP gives a code block nearly the full phone width", async ({ page
     .getByRole("figure", { name: "コードブロック" })
     .locator('[data-reader-code-block="true"]');
   await expect(codeBlock).toBeVisible();
+  await expect(codeBlock.locator('[data-reader-highlighted-code="true"]')).toHaveAttribute("data-reader-code-language", "quint");
+  await expect(page.getByRole("dialog", { name: "reader" }).locator('[data-reader-code-language-label="true"]')).toHaveText("Quint");
+  await expect(codeBlock.locator('[data-reader-syntax-token="keyword"]').first()).toHaveText("action");
   const geometry = await codeBlock.evaluate((element) => {
     const box = element.getBoundingClientRect();
     return { left: box.left, right: box.right, width: box.width };
@@ -2081,6 +2137,44 @@ test("mobile RSVP gives a code block nearly the full phone width", async ({ page
   expect(geometry.width).toBeGreaterThanOrEqual(340);
   expect(geometry.left).toBeLessThanOrEqual(25);
   expect(390 - geometry.right).toBeLessThanOrEqual(25);
+});
+
+test("mobile RSVP centers short inline code without stretching its background", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await openMobile(page, {
+    text: "main",
+    readingContext: {
+      language: "en",
+      blocks: [{
+        text: "main",
+        kind: "paragraph",
+        level: null,
+        start: 0,
+        end: 4,
+        codeRanges: [{ text: "main", start: 0, end: 4 }],
+      }],
+      headings: [],
+      sectionOffsets: [],
+      sectionTransitions: [],
+      initialHeadingIndex: -1,
+      figures: [],
+    },
+  });
+
+  const inlineCode = page.getByRole("dialog", { name: "reader" }).locator('[data-reader-inline-code="true"]:visible');
+  await expect(inlineCode).toHaveText("main");
+  const geometry = await inlineCode.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return {
+      center: box.left + box.width / 2,
+      width: box.width,
+      backgroundColor: getComputedStyle(element).backgroundColor,
+    };
+  });
+  expect(geometry.width).toBeLessThan(160);
+  expect(Math.abs(geometry.center - 195)).toBeLessThanOrEqual(2);
+  expect(geometry.backgroundColor).toBe("rgba(255, 255, 255, 0.08)");
 });
 
 test("mobile RSVP gives a horizontal image nearly the full phone width", async ({ page }) => {
@@ -2113,14 +2207,15 @@ test("Chrome viewer traps focus and restores the launch button after Escape", as
   await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("aria-live", "off");
   await expect(dialog.locator("[data-reader-unit]")).toHaveAttribute("aria-atomic", "false");
   const closeButton = dialog.getByRole("button", { name: "readerを閉じる" });
-  await expect(closeButton).toBeFocused();
+  await expect(dialog).toBeFocused();
+  await expect(closeButton).not.toBeFocused();
   await dialog.getByRole("button", { name: "一時停止" }).click();
   await expect(dialog.getByRole("button", { name: "閉じる", exact: true })).toHaveCount(0);
 
   const firstControl = dialog.getByRole("button", { name: "実ブラウザで読む" });
   await firstControl.focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(dialog.getByRole("button", { name: /^(再生|一時停止)$/ })).toBeFocused();
+  await expect(dialog.getByRole("button", { name: "文章で読む" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(firstControl).toBeFocused();
 
@@ -2143,7 +2238,7 @@ test("Chrome text viewer traps focus and restores the launch button after Escape
   await expect(dialog.locator("[data-reader-text-shell]")).toBeVisible();
   const closeButton = dialog.getByRole("button", { name: "readerを閉じる" });
   const rsvpModeButton = dialog.getByRole("button", { name: "RSVPで読む" });
-  await expect(closeButton).toBeFocused();
+  await expect(rsvpModeButton).toBeFocused();
 
   await rsvpModeButton.focus();
   await page.keyboard.press("Shift+Tab");
@@ -2155,6 +2250,117 @@ test("Chrome text viewer traps focus and restores the launch button after Escape
   await expect(dialog).toBeHidden();
   await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: false, head: true });
   await expect(launchButton).toBeFocused();
+});
+
+test("Chrome text mode replaces RSVP content without opening an inset modal", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const textShell = dialog.locator('[data-reader-text-shell="true"]');
+  await expect(textShell).toBeVisible();
+  await expect(dialog.getByRole("dialog")).toHaveCount(0);
+
+  const surfaces = await textShell.evaluate((element) => {
+    const shell = element.getBoundingClientRect();
+    const reader = element.closest('[role="dialog"]')?.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      shell: { left: shell.left, top: shell.top, width: shell.width, height: shell.height },
+      reader: reader ? { left: reader.left, top: reader.top, width: reader.width, height: reader.height } : null,
+      background: style.backgroundColor,
+      borderWidth: style.borderTopWidth,
+      borderRadius: style.borderTopLeftRadius,
+    };
+  });
+  expect(surfaces.shell).toEqual(surfaces.reader);
+  expect(surfaces.background).toBe("rgba(0, 0, 0, 0)");
+  expect(surfaces.borderWidth).toBe("0px");
+  expect(surfaces.borderRadius).toBe("0px");
+});
+
+test("Chrome desktop controls use large iPhone-style icons in a bottom dock", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await page.getByRole("button", { name: "Chrome readerを開く" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+
+  const dock = dialog.locator('[data-reader-control-dock="true"]');
+  const previous = dialog.getByRole("button", { name: "1文戻る" });
+  const playback = dialog.getByRole("button", { name: /^(再生|一時停止)$/ });
+  const mode = dialog.getByRole("button", { name: "文章で読む" });
+  await expect(dock).toBeVisible();
+  await expect(previous).toHaveAttribute("data-reader-icon-name", "previous");
+  await expect(playback).toHaveAttribute("data-reader-icon-name", /^(play|pause)$/);
+  await expect(previous.locator("svg")).toBeVisible();
+  await expect(playback.locator("svg")).toBeVisible();
+
+  const surfaces = await dialog.evaluate((reader) => {
+    const style = (selector: string) => {
+      const element = reader.querySelector<HTMLElement>(selector);
+      if (!element) throw new Error(`missing ${selector}`);
+      const computed = getComputedStyle(element);
+      return {
+        background: computed.backgroundColor,
+        borderWidth: computed.borderTopWidth,
+        boxShadow: computed.boxShadow,
+      };
+    };
+    return {
+      dock: style('[data-reader-control-dock="true"]'),
+      previous: style('[aria-label="1文戻る"]'),
+      playback: style('[aria-label="一時停止"], [aria-label="再生"]'),
+      mode: style('[data-reader-mode-button="true"]'),
+      close: style('[aria-label="readerを閉じる"]'),
+    };
+  });
+  expect(surfaces).toEqual({
+    dock: { background: "rgba(0, 0, 0, 0)", borderWidth: "0px", boxShadow: "none" },
+    previous: { background: "rgba(9, 9, 9, 0.72)", borderWidth: "0px", boxShadow: "none" },
+    playback: { background: "rgba(9, 9, 9, 0.72)", borderWidth: "0px", boxShadow: "none" },
+    mode: { background: "rgba(9, 9, 9, 0.72)", borderWidth: "0px", boxShadow: "none" },
+    close: { background: "rgba(9, 9, 9, 0.72)", borderWidth: "0px", boxShadow: "none" },
+  });
+
+  const previousBox = await previous.boundingBox();
+  const playbackBox = await playback.boundingBox();
+  const dockBox = await dock.boundingBox();
+  const modeBox = await mode.boundingBox();
+  const readingPaneBox = await dialog.locator('[data-reader-reading-pane="true"]').boundingBox();
+  expect(previousBox?.width).toBeGreaterThanOrEqual(60);
+  expect(playbackBox?.width).toBeGreaterThanOrEqual(64);
+  expect(dockBox).not.toBeNull();
+  expect(modeBox).not.toBeNull();
+  expect(readingPaneBox).not.toBeNull();
+  expect(Math.abs(
+    playbackBox!.x + playbackBox!.width / 2
+      - (readingPaneBox!.x + readingPaneBox!.width / 2),
+  )).toBeLessThanOrEqual(1);
+  expect(modeBox!.y).toBeGreaterThan(dockBox!.y);
+  expect(modeBox!.y + modeBox!.height).toBeLessThanOrEqual(800);
+});
+
+test("Chrome sentence transition updates main and next text without fade animations", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  const first = "最初の文です。";
+  const second = "二番目の文です。";
+  const third = "最後の文です。";
+  await openChrome(page, { text: `${first}${second}${third}`, paused: true });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const unit = dialog.locator('[data-reader-unit="true"]');
+  const nextSentence = dialog.locator('[data-reader-context-next="true"]');
+  await expect(unit).toHaveAttribute("data-source-start", "0");
+  await expect(nextSentence).toContainText(second);
+
+  await dialog.getByRole("button", { name: "再生" }).click();
+  await expect(unit).toHaveAttribute("data-source-start", String(first.length));
+  await expect(nextSentence).toContainText(third);
+  await expect.poll(() => unit.evaluate((element) => element.getAnimations().length)).toBe(0);
+  await expect.poll(() => nextSentence.evaluate((element) => element.getAnimations().length)).toBe(0);
 });
 
 test("mobile viewer traps focus and restores the launch button after Escape", async ({ page }) => {
@@ -2480,7 +2686,8 @@ test("Chrome viewer keeps background inert and keyboard focus inside the modal",
   await launchButton.focus();
   await launchButton.press("Enter");
   const dialog = page.getByRole("dialog", { name: "reader" });
-  await expect(dialog.getByRole("button", { name: "readerを閉じる" })).toBeFocused();
+  await expect(dialog).toBeFocused();
+  await expect(dialog.getByRole("button", { name: "readerを閉じる" })).not.toBeFocused();
   await expect.poll(() => page.evaluate(() => ({ body: document.body.inert, head: document.head.inert }))).toEqual({ body: true, head: true });
   await expectFocusToStayInReader(page, dialog);
 

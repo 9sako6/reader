@@ -110,6 +110,21 @@ test("long units split at word boundaries without breaking katakana words", () =
   );
 });
 
+test("English words that fit on the RSVP screen are not split at the Japanese length limit", () => {
+  const source = "Quint is a specification language that can be used";
+  const units = segmentText(source, "en");
+
+  assert.deepEqual(units.map((unit) => unit.text), [
+    "Quint is a ",
+    "specification ",
+    "language ",
+    "that can be ",
+    "used",
+  ]);
+  assert.equal(units.map((unit) => unit.text).join(""), source);
+  for (const unit of units) assert.equal(source.slice(unit.start, unit.end), unit.text);
+});
+
 test("splitLongUnits caps unbroken text and preserves grapheme and source offsets", () => {
   const cases = [
     { name: "English word", source: "Supercalifragilisticexpialidocious" },

@@ -241,27 +241,46 @@ test("extractPage keeps a rendered Mermaid diagram and its embedded original sou
   const svg = createElementNode("svg", [
     createElementNode("text", [createTextNode("Source")]),
     createElementNode("text", [createTextNode("Sink")]),
-  ], { "aria-roledescription": "flowchart-v2" });
-  (svg as any).outerHTML = '<svg viewBox="0 0 100 40" aria-roledescription="flowchart-v2"><text>Source</text><text>Sink</text></svg>';
+  ], { id: "diagram-1", "aria-roledescription": "flowchart-v2" });
+  (svg as any).outerHTML = '<svg id="diagram-1" viewBox="0 0 100 40" aria-roledescription="flowchart-v2"><text>Source</text><text>Sink</text></svg>';
+  const sourceSvg = createElementNode("svg", [
+    createElementNode("style", [createTextNode(".node { fill: #ececff; stroke: #9370db; }")]),
+    createElementNode("text", [createTextNode("Source")]),
+    createElementNode("text", [createTextNode("Sink")]),
+  ], { id: "diagram-1", "aria-roledescription": "flowchart-v2" });
+  (sourceSvg as any).outerHTML = '<svg id="diagram-1" viewBox="0 0 100 40" aria-roledescription="flowchart-v2"><style>.node { fill: #ececff; stroke: #9370db; }</style><text>Source</text><text>Sink</text></svg>';
   const diagram = createElementNode("div", [svg]);
+  const sourceDiagram = createElementNode("div", [sourceSvg]);
   const paragraph = createElementNode("p", [createTextNode("After the diagram.")]);
   const fixture = createFixturePage([diagram, paragraph]);
   const payload = '1:["$","Mermaid",null,{"chart":"flowchart LR \\\\n  Source --> Sink"}],"\\n",["$","p"]';
-  (fixture.document as any).querySelectorAll = (selector: string) => selector === "script"
-    ? [{ tagName: "SCRIPT", textContent: `self.__next_f.push(${JSON.stringify([1, payload])})` }]
-    : [];
+  (fixture.document as any).defaultView = {
+    getComputedStyle(element) {
+      return { backgroundColor: element === sourceDiagram ? "rgb(246, 244, 240)" : "rgba(0, 0, 0, 0)" };
+    },
+  };
+  (fixture.document as any).querySelectorAll = (selector: string) => {
+    if (selector === "script") return [{ tagName: "SCRIPT", textContent: `self.__next_f.push(${JSON.stringify([1, payload])})` }];
+    if (selector === "svg[aria-roledescription]") return [sourceSvg];
+    return [];
+  };
 
   const result = extractPage(fixture.document, fixture.Defuddle);
+  const renderedMarkup = decodeURIComponent(result.readingContext.figures[0].src.split(",").slice(1).join(","));
+
+  assert.match(renderedMarkup, /<style>\.node \{ fill: #ececff; stroke: #9370db; \}<\/style>/u);
 
   assert.deepEqual(result.readingContext.figures.map((figure) => ({
     kind: figure.kind,
     source: figure.code,
     rendered: figure.src.startsWith("data:image/svg+xml;charset=utf-8,"),
+    backgroundColor: figure.backgroundColor,
     sourceText: result.text.slice(figure.sourceOffset, figure.sourceEnd),
   })), [{
     kind: "mermaid",
     source: "flowchart LR \n  Source --> Sink",
     rendered: true,
+    backgroundColor: "rgb(246, 244, 240)",
     sourceText: "SourceSink",
   }]);
 });

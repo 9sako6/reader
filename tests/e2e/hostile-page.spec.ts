@@ -89,7 +89,7 @@ test("Chrome reader stays above hostile page CSS and top-layer UI while its cont
   expect(shell.dialogIsModal).toBe(true);
   expect(shell.buttonFontSize).toBe("14px");
   expect(shell.buttonPaddingTop).toBe("0px");
-  expect(shell.buttonPaddingLeft).toBe("12px");
+  expect(shell.buttonPaddingLeft).toBe("0px");
   expect(shell.buttonBoxSizing).toBe("border-box");
   expect(shell.topLayerElementIsReaderHost).toBe(true);
 

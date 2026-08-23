@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { ReaderIcon } from "./ReaderIcon";
 import { buttonStyle, type ButtonExtras } from "./styles";
 
 export function Button({ label, onClick, extra = {} }: { label: string; onClick: () => void; extra?: ButtonExtras }): ReactElement {
@@ -19,9 +20,7 @@ export function Button({ label, onClick, extra = {} }: { label: string; onClick:
       onClick={onClick}
     >
       {label === "閉じる" ? (
-        <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </svg>
+        <ReaderIcon name="close" size={22} />
       ) : label}
     </button>
   );

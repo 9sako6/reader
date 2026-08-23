@@ -400,8 +400,8 @@
       .rsvp-unit { min-height: 1.5em; max-width: calc(100vw - 40px); position: relative; z-index: 0; display: grid; place-items: center; font-size: var(--reader-rsvp-font-size, 40px); font-weight: 650; line-height: 1.25; word-break: keep-all; overflow-wrap: normal; }
       .rsvp-unit.quote::before { content: ""; position: absolute; z-index: -1; inset: -12px -16px; border-radius: 14px; background: rgba(255,255,255,.055); }
       .rsvp-unit.aside { color: var(--reader-secondary); }
-      .rsvp-unit.code { width: calc(100vw - 40px); overflow-x: auto; display: block; font-size: clamp(18px, 6vw, 28px); text-align: left; }
-      .rsvp-unit.code code { display: block; width: max-content; min-width: 100%; padding: .5em .65em; border-radius: 12px; background: rgba(255,255,255,.08); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 500; white-space: nowrap; }
+      .rsvp-unit.code { width: calc(100vw - 40px); overflow-x: auto; display: block; font-size: clamp(18px, 6vw, 28px); text-align: center; }
+      .rsvp-unit.code code { display: inline-block; width: max-content; max-width: 100%; min-width: 0; padding: .5em .65em; overflow-x: auto; box-sizing: border-box; border-radius: 12px; background: rgba(255,255,255,.08); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 500; text-align: left; white-space: nowrap; vertical-align: middle; }
       .rsvp-figure { position: absolute; z-index: 2; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 20px; background: var(--reader-background); touch-action: manipulation; }
       .reader-image-surface { position: relative; width: min(100%, 720px); margin: 0 auto; overflow: hidden; border-radius: 12px; touch-action: manipulation; }
       .reader-image-surface img { display: block; width: 100%; height: auto; object-fit: contain; }

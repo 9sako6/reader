@@ -487,10 +487,15 @@
       const sizes = optionalAttribute(image, "sizes");
       const width = positiveDimension(optionalAttribute(image, "width"));
       const height = positiveDimension(optionalAttribute(image, "height"));
+      const backgroundColor = visibleBackgroundColor(
+        sourceDocument,
+        matchingSourceImage(sourceDocument, src, figure.alt),
+      );
       if (srcset !== undefined) figure.srcset = srcset;
       if (sizes !== undefined) figure.sizes = sizes;
       if (width !== undefined) figure.width = width;
       if (height !== undefined) figure.height = height;
+      if (backgroundColor !== undefined) figure.backgroundColor = backgroundColor;
       figures.push(figure);
     }
     for (const pre of contentRoot.querySelectorAll("pre")) {
@@ -539,8 +544,10 @@
         ? toTextOffset(indexedRange.contentEnd, leadingTrim, text.length)
         : sourceOffset;
       const source = mermaidSource(container, svg) || mermaidSources[figures.filter((figure) => figure.kind === "mermaid").length] || "";
-      const serialized = typeof svg.outerHTML === "string" ? svg.outerHTML.trim() : "";
-      figures.push({
+      const sourceDiagram = matchingSourceDiagram(sourceDocument, svg);
+      const renderedDiagram = sourceDiagram || svg;
+      const serialized = typeof renderedDiagram.outerHTML === "string" ? renderedDiagram.outerHTML.trim() : "";
+      const mermaidFigure: ReaderFigure = {
         kind: "mermaid",
         src: serialized ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}` : undefined,
         alt: String(svg.getAttribute?.("aria-label") || "Mermaid図").trim() || "Mermaid図",
@@ -548,7 +555,13 @@
         code: source,
         sourceOffset,
         sourceEnd,
-      });
+      };
+      const backgroundColor = visibleBackgroundColor(
+        sourceDocument,
+        sourceDiagram,
+      );
+      if (backgroundColor !== undefined) mermaidFigure.backgroundColor = backgroundColor;
+      figures.push(mermaidFigure);
     }
     return figures
       .filter((figure, index, all) => figure.kind !== "mermaid" || !all.some((candidate, candidateIndex) => (
@@ -558,6 +571,61 @@
         && candidate.sourceEnd === figure.sourceEnd
       )))
       .sort((left, right) => left.sourceOffset - right.sourceOffset);
+  }
+
+  function matchingSourceImage(sourceDocument: Document, src: string, alt: string): Element | null {
+    if (typeof sourceDocument.querySelectorAll !== "function") return null;
+    const images = [...sourceDocument.querySelectorAll("img")];
+    const source = (image: Element) => String(
+      (image as HTMLImageElement).currentSrc
+      || (image as HTMLImageElement).src
+      || image.getAttribute?.("src")
+      || "",
+    ).trim();
+    return images.find((image) => source(image) === src && String(image.getAttribute?.("alt") || "").trim() === alt)
+      || images.find((image) => source(image) === src)
+      || null;
+  }
+
+  function matchingSourceDiagram(sourceDocument: Document, diagram: Element): Element | null {
+    if (typeof sourceDocument.querySelectorAll !== "function") return null;
+    const id = String(diagram.getAttribute?.("id") || "");
+    const role = String(diagram.getAttribute?.("aria-roledescription") || "");
+    const label = String(diagram.getAttribute?.("aria-label") || "");
+    const diagrams = [...sourceDocument.querySelectorAll("svg[aria-roledescription]")];
+    return diagrams.find((candidate) => id && String(candidate.getAttribute?.("id") || "") === id)
+      || diagrams.find((candidate) => (
+      String(candidate.getAttribute?.("aria-roledescription") || "") === role
+      && String(candidate.getAttribute?.("aria-label") || "") === label
+    )) || diagrams.find((candidate) => String(candidate.getAttribute?.("aria-roledescription") || "") === role) || null;
+  }
+
+  function visibleBackgroundColor(sourceDocument: Document, element: Element | null): string | undefined {
+    const view = sourceDocument.defaultView;
+    if (!view || typeof view.getComputedStyle !== "function") return undefined;
+    const candidates: Element[] = [];
+    const visited = new Set<Element>();
+    let current = element;
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      candidates.push(current);
+      current = current.parentElement;
+    }
+    for (const fallback of [sourceDocument.body, sourceDocument.documentElement]) {
+      if (fallback && !visited.has(fallback)) candidates.push(fallback);
+    }
+    for (const candidate of candidates) {
+      const color = String(view.getComputedStyle(candidate).backgroundColor || "").trim();
+      if (color && !isTransparentColor(color)) return color;
+    }
+    return undefined;
+  }
+
+  function isTransparentColor(color: string): boolean {
+    const normalized = color.trim().toLowerCase();
+    if (!normalized || normalized === "transparent") return true;
+    const rgba = normalized.match(/^rgba\((?:[^,]+,){3}\s*([\d.]+)\s*\)$/u);
+    return rgba ? Number(rgba[1]) === 0 : false;
   }
 
   function mermaidSource(container: Element, svg: Element): string {
