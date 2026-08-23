@@ -274,7 +274,7 @@
         figures,
         language: segmentationLocale,
         position: currentPosition,
-        progress: sourceText ? globalThis.Engine.calculateReadingProgress(currentPosition.sourceOffset, sourceText.length) : 0,
+        progress: readingProgress(currentPosition),
         title: "",
       };
     }
@@ -307,7 +307,7 @@
       figure: figureView,
       playing: state?.playback === "playing",
       reducedMotion: prefersReducedMotion(),
-      progress: sourceText ? globalThis.Engine.calculateReadingProgress(position.sourceOffset, sourceText.length) : 0,
+      progress: readingProgress(position, unit),
       loadingCover: loadingCoverVisible,
       headings,
       activeHeadingIndex: activeHeadingAt(position.sourceOffset),
@@ -356,6 +356,20 @@
 
   function sessionMode(): ReaderSessionMode {
     return readingSessionState()?.mode ?? "rsvp";
+  }
+
+  function progressSourceOffset(position: ReaderPosition, unit: ReaderUnit | null = null): number {
+    if (position.kind === "figure") return position.sourceOffset;
+    if (unit) return unit.end;
+    if (units.length === 0) return position.sourceOffset;
+    const unitIndex = globalThis.Engine.findUnitIndex(units, position.sourceOffset);
+    return units[unitIndex]?.end ?? position.sourceOffset;
+  }
+
+  function readingProgress(position: ReaderPosition, unit: ReaderUnit | null = null): number {
+    return sourceText
+      ? globalThis.Engine.calculateReadingProgress(progressSourceOffset(position, unit), sourceText.length)
+      : 0;
   }
 
   function isReaderMessage(value: unknown): value is ReaderMessage {
