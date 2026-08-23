@@ -980,8 +980,13 @@ test("Chrome RSVP centers quote and aside backgrounds without moving surrounding
     snapshots.push(await unit.evaluate((element) => {
       const outer = element.getBoundingClientRect();
       const textElement = element.querySelector<HTMLElement>("[data-reader-unit-text]");
-      if (!textElement) throw new Error("RSVP text layer is missing");
-      const text = textElement.getBoundingClientRect();
+      const text = textElement?.getBoundingClientRect() || (() => {
+        const textNode = Array.from(element.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
+        if (!textNode) throw new Error("RSVP body text node is missing");
+        const range = document.createRange();
+        range.selectNodeContents(textNode);
+        return range.getBoundingClientRect();
+      })();
       const backgroundElement = element.querySelector<HTMLElement>("[data-reader-unit-background]");
       const background = backgroundElement?.getBoundingClientRect() || null;
       return {

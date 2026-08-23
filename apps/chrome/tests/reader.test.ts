@@ -17,7 +17,7 @@ class FakeElement {
     this.nodeType = tagName === "#shadow-root" ? 11 : tagName === "#text" ? 3 : 1;
     this.nodeName = this.tagName;
     this.namespaceURI = "http://www.w3.org/1999/xhtml";
-    this.textContent = textContent;
+    this._textContent = String(textContent);
     this.style = {};
     this.attributes = {};
     this.dataset = {};
@@ -39,6 +39,22 @@ class FakeElement {
     this.open = false;
     this.showModalCalls = 0;
     this.closeCalls = 0;
+  }
+
+  get textContent() {
+    if (this.children.length > 0) {
+      return this.children.map((child) => child.textContent).join("");
+    }
+    return this.nodeType === 3 && this.nodeValue !== undefined
+      ? String(this.nodeValue)
+      : String(this._textContent);
+  }
+
+  set textContent(value) {
+    for (const child of this.children || []) child.parent = null;
+    if (this.children) this.children = [];
+    this._textContent = String(value ?? "");
+    if (this.nodeType === 3) this.nodeValue = this._textContent;
   }
 
   get parentNode() {
@@ -177,6 +193,7 @@ class FakeElement {
 
   replaceChildren(...children) {
     for (const child of this.children) child.parent = null;
+    this._textContent = "";
     this.children = [];
     this.append(...children);
   }
@@ -221,9 +238,37 @@ class FakeElement {
   }
 }
 
+function evaluateElementPredicate(element, predicate) {
+  let readsTextContent = false;
+  const probe = new Proxy(element, {
+    get(target, property, receiver) {
+      if (property === "textContent") readsTextContent = true;
+      return Reflect.get(target, property, receiver);
+    },
+    set(target, property, value, receiver) {
+      if (property === "textContent") readsTextContent = true;
+      return Reflect.set(target, property, value, receiver);
+    },
+  });
+  return { matches: Boolean(predicate(probe)), readsTextContent };
+}
+
 function findElement(root, predicate) {
   if (!root) return null;
-  if (predicate(root)) return root;
+  if (root.nodeType === 1) {
+    const result = evaluateElementPredicate(root, predicate);
+    if (result.matches && !result.readsTextContent) return root;
+    if (root.shadowRoot) {
+      const shadowMatch = findElement(root.shadowRoot, predicate);
+      if (shadowMatch) return shadowMatch;
+    }
+    for (const child of root.children) {
+      const match = findElement(child, predicate);
+      if (match) return match;
+    }
+    if (result.matches) return root;
+    return null;
+  }
   if (root.shadowRoot) {
     const shadowMatch = findElement(root.shadowRoot, predicate);
     if (shadowMatch) return shadowMatch;
@@ -237,7 +282,7 @@ function findElement(root, predicate) {
 
 function findElements(root, predicate) {
   if (!root) return [];
-  const matches = predicate(root) ? [root] : [];
+  const matches = root.nodeType === 1 && predicate(root) ? [root] : [];
   if (root.shadowRoot) matches.push(...findElements(root.shadowRoot, predicate));
   for (const child of root.children) matches.push(...findElements(child, predicate));
   return matches;

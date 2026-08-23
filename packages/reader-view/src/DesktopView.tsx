@@ -4,7 +4,7 @@ import { Figure } from "./Figure";
 import { IconButton } from "./IconButton";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { Minimap } from "./Minimap";
-import { RsvpUnit } from "./RsvpUnit";
+import { RsvpUnit, rsvpUnitStyle } from "./RsvpUnit";
 import { orderedTextChildren } from "./TextContent";
 import { ReaderTextScroller } from "./ReaderTextScroller";
 import type { ReaderViewHandlers, ReaderViewModel } from "./types";
@@ -31,20 +31,21 @@ export function DesktopView({ model, handlers }: { model: Extract<ReaderViewMode
             <div data-reader-context-previous="true" aria-hidden="true" style={{ position: "absolute", left: "50%", bottom: "calc(50% + 82px)", transform: "translateX(-50%)", width: "min(100%, 640px)", maxWidth: "calc(100% - 32px)", color: "rgba(255,255,255,0.26)", fontSize: "clamp(16px, 1.5vw, 20px)", lineHeight: "1.4", textAlign: "center", opacity: "0.26", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: "2", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
               {model.previous}
             </div>
-            {model.figure ? (
-              <div
+            <div
                 data-reader-unit="true"
-                data-reader-position-kind="figure"
-                data-source-start={String(model.figure.figure.sourceOffset)}
-                data-source-end={String(model.figure.figure.sourceEnd)}
-                data-figure-index={String(model.figure.figureIndex)}
+                data-reader-unit-kind={model.figure ? undefined : model.unit?.kind || "body"}
+                data-reader-position-kind={model.figure ? "figure" : "text"}
+                data-source-start={String(model.figure?.figure.sourceOffset ?? model.unit?.start ?? 0)}
+                data-source-end={String(model.figure?.figure.sourceEnd ?? model.unit?.end ?? 0)}
+                data-figure-index={model.figure ? String(model.figure.figureIndex) : undefined}
                 aria-live="off"
                 aria-atomic="false"
-                style={{ position: "absolute", inset: "0", width: "100%", height: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", whiteSpace: "nowrap", overflow: "visible" }}
+                style={model.figure
+                  ? { position: "absolute", inset: "0", width: "100%", height: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", whiteSpace: "nowrap", overflow: "visible" }
+                  : rsvpUnitStyle}
               >
-                <Figure figureView={model.figure} handlers={handlers} text={false} />
-              </div>
-            ) : <RsvpUnit unit={model.unit} />}
+                {model.figure ? <Figure figureView={model.figure} handlers={handlers} text={false} /> : <RsvpUnit unit={model.unit} />}
+            </div>
             <div data-reader-context-next="true" aria-hidden="true" style={{ position: "absolute", left: "50%", top: "calc(50% + 82px)", transform: "translateX(-50%)", width: "min(100%, 640px)", maxWidth: "calc(100% - 32px)", color: "rgba(255,255,255,0.26)", fontSize: "clamp(16px, 1.5vw, 20px)", lineHeight: "1.4", textAlign: "center", opacity: "0.26", overflow: "hidden", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: "2", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
               {model.next}
             </div>
