@@ -24,7 +24,6 @@ function makeFastReport(fixtures = ["segment", "flow"], pairCount = 20) {
         benchmarks.push({
           name: `fast/${fixture}/pair-${run}/${side}`,
           median,
-          p99: median + 1,
           samples: [],
         });
       }
@@ -75,10 +74,9 @@ test("paired benchmark aggregates Vitest JSON percentile statistics when raw sam
       for (const side of [first, second]) {
         const median = side === "main" ? 10 : 11;
         benchmarks.push({
-          name: `fast/${fixture}/pair-${run}/${side}`,
-          median,
-          p99: median + 1,
-          samples: [],
+        name: `fast/${fixture}/pair-${run}/${side}`,
+        median,
+        samples: [],
         });
       }
     }

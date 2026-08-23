@@ -136,7 +136,7 @@ run = [{ tasks = ["build:chrome", "build:ios"] }]
 [tasks."measure:bundle"]
 description = "Record extension bundle sizes as JSON"
 depends = ["build"]
-run = "node scripts/measure-bundle.mjs"
+run = "node benchmark/bundle.mjs"
 
 [tasks."measure:performance"]
 description = "Record the full browser extraction and startup benchmark"

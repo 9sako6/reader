@@ -103,13 +103,10 @@ function recordStatistics(record, name) {
   const medianMs = Number.isFinite(record.median)
     ? record.median
     : samples.length > 0 ? percentile(samples, 0.5) : null;
-  const p90Ms = Number.isFinite(record.p99)
-    ? record.p99
-    : samples.length > 0 ? percentile(samples, 0.9) : medianMs;
-  if (!Number.isFinite(medianMs) || !Number.isFinite(p90Ms)) {
-    throw new Error(`${name} has no benchmark percentile statistics`);
+  if (!Number.isFinite(medianMs)) {
+    throw new Error(`${name} has no benchmark median statistic`);
   }
-  return { medianMs, p90Ms, samples };
+  return { medianMs, samples };
 }
 
 export function pairVitestBenchmarks(report) {
@@ -128,7 +125,6 @@ export function pairVitestBenchmarks(report) {
     pair.records[side] = {
       samples: statistics.samples,
       medianMs: statistics.medianMs,
-      p90Ms: statistics.p90Ms,
     };
     pairs.set(key, pair);
   }
@@ -144,8 +140,6 @@ export function pairVitestBenchmarks(report) {
       order: pair.run % ORDERS.length === 0 ? ORDERS[0] : ORDERS[1],
       mainMs: pair.records.main.medianMs,
       candidateMs: pair.records.candidate.medianMs,
-      mainP90Ms: pair.records.main.p90Ms,
-      candidateP90Ms: pair.records.candidate.p90Ms,
       mainSamples: pair.records.main.samples,
       candidateSamples: pair.records.candidate.samples,
     });

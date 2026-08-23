@@ -17,7 +17,6 @@ function regressingVitestReport() {
         benchmarks.push({
           name: `fast/${fixture}/pair-${run}/${side}`,
           median,
-          p99: median,
           samples: [],
         });
       }
