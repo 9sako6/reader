@@ -295,6 +295,132 @@ test("Chrome preparation loading feedback becomes readable in more contrast", as
   await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
 });
 
+test("Chrome headingless RSVP progress reaches 100% after playback", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { text: "最初の文です。最後の文です。", paused: true });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const progress = dialog.locator('[data-reader-progress="true"]');
+  await expect(progress).toHaveCount(1);
+  await expect(dialog.locator('[data-reader-minimap="true"]')).toHaveCount(0);
+
+  await dialog.getByRole("button", { name: "再生" }).click();
+  await expect(progress).toHaveText("100%");
+});
+
+test("Chrome text progress reaches 100% at the article end and survives a mode switch", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await loadViewer(page, "chrome");
+  const articleText = `${Array.from({ length: 40 }, () => "中間の文章です。").join("")}\n\n最後の文章です。`;
+  await openChrome(page, { text: articleText, paused: true });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const progress = dialog.locator('[data-reader-progress="true"]');
+  const progressGeometry = () => progress.evaluate((element) => {
+    const progressElement = element as HTMLElement;
+    const container = progressElement.offsetParent;
+    if (!container) throw new Error("progress container not found");
+    const progressRectangle = element.getBoundingClientRect();
+    const containerRectangle = container.getBoundingClientRect();
+    return {
+      rightGap: containerRectangle.right - progressRectangle.right,
+      bottomGap: containerRectangle.bottom - progressRectangle.bottom,
+    };
+  });
+  const rsvpGeometry = await progressGeometry();
+  expect(Math.abs(rsvpGeometry.rightGap - 16)).toBeLessThanOrEqual(1);
+  expect(Math.abs(rsvpGeometry.bottomGap - 16)).toBeLessThanOrEqual(1);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const lastTextMarker = dialog.locator('[data-reader-position-kind="text"][data-reader-text-anchor]').last();
+  await lastTextMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    scroller.style.paddingBottom = "600px";
+  });
+  await scrollTextToEnd(lastTextMarker);
+  await expect(progress).toHaveText("100%");
+  const endProgress = await progress.textContent();
+  const textGeometry = await progressGeometry();
+  expect(Math.abs(textGeometry.rightGap - 16)).toBeLessThanOrEqual(1);
+  expect(Math.abs(textGeometry.bottomGap - 16)).toBeLessThanOrEqual(1);
+  expect(Math.abs(textGeometry.rightGap - rsvpGeometry.rightGap)).toBeLessThanOrEqual(1);
+  expect(Math.abs(textGeometry.bottomGap - rsvpGeometry.bottomGap)).toBeLessThanOrEqual(1);
+
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await expect(progress).toHaveText(endProgress || "100%");
+});
+
+test("Chrome image progress follows its source offset and the minimap has no duplicate meter", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true, outline: "two" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const progress = dialog.locator('[data-reader-progress="true"]');
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const imageMarker = dialog.locator('[data-reader-position-kind="figure"]').first();
+  const imageOffset = Number(await imageMarker.getAttribute("data-source-start"));
+  const sourceLength = await dialog.locator("article.article [data-source-end]").evaluateAll((elements) => Math.max(
+    ...elements.map((element) => Number(element.getAttribute("data-source-end"))),
+  ));
+  await imageMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    scroller.style.paddingBottom = "600px";
+  });
+  await placeTextMarker(imageMarker, 100);
+  await expect.poll(() => imageMarker.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller]");
+    if (!scroller) return false;
+    const scrollerRectangle = scroller.getBoundingClientRect();
+    return rectangle.bottom > scrollerRectangle.top && rectangle.top < scrollerRectangle.bottom;
+  })).toBe(true);
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+
+  await expect(dialog.getByRole("figure", { name: "本文画像" })).toBeVisible();
+  await expect(progress).toHaveText(`${Math.round((imageOffset / sourceLength) * 100)}%`);
+  await expect(dialog.locator('[data-reader-minimap="true"] [data-reader-progress="true"], [data-reader-minimap="true"] [role="progressbar"], [data-reader-minimap="true"] .progress')).toHaveCount(0);
+});
+
+test("Chrome heading jump updates progress to the selected section offset", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true, outline: "two" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const progress = dialog.locator('[data-reader-progress="true"]');
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const article = dialog.locator("article.article");
+  const sourceLength = await article.locator("[data-source-end]").evaluateAll((elements) => Math.max(
+    ...elements.map((element) => Number(element.getAttribute("data-source-end"))),
+  ));
+  const selectedSectionOffset = Number(await article.locator("p.paragraph[data-source-start][data-source-end]").last().getAttribute("data-source-start"));
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+
+  const minimap = dialog.locator('[data-reader-minimap="true"]');
+  await expect(minimap).toBeVisible();
+  await minimap.getByRole("button", { name: "画像のある節" }).click();
+
+  await expect(progress).toHaveCount(1);
+  await expect(progress).toHaveText(`${Math.round((selectedSectionOffset / sourceLength) * 100)}%`);
+  await expect(minimap.locator('[data-reader-progress="true"], [role="progressbar"], .progress')).toHaveCount(0);
+  const progressGeometry = await progress.evaluate((element) => {
+    const progressElement = element as HTMLElement;
+    const container = progressElement.offsetParent;
+    if (!container) throw new Error("progress container not found");
+    const progressRectangle = element.getBoundingClientRect();
+    const containerRectangle = container.getBoundingClientRect();
+    return {
+      rightGap: containerRectangle.right - progressRectangle.right,
+      bottomGap: containerRectangle.bottom - progressRectangle.bottom,
+    };
+  });
+  expect(Math.abs(progressGeometry.rightGap - 16)).toBeLessThanOrEqual(1);
+  expect(Math.abs(progressGeometry.bottomGap - 16)).toBeLessThanOrEqual(1);
+});
+
 test("Chrome extraction errors keep retry and close actions readable in more contrast", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ contrast: "more" });
