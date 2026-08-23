@@ -3111,9 +3111,9 @@ test("reader preserves an article-leading figure through a text round trip", () 
     assert.equal(textFigure.dataset.sourceStart, "0");
     const firstGeometry = textFigure.getBoundingClientRect();
     const firstScrollerGeometry = textScroller.getBoundingClientRect();
-    assert.ok(textScroller.scrollTop > 0);
-    assert.ok(firstGeometry.top >= firstScrollerGeometry.top + 72);
-    assert.ok(firstGeometry.bottom <= firstScrollerGeometry.bottom - 112);
+    assert.equal(textScroller.scrollTop, 348);
+    assert.equal(firstGeometry.top, firstScrollerGeometry.top + 72);
+    assert.equal(firstGeometry.bottom, firstGeometry.top + 120);
 
     findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
     const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
@@ -3129,9 +3129,9 @@ test("reader preserves an article-leading figure through a text round trip", () 
     assert.ok(restoredTextFigure && restoredTextScroller);
     const restoredGeometry = restoredTextFigure.getBoundingClientRect();
     const restoredScrollerGeometry = restoredTextScroller.getBoundingClientRect();
-    assert.ok(restoredTextScroller.scrollTop > 0);
-    assert.ok(restoredGeometry.top >= restoredScrollerGeometry.top + 72);
-    assert.ok(restoredGeometry.bottom <= restoredScrollerGeometry.bottom - 112);
+    assert.equal(restoredTextScroller.scrollTop, 348);
+    assert.equal(restoredGeometry.top, restoredScrollerGeometry.top + 72);
+    assert.equal(restoredGeometry.bottom, restoredGeometry.top + 120);
   } finally {
     restoreGeometry();
   }
@@ -3183,9 +3183,9 @@ test("reader preserves an article-ending figure through a text round trip", () =
     assert.equal(textFigure.dataset.sourceStart, String(figureOffset));
     const firstGeometry = textFigure.getBoundingClientRect();
     const firstScrollerGeometry = textScroller.getBoundingClientRect();
-    assert.ok(textScroller.scrollTop > 0);
-    assert.ok(firstGeometry.top >= firstScrollerGeometry.top + 72);
-    assert.ok(firstGeometry.bottom <= firstScrollerGeometry.bottom - 112);
+    assert.equal(textScroller.scrollTop, 348);
+    assert.equal(firstGeometry.top, firstScrollerGeometry.top + 72);
+    assert.equal(firstGeometry.bottom, firstGeometry.top + 120);
 
     findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
     const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
@@ -3201,9 +3201,9 @@ test("reader preserves an article-ending figure through a text round trip", () =
     assert.ok(restoredTextFigure && restoredTextScroller);
     const restoredGeometry = restoredTextFigure.getBoundingClientRect();
     const restoredScrollerGeometry = restoredTextScroller.getBoundingClientRect();
-    assert.ok(restoredTextScroller.scrollTop > 0);
-    assert.ok(restoredGeometry.top >= restoredScrollerGeometry.top + 72);
-    assert.ok(restoredGeometry.bottom <= restoredScrollerGeometry.bottom - 112);
+    assert.equal(restoredTextScroller.scrollTop, 348);
+    assert.equal(restoredGeometry.top, restoredScrollerGeometry.top + 72);
+    assert.equal(restoredGeometry.bottom, restoredGeometry.top + 120);
   } finally {
     restoreGeometry();
   }
