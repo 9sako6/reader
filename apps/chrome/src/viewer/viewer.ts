@@ -925,9 +925,94 @@
         [data-reader-text-scroller] { padding: 64px 20px 96px !important; }
       }
       @media (prefers-contrast: more) {
-        :host { --reader-contrast-text: #ffffff; }
+        :host {
+          --reader-contrast-text: #ffffff;
+          --reader-contrast-background: #000000;
+        }
+
         [data-reader-topbar] button,
         [data-reader-stage] button { color: var(--reader-contrast-text) !important; }
+
+        [data-reader-topbar] button {
+          background: var(--reader-contrast-background) !important;
+          border: 1px solid var(--reader-contrast-text) !important;
+        }
+
+        [data-reader-topbar] [data-reader-mode-button] {
+          background: var(--reader-contrast-text) !important;
+          color: var(--reader-contrast-background) !important;
+        }
+
+        [data-reader-stage] [aria-label="1文戻る"],
+        [data-reader-stage] [aria-label="再生"],
+        [data-reader-stage] [aria-label="一時停止"],
+        [data-reader-stage] [aria-label="続きを読む"] {
+          background: var(--reader-contrast-background) !important;
+          border: 1px solid var(--reader-contrast-text) !important;
+          color: var(--reader-contrast-text) !important;
+        }
+
+        [data-reader-stage] [aria-label="続きを読む"],
+        [data-reader-minimap] button[aria-current="location"] {
+          background: var(--reader-contrast-text) !important;
+          color: var(--reader-contrast-background) !important;
+        }
+
+        [data-reader-stage] [data-reader-context-previous],
+        [data-reader-stage] [data-reader-context-next],
+        [data-reader-progress],
+        [data-reader-text-shell] .article {
+          color: var(--reader-contrast-text) !important;
+          opacity: 1 !important;
+        }
+
+        [data-reader-minimap] {
+          background: var(--reader-contrast-background) !important;
+          border-color: var(--reader-contrast-text) !important;
+          box-shadow: none !important;
+          color: var(--reader-contrast-text) !important;
+        }
+
+        [data-reader-minimap] button {
+          background: transparent !important;
+          border: 1px solid transparent !important;
+          color: var(--reader-contrast-text) !important;
+        }
+
+        [data-reader-minimap] button[aria-current="location"] {
+          border-color: var(--reader-contrast-text) !important;
+        }
+
+        [data-reader-figure-status],
+        [data-reader-figure-description],
+        figcaption,
+        [data-reader-loading-label],
+        [data-reader-error] {
+          color: var(--reader-contrast-text) !important;
+        }
+
+        [data-reader-figure-indicator],
+        [data-reader-loading-bar],
+        [data-reader-loading-indicator] {
+          background: var(--reader-contrast-text) !important;
+        }
+
+        [data-reader-loading] button,
+        [data-reader-error] button {
+          background: var(--reader-contrast-background) !important;
+          border: 1px solid var(--reader-contrast-text) !important;
+          color: var(--reader-contrast-text) !important;
+        }
+
+        [data-reader-topbar] button:focus-visible,
+        [data-reader-stage] button:focus-visible,
+        [data-reader-minimap] button:focus-visible,
+        [data-reader-loading] button:focus-visible,
+        [data-reader-error] button:focus-visible,
+        [data-reader-image-surface]:focus-visible {
+          outline: 2px solid var(--reader-contrast-text) !important;
+          outline-offset: 2px !important;
+        }
       }
     `;
     rootStyle = style;
