@@ -2572,14 +2572,14 @@ test("reader keeps progress for the same source position across RSVP and text mo
     (element) => element.attributes["data-reader-progress"] === "true",
   )[0];
   assert.equal(rsvpProgress.textContent, "0%");
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "文章で読む")
+  findElementByText(document.getElementById("__rsvp-reader-root"), "文章で読む")
     .dispatchEvent({ type: "click" });
   assert.equal(findElements(
     document.getElementById("__rsvp-reader-root"),
     (element) => element.attributes["data-reader-progress"] === "true",
   )[0].textContent, "0%");
 
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "RSVPで読む")
+  findElementByText(document.getElementById("__rsvp-reader-root"), "RSVPで読む")
     .dispatchEvent({ type: "click" });
   assert.equal(findElements(
     document.getElementById("__rsvp-reader-root"),
