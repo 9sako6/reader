@@ -1,7 +1,7 @@
 export {};
 
 const assert = require("node:assert/strict");
-const { selectPerformanceGroup } = require("./full-groups.mjs");
+const { assertDistinctCommits, selectPerformanceGroup } = require("./full-groups.mjs");
 
 const fixtureNames = ["short-article", "long-article", "dominant-article", "defuddle-fallback"];
 const nodeCounts = [1000, 10_000, 50_000, 100_000];
@@ -29,4 +29,15 @@ test("unknown full browser fixture group is rejected instead of silently changin
     () => selectPerformanceGroup("not-a-group", fixtureNames, nodeCounts),
     /Unknown full benchmark fixture group/,
   );
+});
+
+test("full browser paired run rejects a baseline and candidate with the same commit", () => {
+  assert.throws(
+    () => assertDistinctCommits("abc123", "abc123"),
+    /baseline and candidate commits must differ/,
+  );
+  assert.deepEqual(assertDistinctCommits("abc123", "def456"), {
+    baselineCommit: "abc123",
+    candidateCommit: "def456",
+  });
 });

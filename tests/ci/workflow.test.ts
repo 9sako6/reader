@@ -45,6 +45,13 @@ test("required CI exposes a short single-runner paired benchmark job", () => {
   assert.match(performanceJob, /benchmark\/check-fast\.mjs/);
   assert.match(performanceJob, /--maxWorkers=1/);
   assert.match(performanceJob, /--no-file-parallelism/);
+  assert.match(performanceJob, /fetch-depth: 2/);
+  assert.match(performanceJob, /github\.event_name/);
+  assert.match(performanceJob, /git rev-list --first-parent --max-count=2/);
+  assert.match(performanceJob, /test "\$baseline_commit" != "\$candidate_commit"/);
+  assert.match(performanceJob, /git worktree add --detach .*\$baseline_commit/);
+  assert.match(performanceJob, /READER_BENCHMARK_BASELINE_COMMIT=/);
+  assert.match(performanceJob, /READER_BENCHMARK_CANDIDATE_COMMIT=/);
   assert.match(performanceJob, /name: Remove main benchmark worktree[\s\S]*if: always\(\)/);
 });
 

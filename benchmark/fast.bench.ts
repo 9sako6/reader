@@ -3,20 +3,21 @@ import { resolve } from "node:path";
 import { bench } from "vitest";
 
 const require = createRequire(import.meta.url);
-const PAIR_COUNT = 6;
+const PAIR_COUNT = 20;
+const BATCH_SIZE = 8;
 const SAMPLE_ITERATIONS = 5;
 const benchmarkOptions = {
   time: 0,
   iterations: SAMPLE_ITERATIONS,
   warmupTime: 0,
-  warmupIterations: 0,
+  warmupIterations: 5,
 };
 
 const source = [
   "Readerの短い本文を同じ条件で分割します。",
   "paired benchmarkはmainとcandidateを同じrunnerで交互に測定します。",
   "このfixtureはNode上で完結し、ブラウザやheapの長時間計測を含みません。",
-].join(" ").repeat(64);
+].join(" ").repeat(8);
 const figures = [
   { sourceOffset: 120, sourceEnd: 120 },
   { sourceOffset: 420, sourceEnd: 420 },
@@ -43,12 +44,16 @@ function consume(value) {
 }
 
 function segment(engine) {
-  consume(engine.segmentText(source, "ja"));
+  for (let batch = 0; batch < BATCH_SIZE; batch += 1) {
+    consume(engine.segmentText(source, "ja"));
+  }
 }
 
 function flow(engine) {
-  const units = engine.segmentText(source, "ja");
-  consume(engine.buildReadingFlow(units, figures));
+  for (let batch = 0; batch < BATCH_SIZE; batch += 1) {
+    const units = engine.segmentText(source, "ja");
+    consume(engine.buildReadingFlow(units, figures));
+  }
 }
 
 const fixtures = [

@@ -19,3 +19,9 @@ export function selectPerformanceGroup(name, fixtureNames, nodeCounts) {
     passive: selected.passive,
   };
 }
+
+export function assertDistinctCommits(baselineCommit, candidateCommit) {
+  if (!baselineCommit || !candidateCommit) throw new Error("paired performance commit metadata is required");
+  if (baselineCommit === candidateCommit) throw new Error("paired performance baseline and candidate commits must differ");
+  return { baselineCommit, candidateCommit };
+}

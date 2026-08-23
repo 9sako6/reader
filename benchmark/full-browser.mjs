@@ -6,7 +6,7 @@ import { chromium } from "@playwright/test";
 import { buildPairedMemorySamples, evaluateFeedbackBudget, evaluateReactMemoryGate, evaluateReactMigrationGate, REACT_FIXED_HEAP_BUDGET_BYTES, summarizeMemorySamples } from "./budget.mjs";
 import { clearPerformanceEntries } from "./entry-cleanup.mjs";
 import { buildPerformanceSample, median, percentile } from "./sample.mjs";
-import { selectPerformanceGroup } from "./full-groups.mjs";
+import { assertDistinctCommits, selectPerformanceGroup } from "./full-groups.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const outputPath = resolve(repositoryRoot, "test-results/performance/reader.json");
@@ -16,6 +16,8 @@ const generatedRoot = resolve(repositoryRoot, "apps/ios/ReaderExtension/Resource
 const baselineRoot = process.env.READER_PERFORMANCE_BASELINE_ROOT
   ? resolve(process.env.READER_PERFORMANCE_BASELINE_ROOT)
   : null;
+const baselineCommit = process.env.READER_PERFORMANCE_BASE_COMMIT || null;
+const candidateCommit = process.env.READER_PERFORMANCE_CANDIDATE_COMMIT || null;
 const generatedPath = "/apps/ios/ReaderExtension/Resources/generated";
 const baselineGeneratedRoot = baselineRoot ? resolve(baselineRoot, "apps/ios/ReaderExtension/Resources/generated") : null;
 const runtimeScripts = (root) => ["session-wasm-module.js", "session.js", "defuddle.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]
@@ -528,8 +530,9 @@ async function measureRepresentativeCleanup(browser, fixture, cycles) {
 
 const browser = await chromium.launch({ headless: true });
 try {
-  if (process.env.READER_PERFORMANCE_ENFORCE === "1" && !baselineRoot) {
-    throw new Error("READER_PERFORMANCE_BASELINE_ROOT is required when enforcing paired performance budgets");
+  if (process.env.READER_PERFORMANCE_ENFORCE === "1") {
+    if (!baselineRoot) throw new Error("READER_PERFORMANCE_BASELINE_ROOT is required when enforcing paired performance budgets");
+    assertDistinctCommits(baselineCommit, candidateCommit);
   }
   const fixtureReports = {};
   const pairedComparison = { fixtures: {}, nodeBenchmarks: {} };

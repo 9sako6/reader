@@ -29,6 +29,9 @@ test("full browser benchmark keeps each fixture group serial on its runner", () 
   assert.match(workflow, /READER_PERFORMANCE_BASELINE_ROOT/);
   assert.match(workflow, /READER_PERFORMANCE_BASE_COMMIT=/);
   assert.match(workflow, /READER_PERFORMANCE_CANDIDATE_COMMIT=/);
+  assert.match(workflow, /fetch-depth: 2/);
+  assert.match(workflow, /git rev-list --first-parent --max-count=2/);
+  assert.match(workflow, /test \"\$baseline_commit\" != \"\$candidate_commit\"/);
   assert.match(workflow, /git worktree add --detach/);
   assert.match(workflow, /name: Remove main benchmark baseline[\s\S]*if: always\(\)/);
   assert.doesNotMatch(workflow, /READER_PERFORMANCE_RUNS:\s+[0-9](?:\s|$)/);
