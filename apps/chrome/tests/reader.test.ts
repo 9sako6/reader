@@ -2841,6 +2841,37 @@ test("reader preserves the order of figures that share one source offset", () =>
   assert.ok(findElement(secondPanel, (element) => element.textContent === "図B"));
 });
 
+test("reader preserves same-offset figure order in text mode", () => {
+  const { document, messageListener } = createFigureReaderHarness();
+  const text = "前の文です。図図図後の文です。";
+  const readingContext = {
+    blocks: [
+      { text: "前の文です。", kind: "paragraph", level: null, start: 0, end: 6 },
+      { text: "後の文です。", kind: "paragraph", level: null, start: 9, end: text.length },
+    ],
+    headings: [],
+    sectionTransitions: [],
+    initialHeadingIndex: -1,
+    figures: [
+      { src: "https://example.com/one.png", alt: "一枚目", caption: "図A", sourceOffset: 7, sourceEnd: 8 },
+      { src: "https://example.com/two.png", alt: "二枚目", caption: "図B", sourceOffset: 7, sourceEnd: 8 },
+      { src: "https://example.com/three.png", alt: "三枚目", caption: "図C", sourceOffset: 7, sourceEnd: 8 },
+    ],
+  };
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-same-offset-figures" });
+  messageListener({ type: "START_RSVP", text, requestId: "text-same-offset-figures", readingContext });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const figureMarkers = findElements(
+    textShell,
+    (element) => element.dataset.readerPositionKind === "figure",
+  );
+
+  assert.deepEqual(figureMarkers.map((element) => element.dataset.figureIndex), ["0", "1", "2"]);
+});
+
 test("reader returns from an image to the previous sentence and stays paused", async () => {
   const { document, documentElement, messageListener, timers } = createFigureReaderHarness();
   const readingContext = {
