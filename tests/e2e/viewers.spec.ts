@@ -891,6 +891,52 @@ test("Chrome viewer keeps RSVP text readable without overflow", async ({ page })
   expect(geometry.lineHeight).toBeGreaterThan(geometry.fontSize);
 });
 
+test("Chrome RSVP keeps body quote and aside units on one shared vertical center", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  const body = "通常文です。";
+  const quote = "「引用文です。」";
+  const aside = "（補足です。）";
+  const text = `${body}${quote}${aside}後ろの本文です。`;
+  await openChrome(page, { text, paused: true });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  const unit = dialog.locator('[data-reader-unit]:visible').first();
+  const expectedStarts = [0, body.length, body.length + quote.length];
+  const snapshots = [];
+
+  for (const [index, expectedStart] of expectedStarts.entries()) {
+    await expect.poll(() => unit.getAttribute("data-source-start")).toBe(String(expectedStart));
+    snapshots.push(await unit.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const rectangle = element.getBoundingClientRect();
+      return {
+        kind: element.getAttribute("data-reader-unit-kind"),
+        centerY: rectangle.top + rectangle.height / 2,
+        fontSize: style.fontSize,
+        lineHeight: style.lineHeight,
+        paddingTop: style.paddingTop,
+        paddingBottom: style.paddingBottom,
+      };
+    }));
+
+    if (index < expectedStarts.length - 1) {
+      await dialog.getByRole("button", { name: "再生" }).click();
+      await expect.poll(() => unit.getAttribute("data-source-start")).toBe(String(expectedStarts[index + 1]));
+      await pauseReaderIfPlaying(dialog);
+    }
+  }
+
+  expect(snapshots.map(({ kind }) => kind)).toEqual(["body", "quote", "aside"]);
+  const centerYs = snapshots.map(({ centerY }) => centerY);
+  expect(Math.max(...centerYs) - Math.min(...centerYs)).toBeLessThanOrEqual(1);
+  expect(new Set(snapshots.map(({ fontSize }) => fontSize)).size).toBe(1);
+  expect(new Set(snapshots.map(({ lineHeight }) => lineHeight)).size).toBe(1);
+  for (const snapshot of snapshots) expect(snapshot.paddingTop).toBe(snapshot.paddingBottom);
+});
+
 test("Chrome viewer exposes touchable controls", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await loadViewer(page, "chrome");
