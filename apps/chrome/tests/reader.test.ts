@@ -449,15 +449,17 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
   };
 }
 
-function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOnce?: boolean } = {}) {
+function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOnce?: boolean; unmountFailsOnce?: boolean } = {}) {
   const headingBeforeSelection = new FakeElement("h1", "記事タイトル");
   const headingInSelection = new FakeElement("h2", "次の節");
   const documentElement = new FakeElement("html");
+  const body = new FakeElement("body");
   const documentListeners = new Map();
   let resizeCallback = null;
   let resizeObserverLiveCount = 0;
   const document = {
     documentElement,
+    body,
     activeElement: null,
     visibilityState: "visible",
     createElement(tagName) {
@@ -490,6 +492,7 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
     },
   };
   documentElement.ownerDocument = document;
+  body.ownerDocument = document;
   let messageListener = null;
   const selection = {
     rangeCount: 1,
@@ -629,11 +632,29 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
       return mount(host);
     };
   }
+  let unmountFailed = false;
+  if (options.unmountFailsOnce) {
+    const mount = context.ReaderReactViewer.mount;
+    context.ReaderReactViewer.mount = (host) => {
+      const mounted = mount(host);
+      return {
+        ...mounted,
+        unmount() {
+          mounted.unmount();
+          if (!unmountFailed) {
+            unmountFailed = true;
+            throw new Error("reader_view_unmount_failed");
+          }
+        },
+      };
+    };
+  }
   vm.runInNewContext(source, context);
 
   return {
     document,
     documentElement,
+    body,
     selection,
     timers,
     messageListener,
@@ -846,6 +867,116 @@ test("reader cancel closes loading and sends the request id to the service worke
   assert.equal(runtimeMessages[0].requestId, "cancel-request");
   assert.deepEqual(sessionCommands.map(({ type }) => type), ["open", "cancel", "close"]);
   assert.equal(document.getElementById("__rsvp-reader-root"), null);
+});
+
+test("reader locks the source page during loading and restores overflow after cancel", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, body, messageListener, timers } = harness;
+  documentElement.style.overflow = "scroll";
+  body.style.overflow = "auto";
+  harness.setScrollPosition(16, 480);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "loading-scroll-lock" });
+
+  assert.equal(documentElement.style.overflow, "hidden");
+  assert.equal(body.style.overflow, "hidden");
+  assert.deepEqual(harness.scrollPosition(), { left: 16, top: 480 });
+
+  revealLoading(timers);
+  const slowTimer = [...timers.entries()].find(([, timer]) => timer.delay === 400);
+  assert.ok(slowTimer);
+  timers.delete(slowTimer[0]);
+  slowTimer[1].callback();
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "中止")
+    .dispatchEvent({ type: "click" });
+
+  assert.equal(documentElement.style.overflow, "scroll");
+  assert.equal(body.style.overflow, "auto");
+  assert.deepEqual(harness.scrollPosition(), { left: 16, top: 480 });
+});
+
+test("reader locks the source page while ready and restores inline overflow and scroll on close", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, body, messageListener } = harness;
+  documentElement.style.overflow = "scroll";
+  body.style.overflow = "auto";
+  harness.setScrollPosition(24, 640);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ready-scroll-lock" });
+  messageListener({ type: "START_RSVP", text: "表示中も元ページを固定します。", requestId: "ready-scroll-lock" });
+
+  assert.equal(documentElement.style.overflow, "hidden");
+  assert.equal(body.style.overflow, "hidden");
+  assert.deepEqual(harness.scrollPosition(), { left: 24, top: 640 });
+
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+    .dispatchEvent({ type: "click" });
+
+  assert.equal(documentElement.style.overflow, "scroll");
+  assert.equal(body.style.overflow, "auto");
+  assert.deepEqual(harness.scrollPosition(), { left: 24, top: 640 });
+});
+
+test("reader locks the source page on an error and restores empty inline overflow on return", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, body, messageListener } = harness;
+  harness.setScrollPosition(0, 320);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "error-scroll-lock" });
+  messageListener({ type: "RSVP_ERROR", requestId: "error-scroll-lock", reason: "unsupported_page" });
+
+  assert.equal(documentElement.style.overflow, "hidden");
+  assert.equal(body.style.overflow, "hidden");
+
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "元に戻る")
+    .dispatchEvent({ type: "click" });
+
+  assert.equal(documentElement.style.overflow, undefined);
+  assert.equal(body.style.overflow, undefined);
+  assert.deepEqual(harness.scrollPosition(), { left: 0, top: 320 });
+});
+
+test("reader preserves one source lock when a ready request is replaced and then closed", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, documentElement, body, messageListener } = harness;
+  documentElement.style.overflow = "overlay";
+  body.style.overflow = "clip";
+  harness.setScrollPosition(32, 720);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "first-scroll-lock" });
+  messageListener({ type: "START_RSVP", text: "最初の表示です。", requestId: "first-scroll-lock" });
+  assert.equal(documentElement.style.overflow, "hidden");
+  assert.equal(body.style.overflow, "hidden");
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "second-scroll-lock" });
+  assert.equal(documentElement.style.overflow, "hidden");
+  assert.equal(body.style.overflow, "hidden");
+  messageListener({ type: "START_RSVP", text: "次の表示です。", requestId: "second-scroll-lock" });
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+    .dispatchEvent({ type: "click" });
+
+  assert.equal(documentElement.style.overflow, "overlay");
+  assert.equal(body.style.overflow, "clip");
+  assert.deepEqual(harness.scrollPosition(), { left: 32, top: 720 });
+});
+
+test("reader restores the source lock when close cleanup throws", () => {
+  const harness = createOutlineReaderHarness({ unmountFailsOnce: true });
+  const { document, documentElement, body, messageListener } = harness;
+  documentElement.style.overflow = "scroll";
+  body.style.overflow = "auto";
+  harness.setScrollPosition(40, 560);
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "exception-scroll-lock" });
+  messageListener({ type: "START_RSVP", text: "終了処理で例外が起きます。", requestId: "exception-scroll-lock" });
+
+  assert.throws(
+    () => messageListener({ type: "SHOW_RSVP_LOADING", requestId: "exception-replacement" }),
+    /reader_view_unmount_failed/,
+  );
+  assert.equal(documentElement.style.overflow, "scroll");
+  assert.equal(body.style.overflow, "auto");
+  assert.deepEqual(harness.scrollPosition(), { left: 40, top: 560 });
 });
 
 test("reader attaches visibility lifecycle only while a session is active", () => {

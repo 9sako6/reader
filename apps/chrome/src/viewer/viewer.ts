@@ -72,6 +72,10 @@
   }>();
   let launchFocus: HTMLElement | null = null;
   let sourceScrollPosition: { left: number; top: number } | null = null;
+  let sourcePageLock: {
+    documentElementOverflow: string;
+    bodyOverflow: string;
+  } | null = null;
   let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
   let backgroundInert = false;
   let keydownListenerAttached = false;
@@ -403,14 +407,11 @@
       ? launchFocus
       : null;
     const activeElement = document.activeElement;
-    sourceScrollPosition = {
-      left: globalThis.scrollX || 0,
-      top: globalThis.scrollY || 0,
-    };
     close(false, true);
     launchFocus = existingLaunchFocus || (activeElement && typeof (activeElement as HTMLElement).focus === "function"
       ? activeElement as HTMLElement
       : null);
+    lockSourcePage();
     activeRequestId = requestId;
     activePreparation = { kind: "preparing", requestId, startedAt: Date.now() };
     loadingSlowVisible = false;
@@ -914,6 +915,7 @@
 
       dialog.reader-dialog::backdrop { background: transparent; }
       nav::-webkit-scrollbar { display: none; }
+      [data-reader-text-scroller] { overscroll-behavior: contain; }
       nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-offset: -2px; }
       @media (max-width: 1080px) {
         [data-reader-stage] { width: calc(100% - 32px) !important; height: calc(100% - 32px) !important; grid-template-columns: minmax(0, 1fr) !important; column-gap: 0 !important; }
@@ -1078,6 +1080,35 @@
     inertedElements = [];
     backgroundInert = false;
     for (const { element, wasInert } of entries) element.inert = wasInert;
+  }
+
+  function lockSourcePage(): void {
+    if (sourcePageLock) return;
+    const scroll = sourceScrollPosition || {
+      left: globalThis.scrollX || 0,
+      top: globalThis.scrollY || 0,
+    };
+    sourcePageLock = {
+      documentElementOverflow: document.documentElement.style.overflow,
+      bodyOverflow: document.body.style.overflow,
+    };
+    sourceScrollPosition = scroll;
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+  }
+
+  function restoreSourcePage(): void {
+    const lock = sourcePageLock;
+    sourcePageLock = null;
+    if (!lock) return;
+    try {
+      document.documentElement.style.overflow = lock.documentElementOverflow;
+    } catch {
+    }
+    try {
+      document.body.style.overflow = lock.bodyOverflow;
+    } catch {
+    }
   }
 
   function findCloseButton(): HTMLButtonElement | null {
@@ -1872,6 +1903,7 @@
           segmentationLocale = "ja";
           currentGraphemeLimit = 12;
           launchFocus = null;
+          restoreSourcePage();
           sourceScrollPosition = preserveSourceScroll ? restoreScroll : null;
           if (restoreFocus && restoreFocus.isConnected !== false && typeof restoreFocus.focus === "function") {
             focusAfterPaint(restoreFocus, restoreScroll);

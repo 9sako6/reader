@@ -468,6 +468,147 @@ test("Chrome reader restores launch focus and source scroll after error retry", 
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(480);
 });
 
+test("Chrome reader locks source scrolling during preparation and restores inline overflow after cancel", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  const launchButton = page.getByRole("button", { name: "Chrome readerを開く" });
+  await launchButton.focus();
+  await page.evaluate(() => {
+    document.body.style.minHeight = "2400px";
+    document.documentElement.style.overflow = "scroll";
+    document.body.style.overflow = "auto";
+    window.scrollTo({ top: 480, behavior: "auto" });
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(480);
+
+  await openChrome(page, { delay: 2_000 });
+  await expect(page.getByRole("status")).toHaveText("文章を準備しています");
+  await expect.poll(() => page.evaluate(() => ({
+    htmlOverflow: document.documentElement.style.overflow,
+    bodyOverflow: document.body.style.overflow,
+    scroll: window.scrollY,
+  }))).toEqual({ htmlOverflow: "hidden", bodyOverflow: "hidden", scroll: 480 });
+
+  await page.mouse.move(640, 400);
+  await page.mouse.wheel(0, 900);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(480);
+
+  await page.getByRole("button", { name: "中止" }).click();
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => ({
+    htmlOverflow: document.documentElement.style.overflow,
+    bodyOverflow: document.body.style.overflow,
+    y: window.scrollY,
+  }))).toEqual({ htmlOverflow: "scroll", bodyOverflow: "auto", y: 480 });
+});
+
+test("Chrome reader locks source scrolling while ready and restores the saved page after close", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  const launchButton = page.getByRole("button", { name: "Chrome readerを開く" });
+  await launchButton.focus();
+  await page.evaluate(() => {
+    document.body.style.minHeight = "2400px";
+    document.documentElement.style.overflow = "scroll";
+    document.body.style.overflow = "auto";
+    window.scrollTo({ top: 520, behavior: "auto" });
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(520);
+
+  await openChrome(page, { delay: 0, paused: true });
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => page.evaluate(() => ({
+    htmlOverflow: document.documentElement.style.overflow,
+    bodyOverflow: document.body.style.overflow,
+  }))).toEqual({ htmlOverflow: "hidden", bodyOverflow: "hidden" });
+
+  await page.mouse.move(640, 400);
+  await page.mouse.wheel(0, 900);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(520);
+
+  await dialog.getByRole("button", { name: "readerを閉じる" }).click();
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+  await expect(launchButton).toBeFocused();
+  await expect.poll(() => page.evaluate(() => ({
+    htmlOverflow: document.documentElement.style.overflow,
+    bodyOverflow: document.body.style.overflow,
+    y: window.scrollY,
+  }))).toEqual({ htmlOverflow: "scroll", bodyOverflow: "auto", y: 520 });
+});
+
+test("Chrome text view contains top and bottom overscroll without moving the source page", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  await page.evaluate(() => {
+    document.body.style.minHeight = "2400px";
+    document.documentElement.style.overflow = "scroll";
+    document.body.style.overflow = "auto";
+    window.scrollTo({ top: 360, behavior: "auto" });
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(360);
+
+  await openChrome(page, {
+    delay: 0,
+    text: "本文を文章ビューで読むための長い段落です。".repeat(120),
+    paused: true,
+  });
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const scroller = dialog.locator('[data-reader-text-scroller="true"]');
+  await expect(scroller).toBeVisible();
+  await expect.poll(() => scroller.evaluate((element) => getComputedStyle(element).overscrollBehaviorY)).toBe("contain");
+
+  await scroller.evaluate((element) => { element.scrollTop = 0; });
+  await scroller.hover();
+  await page.mouse.wheel(0, -900);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(360);
+
+  await scroller.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await scroller.hover();
+  await page.mouse.wheel(0, 900);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(360);
+
+  await dialog.getByRole("button", { name: "readerを閉じる" }).click();
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => ({
+    htmlOverflow: document.documentElement.style.overflow,
+    bodyOverflow: document.body.style.overflow,
+    y: window.scrollY,
+  }))).toEqual({ htmlOverflow: "scroll", bodyOverflow: "auto", y: 360 });
+});
+
+test("Chrome reader restores source overflow and scroll through consecutive ready and error closes", async ({ page }) => {
+  await loadViewer(page, "chrome");
+  const launchButton = page.getByRole("button", { name: "Chrome readerを開く" });
+  await launchButton.focus();
+  await page.evaluate(() => {
+    document.body.style.minHeight = "2400px";
+    document.documentElement.style.overflow = "scroll";
+    document.body.style.overflow = "auto";
+    window.scrollTo({ top: 400, behavior: "auto" });
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(400);
+
+  await openChrome(page, { delay: 0, text: "一回目のReaderです。", paused: true });
+  const firstDialog = page.getByRole("dialog", { name: "reader" });
+  await expect(firstDialog).toBeVisible();
+  await firstDialog.getByRole("button", { name: "readerを閉じる" }).click();
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => ({ html: document.documentElement.style.overflow, body: document.body.style.overflow, y: window.scrollY }))).toEqual({ html: "scroll", body: "auto", y: 400 });
+
+  await openChrome(page, { delay: 0, error: true, reason: "unsupported_page" });
+  await expect(page.getByText("このページはまだ開けません")).toBeVisible();
+  await page.getByRole("button", { name: "readerを閉じる" }).click();
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => ({ html: document.documentElement.style.overflow, body: document.body.style.overflow, y: window.scrollY }))).toEqual({ html: "scroll", body: "auto", y: 400 });
+
+  await openChrome(page, { delay: 0, text: "三回目のReaderです。", paused: true });
+  const thirdDialog = page.getByRole("dialog", { name: "reader" });
+  await expect(thirdDialog).toBeVisible();
+  await thirdDialog.getByRole("button", { name: "readerを閉じる" }).click();
+  await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => ({ html: document.documentElement.style.overflow, body: document.body.style.overflow, y: window.scrollY }))).toEqual({ html: "scroll", body: "auto", y: 400 });
+});
+
 test("mobile reader keeps the launch indicator hidden for a 99ms preparation", async ({ page }) => {
   await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&delay=99");
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
