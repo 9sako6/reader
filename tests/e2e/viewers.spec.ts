@@ -937,6 +937,139 @@ test("Chrome RSVP keeps body quote and aside units on one shared vertical center
   for (const snapshot of snapshots) expect(snapshot.paddingTop).toBe(snapshot.paddingBottom);
 });
 
+test("Chrome RSVP centers quote and aside backgrounds without moving surrounding controls", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  const body = "通常文です。";
+  const quote = "「引用文です。」";
+  const aside = "（補足です。）";
+  await openChrome(page, { text: `${body}${quote}${aside}続きの本文です。`, paused: true });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  const unit = dialog.locator('[data-reader-unit]:visible').first();
+  const surrounding = await dialog.evaluate((dialogElement) => {
+    const selectors = [
+      '[data-reader-context-previous]',
+      '[data-reader-context-next]',
+      '[data-reader-mode-button]',
+      '[data-reader-progress]',
+    ];
+    return selectors.map((selector) => {
+      const element = dialogElement.querySelector(selector);
+      if (!element) throw new Error(`missing surrounding element: ${selector}`);
+      const rectangle = element.getBoundingClientRect();
+      if (selector === '[data-reader-context-previous]') {
+        return { selector, left: rectangle.left, width: rectangle.width, bottom: innerHeight - rectangle.bottom };
+      }
+      if (selector === '[data-reader-context-next]') {
+        return { selector, left: rectangle.left, width: rectangle.width, top: rectangle.top };
+      }
+      if (selector === '[data-reader-progress]') {
+        return { selector, right: innerWidth - rectangle.right, top: rectangle.top, height: rectangle.height };
+      }
+      return { selector, left: rectangle.left, top: rectangle.top, width: rectangle.width, height: rectangle.height };
+    });
+  });
+  const expectedStarts = [0, body.length, body.length + quote.length];
+  const snapshots = [];
+
+  for (const [index, expectedStart] of expectedStarts.entries()) {
+    await expect.poll(() => unit.getAttribute("data-source-start")).toBe(String(expectedStart));
+    snapshots.push(await unit.evaluate((element) => {
+      const outer = element.getBoundingClientRect();
+      const textElement = element.querySelector<HTMLElement>("[data-reader-unit-text]");
+      if (!textElement) throw new Error("RSVP text layer is missing");
+      const text = textElement.getBoundingClientRect();
+      const backgroundElement = element.querySelector<HTMLElement>("[data-reader-unit-background]");
+      const background = backgroundElement?.getBoundingClientRect() || null;
+      return {
+        kind: element.getAttribute("data-reader-unit-kind"),
+        outerCenterY: outer.top + outer.height / 2,
+        textCenterY: text.top + text.height / 2,
+        backgroundCenterY: background ? background.top + background.height / 2 : null,
+        backgroundWidth: background?.width || null,
+        outerWidth: outer.width,
+      };
+    }));
+
+    if (index < expectedStarts.length - 1) {
+      await dialog.getByRole("button", { name: "再生" }).click();
+      await expect.poll(() => unit.getAttribute("data-source-start")).toBe(String(expectedStarts[index + 1]));
+      await pauseReaderIfPlaying(dialog);
+    }
+  }
+
+  expect(snapshots.map(({ kind }) => kind)).toEqual(["body", "quote", "aside"]);
+  for (const snapshot of snapshots) {
+    expect(Math.abs(snapshot.outerCenterY - snapshot.textCenterY)).toBeLessThanOrEqual(1);
+  }
+  for (const snapshot of snapshots.slice(1)) {
+    expect(snapshot.backgroundCenterY).not.toBeNull();
+    expect(Math.abs(snapshot.textCenterY - snapshot.backgroundCenterY!)).toBeLessThanOrEqual(1);
+    expect(snapshot.backgroundWidth).toBe(snapshot.outerWidth);
+  }
+
+  const finalSurrounding = await dialog.evaluate((dialogElement) => {
+    const selectors = [
+      '[data-reader-context-previous]',
+      '[data-reader-context-next]',
+      '[data-reader-mode-button]',
+      '[data-reader-progress]',
+    ];
+    return selectors.map((selector) => {
+      const element = dialogElement.querySelector(selector);
+      if (!element) throw new Error(`missing surrounding element: ${selector}`);
+      const rectangle = element.getBoundingClientRect();
+      if (selector === '[data-reader-context-previous]') {
+        return { selector, left: rectangle.left, width: rectangle.width, bottom: innerHeight - rectangle.bottom };
+      }
+      if (selector === '[data-reader-context-next]') {
+        return { selector, left: rectangle.left, width: rectangle.width, top: rectangle.top };
+      }
+      if (selector === '[data-reader-progress]') {
+        return { selector, right: innerWidth - rectangle.right, top: rectangle.top, height: rectangle.height };
+      }
+      return { selector, left: rectangle.left, top: rectangle.top, width: rectangle.width, height: rectangle.height };
+    });
+  });
+  expect(finalSurrounding).toEqual(surrounding);
+});
+
+test("Chrome RSVP keeps structural units within a narrow zoom-equivalent viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 256, height: 512 });
+  const cases = [
+    { kind: "body", text: "通常文です。" },
+    { kind: "quote", text: "「引用文です。」" },
+    { kind: "aside", text: "（補足です。）" },
+  ] as const;
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+
+  for (const structuralCase of cases) {
+    await loadViewer(page, "chrome");
+    await openChrome(page, { text: structuralCase.text, paused: true });
+    const dialog = page.getByRole("dialog", { name: "reader" });
+    await expect(dialog).toBeVisible();
+    await pauseReaderIfPlaying(dialog);
+    const unit = dialog.locator('[data-reader-unit]:visible').first();
+    await expect(unit).toHaveAttribute("data-source-start", "0");
+    const geometry = await unit.evaluate((element) => {
+      const rectangle = element.getBoundingClientRect();
+      return {
+        left: rectangle.left,
+        right: rectangle.right,
+        widthOverflow: element.scrollWidth - element.clientWidth,
+        kind: element.getAttribute("data-reader-unit-kind"),
+      };
+    });
+    expect(geometry.kind).toBe(structuralCase.kind);
+    expect(geometry.left).toBeGreaterThanOrEqual(-1);
+    expect(geometry.right).toBeLessThanOrEqual(viewportWidth + 1);
+    expect(geometry.widthOverflow).toBeLessThanOrEqual(1);
+  }
+});
+
 test("Chrome viewer exposes touchable controls", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await loadViewer(page, "chrome");
