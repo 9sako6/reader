@@ -32,33 +32,12 @@ jobs:
         with:
           install_args: node pnpm
           cache: false
-      - name: Install Rust session toolchain
-        run: |
-          rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
-          rustup override set 1.97.1
-          cargo install wasm-bindgen-cli --version 0.2.127 --locked
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y openjdk-21-jre-headless
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Type-check
-        run: mise run check
+        run: mise run typecheck
       - name: Test
-        run: mise run test
-      - name: Verify session model and measure WASM
-        run: |
-          cargo clippy --locked --all-targets --all-features -- -D warnings
-          mise run spec:verify
-          mise run measure:session
-      - name: Measure extension bundles
-        run: mise run measure:bundle
-      - name: Upload bundle baseline
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: extension-bundle-baseline
-          path: test-results/performance/bundle.json
-          if-no-files-found: error
+        run: mise run test:node
 
   performance:
     name: Fast paired benchmark

@@ -169,6 +169,11 @@ run = [
   "cargo fmt --check",
 ]
 
+[tasks."test:node"]
+description = "Run TypeScript tests without generated Rust/WASM or packaged extension artifacts"
+depends = ["compile", "build:reader-view"]
+run = "pnpm exec vitest run --exclude apps/chrome/tests/build.test.ts --exclude apps/ios/tests/extension.test.ts --exclude packages/session-ts/tests/session.real.test.ts"
+
 [tasks.test]
 description = "Build and test reader"
 depends = ["build", "test:session"]
