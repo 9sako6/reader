@@ -360,10 +360,13 @@
 
   function progressSourceOffset(position: ReaderPosition, unit: ReaderUnit | null = null): number {
     if (position.kind === "figure") return position.sourceOffset;
-    if (unit) return unit.end;
-    if (units.length === 0) return position.sourceOffset;
-    const unitIndex = globalThis.Engine.findUnitIndex(units, position.sourceOffset);
-    return units[unitIndex]?.end ?? position.sourceOffset;
+    const currentUnit = unit || (units.length > 0
+      ? units[globalThis.Engine.findUnitIndex(units, position.sourceOffset)]
+      : undefined);
+    const finalTextUnit = currentUnit
+      && units.at(-1) === currentUnit
+      && !figures.some((figure) => figure.sourceOffset >= currentUnit.end);
+    return finalTextUnit ? sourceText.length : position.sourceOffset;
   }
 
   function readingProgress(position: ReaderPosition, unit: ReaderUnit | null = null): number {

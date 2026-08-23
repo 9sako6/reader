@@ -2493,7 +2493,7 @@ test("reader keeps one timer and ends paused after a 30-minute-equivalent RSVP f
 test("reader progress reaches 100% when the final RSVP unit completes", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers } = harness;
-  const articleText = "最初の文です。最後の文です。";
+  const articleText = "これは文です。これは文です。これは文です。";
 
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "progress-final-unit" });
   messageListener({ type: "START_RSVP", text: articleText, requestId: "progress-final-unit" });
@@ -2502,7 +2502,13 @@ test("reader progress reaches 100% when the final RSVP unit completes", () => {
     document.getElementById("__rsvp-reader-root"),
     (element) => element.attributes["data-reader-progress"] === "true",
   )[0];
-  assert.ok(progress, "the reader shows one bottom-right progress meter for a headingless article");
+  assert.ok(progress, "the reader shows one bottom-right progress meter");
+  assert.equal(progress.textContent, "0%");
+
+  const [firstTimerId, firstTimer] = [...timers.entries()][0];
+  timers.delete(firstTimerId);
+  firstTimer.callback();
+  assert.equal(progress.textContent, "33%");
 
   while (timers.size > 0) {
     const [timerId, timer] = [...timers.entries()][0];
@@ -2511,6 +2517,34 @@ test("reader progress reaches 100% when the final RSVP unit completes", () => {
   }
 
   assert.equal(progress.textContent, "100%");
+});
+
+test("reader keeps progress for the same source position across RSVP and text modes", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  const articleText = "これは文です。これは文です。これは文です。";
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "progress-mode-switch" });
+  messageListener({ type: "START_RSVP", text: articleText, requestId: "progress-mode-switch" });
+
+  const rsvpProgress = findElements(
+    document.getElementById("__rsvp-reader-root"),
+    (element) => element.attributes["data-reader-progress"] === "true",
+  )[0];
+  assert.equal(rsvpProgress.textContent, "0%");
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "文章で読む")
+    .dispatchEvent({ type: "click" });
+  assert.equal(findElements(
+    document.getElementById("__rsvp-reader-root"),
+    (element) => element.attributes["data-reader-progress"] === "true",
+  )[0].textContent, "0%");
+
+  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "RSVPで読む")
+    .dispatchEvent({ type: "click" });
+  assert.equal(findElements(
+    document.getElementById("__rsvp-reader-root"),
+    (element) => element.attributes["data-reader-progress"] === "true",
+  )[0].textContent, "0%");
 });
 
 function createFigureReaderHarness() {
@@ -2649,10 +2683,15 @@ test("reader pauses on an article image and exposes its context", () => {
     (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
   );
   const resumeButton = findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む");
+  const progress = findElements(
+    overlay,
+    (element) => element.attributes["data-reader-progress"] === "true",
+  )[0];
   assert.equal(image.src, "https://example.com/chart.png");
   assert.equal(image.alt, "処理時間の比較グラフ");
   assert.ok(findElement(figurePanel, (element) => element.textContent === "図1 処理時間"));
   assert.ok(resumeButton);
+  assert.equal(progress.textContent, `${Math.round((figureOffset / text.length) * 100)}%`);
   assert.ok(findElement(figurePanel, (element) => element.tagName === "BUTTON"));
   const imageSurface = findElement(
     figurePanel,
