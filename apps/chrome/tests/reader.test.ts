@@ -2902,7 +2902,7 @@ test("reader preserves same-offset figure order in text mode", () => {
   messageListener({ type: "START_RSVP", text, requestId: "text-same-offset-figures", readingContext });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
   const figureMarkers = findElements(
     textShell,
@@ -2929,7 +2929,7 @@ test("reader shows an extracted title before a different first block", () => {
   messageListener({ type: "START_RSVP", text, requestId: "title-different-block", readingContext });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
   const titleHeadings = findElements(textShell, (element) => element.tagName === "H1");
   const article = findElement(textShell, (element) => element.tagName === "ARTICLE");
@@ -2960,7 +2960,7 @@ test("reader does not duplicate an extracted title already present in the first 
   messageListener({ type: "START_RSVP", text, requestId: "title-existing-heading", readingContext });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
   const titleHeadings = findElements(textShell, (element) => element.tagName === "H1");
 
@@ -2983,7 +2983,7 @@ test("reader omits an empty extracted title", () => {
   messageListener({ type: "START_RSVP", text, requestId: "title-empty", readingContext });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
 
   assert.equal(findElements(textShell, (element) => element.tagName === "H1").length, 0);
@@ -3006,7 +3006,7 @@ test("reader omits an empty title for a selection range", () => {
   messageListener({ type: "START_RSVP", text, requestId: "selection-title-empty", readingContext });
 
   const overlay = document.getElementById("__rsvp-reader-root");
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
 
   assert.equal(findElements(textShell, (element) => element.tagName === "H1").length, 0);
@@ -3032,7 +3032,7 @@ test("reader keeps source position and progress unchanged when adding an extract
   const overlay = document.getElementById("__rsvp-reader-root");
   const initialState = sessionState();
   const initialProgress = findElement(overlay, (element) => element.attributes["data-reader-progress"] === "true").textContent;
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
   const titleHeading = findElement(textShell, (element) => element.tagName === "H1");
   const textProgress = findElement(textShell, (element) => element.attributes["data-reader-progress"] === "true");
@@ -3046,7 +3046,7 @@ test("reader keeps source position and progress unchanged when adding an extract
   assert.equal(sessionState().position.kind, initialState.position.kind);
   assert.equal(sessionState().position.sourceOffset, initialState.position.sourceOffset);
 
-  findElement(textShell, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+  findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
   assert.equal(sessionState().sourceOffset, initialState.sourceOffset);
   assert.equal(sessionState().position.kind, initialState.position.kind);
   assert.equal(sessionState().position.sourceOffset, initialState.position.sourceOffset);
@@ -3081,14 +3081,14 @@ test("reader preserves an article-leading figure through a text round trip", () 
   assert.equal(sessionState()?.position.kind, "figure");
   assert.equal(sessionState()?.position.sourceOffset, 0);
 
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
   const textFigure = findElement(textShell, (element) => element.attributes["data-reader-text-figure"] === "true");
   assert.ok(textFigure);
   assert.equal(textFigure.dataset.figureIndex, "0");
   assert.equal(textFigure.dataset.sourceStart, "0");
 
-  findElement(textShell, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+  findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
   const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   assert.ok(restoredFigure);
   assert.equal(restoredFigure.dataset.figureIndex, "0");
@@ -3131,14 +3131,14 @@ test("reader preserves an article-ending figure through a text round trip", () =
   assert.equal(initialFigure.dataset.figureIndex, "0");
   assert.equal(initialFigure.dataset.sourceStart, String(figureOffset));
 
-  findElement(overlay, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
   const textFigure = findElement(textShell, (element) => element.attributes["data-reader-text-figure"] === "true");
   assert.ok(textFigure);
   assert.equal(textFigure.dataset.figureIndex, "0");
   assert.equal(textFigure.dataset.sourceStart, String(figureOffset));
 
-  findElement(textShell, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+  findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
   const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   assert.ok(restoredFigure);
   assert.equal(restoredFigure.dataset.figureIndex, "0");
