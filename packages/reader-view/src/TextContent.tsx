@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { BlockView } from "./block-view";
-import { Figure } from "./figure";
+import { BlockView } from "./BlockView";
+import { Figure } from "./Figure";
 import type { ReaderViewHandlers, ReaderViewModel } from "./types";
 
 export function orderedTextChildren(model: Extract<ReaderViewModel, { kind: "text" }>, handlers: ReaderViewHandlers): ReactNode[] {

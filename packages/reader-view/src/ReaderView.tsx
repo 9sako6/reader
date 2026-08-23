@@ -1,8 +1,8 @@
 import type { ReactElement } from "react";
-import { DesktopView } from "./desktop-view";
-import { ErrorView } from "./error-view";
-import { LoadingView } from "./loading-view";
-import { MobileView } from "./mobile-view";
+import { DesktopView } from "./DesktopView";
+import { ErrorView } from "./ErrorView";
+import { LoadingView } from "./LoadingView";
+import { MobileView } from "./MobileView";
 import type { ReaderViewHandlers, ReaderViewModel } from "./types";
 
 export function ReaderView({ model, handlers }: { model: ReaderViewModel; handlers: ReaderViewHandlers }): ReactElement | null {

@@ -1,11 +1,11 @@
 import type { ReactElement } from "react";
-import { Button } from "./button";
-import { Figure } from "./figure";
-import { IconButton } from "./icon-button";
-import { LoadingIndicator } from "./loading-indicator";
-import { Minimap } from "./minimap";
-import { orderedTextChildren } from "./text-content";
-import { ReaderTextScroller } from "./reader-text-scroller";
+import { Button } from "./Button";
+import { Figure } from "./Figure";
+import { IconButton } from "./IconButton";
+import { LoadingIndicator } from "./LoadingIndicator";
+import { Minimap } from "./Minimap";
+import { orderedTextChildren } from "./TextContent";
+import { ReaderTextScroller } from "./ReaderTextScroller";
 import type { ReaderViewHandlers, ReaderViewModel } from "./types";
 
 export function DesktopView({ model, handlers }: { model: Extract<ReaderViewModel, { kind: "rsvp" | "text" }>; handlers: ReaderViewHandlers }): ReactElement {

@@ -1,10 +1,10 @@
 import type { ReactElement } from "react";
-import { ErrorView } from "./error-view";
-import { Figure } from "./figure";
-import { LoadingView } from "./loading-view";
-import { ReaderTextScroller } from "./reader-text-scroller";
-import { RewindFeedback } from "./rewind-feedback";
-import { orderedTextChildren } from "./text-content";
+import { ErrorView } from "./ErrorView";
+import { Figure } from "./Figure";
+import { LoadingView } from "./LoadingView";
+import { ReaderTextScroller } from "./ReaderTextScroller";
+import { RewindFeedback } from "./RewindFeedback";
+import { orderedTextChildren } from "./TextContent";
 import type { ReaderViewHandlers, ReaderViewModel } from "./types";
 
 export function MobileView({ model, handlers }: { model: ReaderViewModel; handlers: ReaderViewHandlers }): ReactElement | null {

@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
-import { Button } from "./button";
-import { LoadingIndicator } from "./loading-indicator";
+import { Button } from "./Button";
+import { LoadingIndicator } from "./LoadingIndicator";
 import { buttonStyle } from "./styles";
 import type { ReaderViewHandlers, ReaderViewModel } from "./types";
 

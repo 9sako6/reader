@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { Button } from "./button";
+import { Button } from "./Button";
 import type { ReaderViewHandlers, ReaderViewModel } from "./types";
 
 export function ErrorView({ model, handlers }: { model: Extract<ReaderViewModel, { kind: "error" }>; handlers: ReaderViewHandlers }): ReactElement {

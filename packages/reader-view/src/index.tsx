@@ -1,6 +1,6 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { ReaderView } from "./reader-view";
+import { ReaderView } from "./ReaderView";
 import type { ReaderViewHandlers, ReaderViewModel, ReaderViewMount } from "./types";
 
 function mount(host: Element): ReaderViewMount {
