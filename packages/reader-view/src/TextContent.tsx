@@ -4,7 +4,9 @@ import { Figure } from "./Figure";
 import type { ReaderViewHandlers, ReaderViewModel } from "./types";
 
 export function orderedTextChildren(model: Extract<ReaderViewModel, { kind: "text" }>, handlers: ReaderViewHandlers): ReactNode[] {
-  const blocks = model.blocks.map((block, index) => ({ kind: "block" as const, offset: block.start, value: <BlockView key={`block-${block.start}-${index}`} block={block} index={index} /> }));
-  const figures = model.figures.map((figure, figureIndex) => ({ kind: "figure" as const, offset: figure.sourceOffset, value: <Figure key={`figure-${figure.sourceOffset}-${figureIndex}`} figureView={{ figure, figureIndex, status: "ready", brightness: "dimmed" }} handlers={handlers} text /> }));
-  return [...blocks, ...figures].sort((left, right) => left.offset - right.offset || (left.kind === "figure" ? -1 : 1)).map((entry) => entry.value);
+  const blocks = model.blocks.map((block, index) => ({ kind: "block" as const, offset: block.start, order: index, value: <BlockView key={`block-${block.start}-${index}`} block={block} index={index} /> }));
+  const figures = model.figures.map((figure, figureIndex) => ({ kind: "figure" as const, offset: figure.sourceOffset, order: figureIndex, value: <Figure key={`figure-${figure.sourceOffset}-${figureIndex}`} figureView={{ figure, figureIndex, status: "ready", brightness: "dimmed" }} handlers={handlers} text /> }));
+  return [...blocks, ...figures]
+    .sort((left, right) => left.offset - right.offset || (left.kind === right.kind ? left.order - right.order : left.kind === "figure" ? -1 : 1))
+    .map((entry) => entry.value);
 }
