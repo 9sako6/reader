@@ -2490,6 +2490,29 @@ test("reader keeps one timer and ends paused after a 30-minute-equivalent RSVP f
   assert.ok(finalState.sourceOffset > 0 && finalState.sourceOffset < longText.length);
 });
 
+test("reader progress reaches 100% when the final RSVP unit completes", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener, timers } = harness;
+  const articleText = "最初の文です。最後の文です。";
+
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "progress-final-unit" });
+  messageListener({ type: "START_RSVP", text: articleText, requestId: "progress-final-unit" });
+
+  const progress = findElements(
+    document.getElementById("__rsvp-reader-root"),
+    (element) => element.attributes["data-reader-progress"] === "true",
+  )[0];
+  assert.ok(progress, "the reader shows one bottom-right progress meter for a headingless article");
+
+  while (timers.size > 0) {
+    const [timerId, timer] = [...timers.entries()][0];
+    timers.delete(timerId);
+    timer.callback();
+  }
+
+  assert.equal(progress.textContent, "100%");
+});
+
 function createFigureReaderHarness() {
   const documentElement = new FakeElement("html");
   const documentListeners = new Map();
