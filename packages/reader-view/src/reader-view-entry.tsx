@@ -1,6 +1,7 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { ReaderView, type ReaderViewHandlers, type ReaderViewModel, type ReaderViewMount } from "./reader-view";
+import { ReaderView } from "./reader-view";
+import type { ReaderViewHandlers, ReaderViewModel, ReaderViewMount } from "./types";
 
 function mount(host: Element): ReaderViewMount {
   const root: Root = createRoot(host);
