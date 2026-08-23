@@ -98,7 +98,14 @@ function benchmarkRecords(report) {
     .flatMap((group) => Array.isArray(group.benchmarks) ? group.benchmarks : []));
 }
 
-function recordStatistics(record, name) {
+function recordStatistics(record, name, expectedSampleCount = null) {
+  if (expectedSampleCount !== null) {
+    if (!Number.isInteger(record.sampleCount) || record.sampleCount !== expectedSampleCount) {
+      throw new Error(
+        `${name} expected ${expectedSampleCount} raw samples, received ${record.sampleCount ?? "none"}`,
+      );
+    }
+  }
   const samples = Array.isArray(record.samples) ? record.samples.filter(Number.isFinite) : [];
   const medianMs = Number.isFinite(record.median)
     ? record.median
@@ -109,7 +116,7 @@ function recordStatistics(record, name) {
   return { medianMs, samples };
 }
 
-export function pairVitestBenchmarks(report) {
+export function pairVitestBenchmarks(report, { expectedSampleCount = null } = {}) {
   const records = benchmarkRecords(report);
   const pairs = new Map();
   for (const record of records) {
@@ -118,7 +125,7 @@ export function pairVitestBenchmarks(report) {
     if (!match) continue;
     const [, fixture, runText, side] = match;
     const run = Number(runText);
-    const statistics = recordStatistics(record, name);
+    const statistics = recordStatistics(record, name, expectedSampleCount);
     const key = `${fixture}:${run}`;
     const pair = pairs.get(key) || { fixture, run, records: {} };
     if (pair.records[side]) throw new Error(`${name} is duplicated`);
@@ -168,8 +175,8 @@ export function pairVitestBenchmarks(report) {
   return groups;
 }
 
-export function evaluateVitestReport(report, budget = FAST_PAIRED_BUDGET) {
-  const groups = pairVitestBenchmarks(report).map((samples) => evaluatePairedBudget(samples, budget));
+export function evaluateVitestReport(report, budget = FAST_PAIRED_BUDGET, options = {}) {
+  const groups = pairVitestBenchmarks(report, options).map((samples) => evaluatePairedBudget(samples, budget));
   const failures = groups.flatMap((group) => group.failures.map((failure) => `${group.report.fixture}: ${failure}`));
   return {
     status: failures.length === 0 ? "pass" : "regression",

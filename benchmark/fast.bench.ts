@@ -1,16 +1,14 @@
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { bench } from "vitest";
+import { FAST_BENCHMARK_CONFIG } from "./fast-config.mjs";
 
 const require = createRequire(import.meta.url);
-const PAIR_COUNT = 20;
-const BATCH_SIZE = 8;
-const SAMPLE_ITERATIONS = 5;
 const benchmarkOptions = {
   time: 0,
-  iterations: SAMPLE_ITERATIONS,
+  iterations: FAST_BENCHMARK_CONFIG.sampleIterations,
   warmupTime: 0,
-  warmupIterations: 5,
+  warmupIterations: FAST_BENCHMARK_CONFIG.warmupIterations,
 };
 
 const source = [
@@ -44,13 +42,13 @@ function consume(value) {
 }
 
 function segment(engine) {
-  for (let batch = 0; batch < BATCH_SIZE; batch += 1) {
+  for (let batch = 0; batch < FAST_BENCHMARK_CONFIG.batchSize; batch += 1) {
     consume(engine.segmentText(source, "ja"));
   }
 }
 
 function flow(engine) {
-  for (let batch = 0; batch < BATCH_SIZE; batch += 1) {
+  for (let batch = 0; batch < FAST_BENCHMARK_CONFIG.batchSize; batch += 1) {
     const units = engine.segmentText(source, "ja");
     consume(engine.buildReadingFlow(units, figures));
   }
@@ -62,7 +60,7 @@ const fixtures = [
 ];
 
 for (const [fixtureName, runFixture] of fixtures) {
-  for (let run = 0; run < PAIR_COUNT; run += 1) {
+  for (let run = 0; run < FAST_BENCHMARK_CONFIG.pairCount; run += 1) {
     const first = run % 2 === 0 ? "main" : "candidate";
     const second = first === "main" ? "candidate" : "main";
     for (const side of [first, second]) {
