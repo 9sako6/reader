@@ -33,7 +33,7 @@ function validateSample(sample, index, fixture) {
   }
   assertFinite(sample.mainMs, `paired sample ${index} mainMs`);
   assertFinite(sample.candidateMs, `paired sample ${index} candidateMs`);
-  if (sample.mainMs <= 0 || sample.candidateMs < 0) {
+  if (sample.mainMs <= 0 || sample.candidateMs <= 0) {
     throw new Error(`paired sample ${index} has an invalid duration`);
   }
 }
