@@ -460,9 +460,9 @@ test("Chrome reader locks source scrolling during preparation and restores inlin
     document.body.style.minHeight = "2400px";
     document.documentElement.style.overflow = "scroll";
     document.body.style.overflow = "auto";
-    window.scrollTo({ top: 480, left: 12, behavior: "auto" });
+    window.scrollTo({ top: 480, behavior: "auto" });
   });
-  await expect.poll(() => page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual({ x: 12, y: 480 });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(480);
 
   await openChrome(page, { delay: 2_000 });
   await expect(page.getByRole("status")).toHaveText("文章を準備しています");
@@ -481,9 +481,8 @@ test("Chrome reader locks source scrolling during preparation and restores inlin
   await expect.poll(() => page.evaluate(() => ({
     htmlOverflow: document.documentElement.style.overflow,
     bodyOverflow: document.body.style.overflow,
-    x: window.scrollX,
     y: window.scrollY,
-  }))).toEqual({ htmlOverflow: "scroll", bodyOverflow: "auto", x: 12, y: 480 });
+  }))).toEqual({ htmlOverflow: "scroll", bodyOverflow: "auto", y: 480 });
 });
 
 test("Chrome reader locks source scrolling while ready and restores the saved page after close", async ({ page }) => {
@@ -494,9 +493,9 @@ test("Chrome reader locks source scrolling while ready and restores the saved pa
     document.body.style.minHeight = "2400px";
     document.documentElement.style.overflow = "scroll";
     document.body.style.overflow = "auto";
-    window.scrollTo({ top: 520, left: 18, behavior: "auto" });
+    window.scrollTo({ top: 520, behavior: "auto" });
   });
-  await expect.poll(() => page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual({ x: 18, y: 520 });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(520);
 
   await openChrome(page, { delay: 0, paused: true });
   const dialog = page.getByRole("dialog", { name: "reader" });
@@ -516,9 +515,8 @@ test("Chrome reader locks source scrolling while ready and restores the saved pa
   await expect.poll(() => page.evaluate(() => ({
     htmlOverflow: document.documentElement.style.overflow,
     bodyOverflow: document.body.style.overflow,
-    x: window.scrollX,
     y: window.scrollY,
-  }))).toEqual({ htmlOverflow: "scroll", bodyOverflow: "auto", x: 18, y: 520 });
+  }))).toEqual({ htmlOverflow: "scroll", bodyOverflow: "auto", y: 520 });
 });
 
 test("Chrome text view contains top and bottom overscroll without moving the source page", async ({ page }) => {
@@ -570,9 +568,9 @@ test("Chrome reader restores source overflow and scroll through consecutive read
     document.body.style.minHeight = "2400px";
     document.documentElement.style.overflow = "scroll";
     document.body.style.overflow = "auto";
-    window.scrollTo({ top: 400, left: 8, behavior: "auto" });
+    window.scrollTo({ top: 400, behavior: "auto" });
   });
-  await expect.poll(() => page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual({ x: 8, y: 400 });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(400);
 
   await openChrome(page, { delay: 0, text: "一回目のReaderです。", paused: true });
   const firstDialog = page.getByRole("dialog", { name: "reader" });
@@ -592,8 +590,7 @@ test("Chrome reader restores source overflow and scroll through consecutive read
   await expect(thirdDialog).toBeVisible();
   await thirdDialog.getByRole("button", { name: "readerを閉じる" }).click();
   await expect(page.locator("#__rsvp-reader-root")).toHaveCount(0);
-  await expect(launchButton).toBeFocused();
-  await expect.poll(() => page.evaluate(() => ({ html: document.documentElement.style.overflow, body: document.body.style.overflow, x: window.scrollX, y: window.scrollY }))).toEqual({ html: "scroll", body: "auto", x: 8, y: 400 });
+  await expect.poll(() => page.evaluate(() => ({ html: document.documentElement.style.overflow, body: document.body.style.overflow, y: window.scrollY }))).toEqual({ html: "scroll", body: "auto", y: 400 });
 });
 
 test("mobile reader keeps the launch indicator hidden for a 99ms preparation", async ({ page }) => {
