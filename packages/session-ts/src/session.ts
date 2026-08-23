@@ -18,8 +18,8 @@
       chrome?: { runtime?: { getURL?: (path: string) => string } };
       browser?: { runtime?: { getURL?: (path: string) => string } };
     };
-    const extensionRuntime = scope.chrome?.runtime?.getURL || scope.browser?.runtime?.getURL;
-    return extensionRuntime?.("reader_session_bg.wasm");
+    const extensionRuntime = scope.chrome?.runtime ?? scope.browser?.runtime;
+    return extensionRuntime?.getURL?.("reader_session_bg.wasm");
   }
 
   async function init(): Promise<void> {

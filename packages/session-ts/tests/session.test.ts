@@ -110,3 +110,58 @@ test("a failed initialization is retryable after the latest request wins", async
     globalThis.wasm_bindgen = previousGlue;
   }
 });
+
+test("WASM wrapper resolves the extension resource through the Safari runtime receiver", async () => {
+  const modulePath = require.resolve("../../../.build/packages/session-ts/src/session.js");
+  delete require.cache[modulePath];
+  const scope = globalThis as typeof globalThis & {
+    chrome?: unknown;
+    browser?: unknown;
+  };
+  const previousRuntime = globalThis.ReaderSessionWasm;
+  const previousGlue = globalThis.wasm_bindgen;
+  const previousChrome = scope.chrome;
+  const previousBrowser = scope.browser;
+  const previousFetch = globalThis.fetch;
+  let fetchedUrl = "";
+  try {
+    globalThis.ReaderSessionWasm = undefined;
+    const runtime = {
+      baseUrl: "safari-web-extension://reader/",
+      getURL(this: { baseUrl: string }, path: string) {
+        return `${this.baseUrl}${path}`;
+      },
+    };
+    scope.chrome = { runtime };
+    scope.browser = undefined;
+    globalThis.fetch = async (input) => {
+      fetchedUrl = String(input);
+      return {
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(8),
+      } as Response;
+    };
+    globalThis.wasm_bindgen = Object.assign(
+      async () => undefined,
+      {
+        reader_session_create: () => 1,
+        reader_session_observable: () => JSON.stringify(observable()),
+        reader_session_dispatch: () => JSON.stringify({ state: observable(), effects: [] }),
+        reader_session_destroy: () => undefined,
+      },
+    );
+
+    const SafariReaderSession = require(modulePath);
+    await SafariReaderSession.init();
+
+    assert.equal(fetchedUrl, "safari-web-extension://reader/reader_session_bg.wasm");
+    assert.equal(SafariReaderSession.ready(), true);
+  } finally {
+    globalThis.ReaderSessionWasm = previousRuntime;
+    globalThis.wasm_bindgen = previousGlue;
+    scope.chrome = previousChrome;
+    scope.browser = previousBrowser;
+    globalThis.fetch = previousFetch;
+    delete require.cache[modulePath];
+  }
+});

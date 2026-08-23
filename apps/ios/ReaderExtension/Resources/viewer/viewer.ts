@@ -46,6 +46,7 @@
   let figureLoadToken = 0;
   let figureLoadRevealTimerId: number | null = null;
   let opening = false;
+  let controlsVisible = true;
   let pendingLeftTap: number | null = null;
   let lastLeftTapAt = 0;
   let lastLeftTapX = 0;
@@ -214,7 +215,7 @@
     const figureStatus = figure && figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.kind : figure ? "loading" : null;
     const unit = item?.kind === "unit" ? units[unitIndex] || null : null;
     const context = unit ? global.Engine.surroundingSentences(units, unitIndex) : { previous: "", next: "" };
-    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus, token: figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.token : undefined, loadingVisible: figureStatus === "loading" && figureLoadRevealTimerId === null, brightness: reactFigureBrightness } : null, playing: state?.playback === "playing", reducedMotion: prefersReducedMotion(), progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, rewindFeedback, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
+    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus, token: figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.token : undefined, loadingVisible: figureStatus === "loading" && figureLoadRevealTimerId === null, brightness: reactFigureBrightness } : null, playing: state?.playback === "playing", controlsVisible, reducedMotion: prefersReducedMotion(), progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, rewindFeedback, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
   }
 
   function renderReactView(): void {
@@ -363,6 +364,7 @@
       .mode-button:active { opacity: .52; transform: translateX(-50%) scale(.96); }
       .controlbar { height: calc(132px + env(safe-area-inset-bottom)); position: absolute; z-index: 4; left: 0; right: 0; bottom: 0; background: linear-gradient(to top, rgba(5,5,5,.96), rgba(5,5,5,0)); pointer-events: none; }
       .control-dock { width: min(100% - 32px, 280px); min-height: 60px; position: absolute; left: 50%; bottom: calc(52px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: 1fr 64px 1fr; align-items: center; background: transparent; transform: translateX(-50%); pointer-events: auto; transition: opacity 140ms ease, transform 140ms ease; }
+      .control-dock[hidden] { display: none; }
       .dock-button { min-width: 44px; min-height: 56px; padding: 0 14px; border: 0; background: transparent; color: var(--reader-control); font-size: 15px; font-weight: 600; white-space: nowrap; transition: opacity 100ms ease, transform 100ms ease; }
       .dock-button svg { display: block; margin: auto; }
       .dock-button:active { opacity: .52; transform: scale(.94); }
@@ -773,9 +775,13 @@
       else pendingSessionCommands.push(command);
       return;
     }
+    const wasFigure = sessionState.phase === "reading" && sessionState.currentKind === "figure";
     const transition = global.ReaderSession.dispatch(sessionHandle, command);
     sessionState = transition.state;
     syncReaderSessionState();
+    if (!wasFigure && sessionState.phase === "reading" && sessionState.currentKind === "figure") {
+      controlsVisible = true;
+    }
     applyingSession = true;
     try {
       for (const effect of transition.effects) {
@@ -1096,6 +1102,7 @@
         position: capturedPosition,
       }, false);
     }
+    if (nextMode === "rsvp") controlsVisible = true;
     renderSessionState();
     if (nextMode === "rsvp") scheduleReactTextRestoreRelease();
     if (!containsReaderElement(previousFocus)) {
@@ -1139,7 +1146,7 @@
 
   function maxGraphemesForViewport() {
     const availableWidth = Math.max(160, global.innerWidth - 48);
-    return Math.min(12, Math.max(3, Math.floor(availableWidth / RSVP_FONT_SIZE)));
+    return Math.min(12, Math.max(3, Math.floor(availableWidth / RSVP_FONT_SIZE) + 1));
   }
 
   function handleViewportChange() {
@@ -1156,10 +1163,12 @@
     if (readingSessionState()?.currentKind === "figure") advanceFromFigure();
     else if (sessionIsPlaying()) pause();
     else play();
+    showTransportControls();
   }
 
   function goBackFromControl(): void {
     previousSentence();
+    showTransportControls();
   }
 
   function handleRsvpPointerUp(event: PointerEvent): void {
@@ -1170,6 +1179,7 @@
     if (!leftSide) {
       clearPendingLeftTap();
       lastLeftTapAt = 0;
+      toggleTransportControls();
       return;
     }
 
@@ -1193,7 +1203,19 @@
       if (!isCurrentSession(generation)) return;
       pendingLeftTap = null;
       lastLeftTapAt = 0;
+      toggleTransportControls();
     }, 260);
+  }
+
+  function toggleTransportControls(): void {
+    controlsVisible = !controlsVisible;
+    renderReactView();
+  }
+
+  function showTransportControls(): void {
+    if (controlsVisible) return;
+    controlsVisible = true;
+    renderReactView();
   }
 
   function isReaderControl(target: EventTarget | null): boolean {
@@ -1273,6 +1295,7 @@
 
   function advanceFromFigure(): void {
     dispatchSession({ type: "resumeFromFigure" });
+    showTransportControls();
   }
 
   function activeHeadingAt(offset: number): number {
@@ -1451,6 +1474,7 @@
     invalidateFigureLoad();
     currentPosition = { kind: "text", sourceOffset: 0 };
     opening = false;
+    controlsVisible = true;
     lastLeftTapAt = 0;
     lastLeftTapX = 0;
     lastLeftTapY = 0;

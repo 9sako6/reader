@@ -897,8 +897,8 @@ test("Safari reader shows extraction progress before opening", async () => {
   ), null);
 });
 
-test("Safari reader keeps RSVP controls visible and preserves the paused state", async () => {
-  const { context, documentElement } = createSafariReaderHarness();
+test("Safari reader starts with RSVP controls visible and toggles them from the reading surface", async () => {
+  const { context, documentElement, timers } = createSafariReaderHarness();
   await context.MobileViewer.open();
 
   const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
@@ -916,9 +916,16 @@ test("Safari reader keeps RSVP controls visible and preserves the paused state",
   assert.equal(backButton.parent.hidden, false);
   assert.equal(initialPlayButton.parent.hidden, false);
   assert.equal(initialPlayButton.attributes["aria-pressed"], "true");
+  const nextContext = findElement(documentElement, (element) => element.className === "context-unit next");
+  assert.equal(nextContext.animations.length, 1);
+  assert.equal(nextContext.animations[0].keyframes[0].opacity, 0.12);
+  assert.equal(nextContext.animations[0].keyframes[1].opacity, 0.26);
+  assert.equal(nextContext.animations[0].options.duration, 120);
 
   rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1000 });
-  assert.equal(backButton.parent.hidden, false);
+  assert.equal(findElement(documentElement, (element) => element.className === "control-dock").hidden, true);
+  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1400 });
+  assert.equal(findElement(documentElement, (element) => element.className === "control-dock").hidden, false);
   const playButton = findElement(
     documentElement,
     (element) => element.attributes["aria-label"] === "一時停止",
@@ -927,12 +934,13 @@ test("Safari reader keeps RSVP controls visible and preserves the paused state",
   playButton.dispatchEvent({ type: "click" });
   assert.equal(playButton.attributes["aria-label"], "再生");
   assert.equal(playButton.attributes["aria-pressed"], "false");
-  assert.equal(backButton.parent.hidden, false);
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1400 });
-  assert.equal(backButton.parent.hidden, false);
-  assert.equal(playButton.attributes["aria-label"], "再生");
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1700 });
-  assert.equal(backButton.parent.hidden, false);
+  assert.equal(findElement(documentElement, (element) => element.className === "control-dock").hidden, false);
+
+  rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+  fireTimerWithDelay(timers, 260);
+  assert.equal(findElement(documentElement, (element) => element.className === "control-dock").hidden, true);
+  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 2400 });
+  assert.equal(findElement(documentElement, (element) => element.className === "control-dock").hidden, false);
 });
 
 test("Safari reader completes hidden preparation without starting playback", async () => {
@@ -992,6 +1000,22 @@ test("Safari reader applies queued mode changes after session initialization", a
     "prepareSucceeded",
     "switchToText",
   ]);
+});
+
+test("Safari reader starts playback when switching from text mode to RSVP", async () => {
+  const { context, documentElement, timers } = createSafariReaderHarness();
+  await context.MobileViewer.open();
+
+  findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止")
+    .dispatchEvent({ type: "click" });
+  findElement(documentElement, (element) => element.textContent === "文章で読む")
+    .dispatchEvent({ type: "click" });
+  const rsvpModeButton = findElement(documentElement, (element) => element.textContent === "RSVPで読む");
+  assert.ok(rsvpModeButton);
+  rsvpModeButton.dispatchEvent({ type: "click" });
+
+  assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
+  assert.equal(timers.size, 1);
 });
 
 test("Safari viewer segments with the ReaderContent language", async () => {
@@ -1067,7 +1091,6 @@ test("Safari reader shows rewind feedback without changing pause state", async (
     documentElement,
     (element) => element.attributes["aria-label"] === "1文戻る",
   );
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1000 });
   const playButton = findElement(
     documentElement,
     (element) => element.attributes["aria-label"] === "一時停止",
@@ -1100,6 +1123,8 @@ test("Safari reader shows rewind feedback without changing pause state", async (
   assert.equal(playButton.attributes["aria-label"], "一時停止");
   assert.equal(backButton.parent.hidden, false);
   rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 2600 });
+  assert.equal(backButton.parent.hidden, true);
+  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 2800 });
   assert.equal(backButton.parent.hidden, false);
   rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 3000 });
   rsvpView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 3180 });
@@ -1236,7 +1261,7 @@ test("Safari reader pauses after returning from an image to the previous sentenc
   assert.ok(firstFigure);
   assert.equal(backButton.parent.hidden, false);
   firstFigure.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 3600 });
-  assert.equal(backButton.parent.hidden, false);
+  assert.equal(backButton.parent.hidden, true);
   firstFigure.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 3900 });
   assert.equal(backButton.parent.hidden, false);
   backButton.dispatchEvent({ type: "click" });
@@ -1282,7 +1307,7 @@ test("Safari figure surface is keyboard accessible and keeps a failed image reco
   assert.equal(findElement(figurePanel, (element) => element.attributes["data-reader-figure-status"] === "true").hidden, false);
   image.dispatchEvent({ type: "error" });
   assert.equal(findElement(figurePanel, (element) => element.attributes["data-reader-figure-status"] === "true").textContent, "画像を読み込めませんでした");
-  const resume = findElement(documentElement, (element) => element.attributes["aria-label"] === "続きを読む");
+  const resume = findElement(documentElement, (element) => element.attributes["aria-label"] === "再生");
   assert.ok(resume);
   resume.dispatchEvent({ type: "click" });
   assert.match(findElement(documentElement, (element) => element.className.startsWith("rsvp-unit")).textContent, /画像の後/u);
@@ -1355,7 +1380,7 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
 
   const imagePlayButton = findElement(
     documentElement,
-    (element) => element.attributes["aria-label"] === "続きを読む",
+    (element) => element.attributes["aria-label"] === "再生",
   );
   assert.ok(imagePlayButton);
   imagePlayButton.dispatchEvent({ type: "click" });
@@ -1470,7 +1495,7 @@ test("Safari reader preserves the text marker when an earlier responsive text im
   }
   const figureImage = findElement(figurePanel, (element) => element.tagName === "IMG");
   figureImage.dispatchEvent({ type: "error" });
-  findElement(documentElement, (element) => element.attributes["aria-label"] === "続きを読む").dispatchEvent({ type: "click" });
+  findElement(documentElement, (element) => element.attributes["aria-label"] === "再生").dispatchEvent({ type: "click" });
   findElement(documentElement, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
 
   const scroller = findElement(documentElement, (element) => element.className === "text-view");

@@ -9,6 +9,7 @@ export type ReaderViewModel =
     unit: ReaderUnit | null;
     figure: ReaderFigureView | null;
     playing: boolean;
+    controlsVisible?: boolean;
     progress: number;
     loadingCover?: boolean;
     rewindFeedback?: ReaderRewindFeedback;

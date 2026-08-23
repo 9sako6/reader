@@ -1443,7 +1443,6 @@ test("mobile viewer keeps RSVP text readable without overflow", async ({ page })
   await page.getByRole("button", { name: "readerで読む" }).click();
   const dialog = page.getByRole("dialog", { name: "reader" });
   await expect(dialog).toBeVisible();
-  await dialog.locator(".rsvp-view").click({ position: { x: 300, y: 240 } });
   await dialog.getByRole("button", { name: "一時停止" }).click();
 
   const geometry = await dialog.locator("[data-reader-unit]").evaluate((element) => {
@@ -1464,7 +1463,6 @@ test("mobile viewer exposes touchable controls", async ({ page }) => {
   await page.getByRole("button", { name: "readerで読む" }).click();
   const dialog = page.getByRole("dialog", { name: "reader" });
   await expect(dialog).toBeVisible();
-  await dialog.locator(".rsvp-view").click({ position: { x: 300, y: 240 } });
 
   const closeButton = dialog.getByRole("button", { name: "readerを閉じる" });
   await expect(closeButton).toBeVisible();
@@ -1485,6 +1483,37 @@ test("mobile viewer exposes touchable controls", async ({ page }) => {
   expect(playPauseBox?.height).toBeGreaterThanOrEqual(44);
 });
 
+test("mobile viewer starts with transport controls visible and toggles them on surface taps", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const transport = dialog.locator(".control-dock");
+  await expect(dialog.getByRole("button", { name: "1文戻る" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+  await expect(transport).not.toHaveAttribute("hidden", "");
+
+  await dialog.locator(".rsvp-view").click({ position: { x: 300, y: 240 } });
+  await expect(transport).toHaveAttribute("hidden", "");
+  await dialog.locator(".rsvp-view").click({ position: { x: 300, y: 240 } });
+  await expect(transport).not.toHaveAttribute("hidden", "");
+});
+
+test("mobile viewer starts playback when switching from text mode to RSVP", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+  await dialog.getByRole("button", { name: "一時停止" }).click();
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  await expect(dialog.getByRole("button", { name: "RSVPで読む" })).toBeVisible();
+
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+
+  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+});
+
 test("mobile viewer keeps its focal point after 25 mode round trips", async ({ page }) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1492,7 +1521,6 @@ test("mobile viewer keeps its focal point after 25 mode round trips", async ({ p
   await page.getByRole("button", { name: "readerで読む" }).click();
   const dialog = page.getByRole("dialog", { name: "reader" });
   await expect(dialog).toBeVisible();
-  await dialog.locator(".rsvp-view").click({ position: { x: 300, y: 240 } });
   await dialog.getByRole("button", { name: "一時停止" }).click();
 
   const initialCenter = await dialog.locator("[data-reader-unit]").evaluate((element) => {
@@ -1503,9 +1531,9 @@ test("mobile viewer keeps its focal point after 25 mode round trips", async ({ p
   for (let roundTrip = 0; roundTrip < 25; roundTrip += 1) {
     await dialog.getByRole("button", { name: "文章で読む" }).click();
     await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+    await pauseReaderIfPlaying(dialog);
   }
 
-  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
   const finalCenter = await dialog.locator("[data-reader-unit]").evaluate((element) => {
     const rectangle = element.getBoundingClientRect();
     return { x: rectangle.left + rectangle.width / 2, y: rectangle.top + rectangle.height / 2 };
@@ -1624,8 +1652,13 @@ test("mobile viewer pauses for an image and exposes its context", async ({ page 
   await expect(figure).toBeVisible({ timeout: 15_000 });
   await expect(figure.getByRole("img", { name: "本文の読書フロー図" })).toBeVisible();
   await expect(figure).toContainText("読書フローの図");
-  await expect(dialog.getByRole("button", { name: "続きを読む" })).toBeVisible();
-  await dialog.getByRole("button", { name: "続きを読む" }).click();
+  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  const transport = dialog.locator(".control-dock");
+  await figure.click({ position: { x: 5, y: 5 } });
+  await expect(transport).toHaveAttribute("hidden", "");
+  await figure.click({ position: { x: 5, y: 5 } });
+  await expect(transport).not.toHaveAttribute("hidden", "");
+  await dialog.getByRole("button", { name: "再生" }).click();
   await expect(figure).toBeHidden();
   await expect(dialog.locator("[data-reader-unit]")).toBeVisible();
 });
@@ -1746,7 +1779,7 @@ test("mobile viewer shows delayed figure loading and resumes after a 404", async
   await expect(failedFigure.locator("[data-reader-image-surface]")).toHaveCount(0);
   await expect(failedFigure.locator("[data-reader-figure-description]")).toBeVisible();
   await expect(failedFigure.getByRole("button", { name: /画像を/u })).toHaveCount(0);
-  await failedDialog.getByRole("button", { name: "続きを読む" }).click();
+  await failedDialog.getByRole("button", { name: "再生" }).click();
   await expect(failedDialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
 });
 
@@ -1935,8 +1968,9 @@ for (const viewer of ["chrome", "mobile"] as const) {
           || geometry.bottom <= controlBox.y
           || geometry.top >= controlBox.y + controlBox.height).toBe(true);
       }
-      await expect(dialog.getByRole("button", { name: "続きを読む" })).toBeVisible();
-      await dialog.getByRole("button", { name: "続きを読む" }).click();
+      const resumeName = viewer === "mobile" ? "再生" : "続きを読む";
+      await expect(dialog.getByRole("button", { name: resumeName })).toBeVisible();
+      await dialog.getByRole("button", { name: resumeName }).click();
       await expect(dialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
     });
   }
@@ -2205,6 +2239,37 @@ test("mobile viewer suppresses control transforms and animations with reduced mo
   expect(reducedMotion.transportTransitionDuration).toBe("0s");
   expect(reducedMotion.animationCount).toBe(0);
   expect(reducedActiveTransform).not.toBe(normalActiveTransform);
+});
+
+test("mobile viewer centers the current sentence between adjacent context", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loadViewer(page, "mobile");
+  await page.getByRole("button", { name: "readerで読む" }).click();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+
+  const geometry = await dialog.evaluate((reader) => {
+    const focusArea = reader.querySelector<HTMLElement>(".focus-area");
+    const current = reader.querySelector<HTMLElement>("[data-reader-unit]");
+    const previous = reader.querySelector<HTMLElement>(".context-unit.previous");
+    const next = reader.querySelector<HTMLElement>(".context-unit.next");
+    if (!focusArea || !current || !previous || !next) throw new Error("Reader focus layout is missing");
+    const focusBox = focusArea.getBoundingClientRect();
+    const currentBox = current.getBoundingClientRect();
+    const previousBox = previous.getBoundingClientRect();
+    const nextBox = next.getBoundingClientRect();
+    return {
+      focusCenter: focusBox.top + focusBox.height / 2,
+      currentCenter: currentBox.top + currentBox.height / 2,
+      previousBottom: previousBox.bottom,
+      nextTop: nextBox.top,
+    };
+  });
+
+  expect(Math.abs(geometry.currentCenter - geometry.focusCenter)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.previousBottom - (geometry.focusCenter - 82))).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.nextTop - (geometry.focusCenter + 82))).toBeLessThanOrEqual(1);
 });
 
 test("mobile viewer keeps a 200 percent text layout within the viewport", async ({ page }) => {
@@ -2531,8 +2596,12 @@ test("mobile viewer RSVP state matches its visual baseline", async ({ page }) =>
   await page.getByRole("button", { name: "readerで読む" }).click();
   const dialog = page.getByRole("dialog", { name: "reader" });
   await expect(dialog).toBeVisible();
-  await dialog.locator(".rsvp-view").click({ position: { x: 300, y: 240 } });
   await dialog.getByRole("button", { name: "一時停止" }).click();
 
-  await expect(dialog).toHaveScreenshot("mobile-rsvp.png");
+  await expect(dialog.locator("[data-reader-unit]")).toHaveText("最初の短い文です。");
+  await expect(dialog.locator(".context-unit.next")).toHaveText("次の文は注視位置が動かないことを確かめます。");
+  await expect(dialog.getByRole("button", { name: "readerを閉じる" }).locator("svg")).toHaveCount(1);
+  await expect(dialog.getByRole("button", { name: "1文戻る" }).locator("svg")).toHaveCount(1);
+  await expect(dialog.getByRole("button", { name: "再生" }).locator("svg")).toHaveCount(1);
+  await expect(dialog).toHaveScreenshot("mobile-rsvp.png", { maxDiffPixelRatio: 0.002 });
 });
