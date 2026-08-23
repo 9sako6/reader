@@ -8,17 +8,19 @@ const { spawnSync } = require("node:child_process");
 
 function regressingVitestReport() {
   const benchmarks = [];
-  for (let run = 0; run < 4; run += 1) {
-    const first = run % 2 === 0 ? "main" : "candidate";
-    const second = first === "main" ? "candidate" : "main";
-    for (const side of [first, second]) {
-      const median = side === "main" ? 10 : 20;
-      benchmarks.push({
-        name: `fast/parser/pair-${run}/${side}`,
-        median,
-        p99: median,
-        samples: [],
-      });
+  for (const fixture of ["segment", "flow"]) {
+    for (let run = 0; run < 6; run += 1) {
+      const first = run % 2 === 0 ? "main" : "candidate";
+      const second = first === "main" ? "candidate" : "main";
+      for (const side of [first, second]) {
+        const median = side === "main" ? 10 : 20;
+        benchmarks.push({
+          name: `fast/${fixture}/pair-${run}/${side}`,
+          median,
+          p99: median,
+          samples: [],
+        });
+      }
     }
   }
   return { files: [{ groups: [{ benchmarks }] }] };

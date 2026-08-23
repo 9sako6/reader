@@ -3,6 +3,8 @@ export const FAST_PAIRED_BUDGET = Object.freeze({
   p90DeltaMs: 16,
   p90DeltaPercent: 25,
 });
+export const FAST_FIXTURES = Object.freeze(["segment", "flow"]);
+export const FAST_PAIR_COUNT = 6;
 
 const ORDERS = ["main-candidate", "candidate-main"];
 
@@ -149,9 +151,27 @@ export function pairVitestBenchmarks(report) {
     });
     grouped.set(pair.fixture, fixturePairs);
   }
-  return [...grouped.values()]
+  const groups = [...grouped.values()]
     .map((samples) => samples.sort((left, right) => left.run - right.run))
     .sort((left, right) => left[0].fixture.localeCompare(right[0].fixture));
+  const actualFixtures = new Set(groups.map((samples) => samples[0].fixture));
+  const missingFixtures = FAST_FIXTURES.filter((fixture) => !actualFixtures.has(fixture));
+  const unexpectedFixtures = [...actualFixtures].filter((fixture) => !FAST_FIXTURES.includes(fixture));
+  if (missingFixtures.length > 0 || unexpectedFixtures.length > 0) {
+    throw new Error(
+      `expected fast benchmark fixtures ${FAST_FIXTURES.join(", ")}; `
+      + `missing ${missingFixtures.join(", ") || "none"}; `
+      + `unexpected ${unexpectedFixtures.join(", ") || "none"}`,
+    );
+  }
+  for (const samples of groups) {
+    if (samples.length !== FAST_PAIR_COUNT) {
+      throw new Error(
+        `${samples[0].fixture} expected ${FAST_PAIR_COUNT} paired samples, received ${samples.length}`,
+      );
+    }
+  }
+  return groups;
 }
 
 export function evaluateVitestReport(report, budget = FAST_PAIRED_BUDGET) {

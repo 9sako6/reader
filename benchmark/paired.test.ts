@@ -13,6 +13,26 @@ const alternatingSamples = [
   { fixture: "reader-text", run: 3, order: "candidate-main", mainMs: 10, candidateMs: 14 },
 ];
 
+function makeFastReport(fixtures = ["segment", "flow"], pairCount = 6) {
+  const benchmarks = [];
+  for (const fixture of fixtures) {
+    for (let run = 0; run < pairCount; run += 1) {
+      const first = run % 2 === 0 ? "main" : "candidate";
+      const second = first === "main" ? "candidate" : "main";
+      for (const side of [first, second]) {
+        const median = side === "main" ? 10 : 11;
+        benchmarks.push({
+          name: `fast/${fixture}/pair-${run}/${side}`,
+          median,
+          p99: median + 1,
+          samples: [],
+        });
+      }
+    }
+  }
+  return { files: [{ groups: [{ benchmarks }] }] };
+}
+
 test("paired benchmark reports percentile deltas from alternating main and candidate samples", () => {
   const report = summarizePairedSamples(alternatingSamples);
 
@@ -48,17 +68,19 @@ test("paired benchmark requires main and candidate samples to alternate on one r
 test("paired benchmark aggregates Vitest JSON percentile statistics when raw samples are omitted", () => {
   const { evaluateVitestReport } = require("./paired.mjs");
   const benchmarks = [];
-  for (let run = 0; run < 4; run += 1) {
-    const first = run % 2 === 0 ? "main" : "candidate";
-    const second = first === "main" ? "candidate" : "main";
-    for (const side of [first, second]) {
-      const median = side === "main" ? 10 : 11;
-      benchmarks.push({
-        name: `fast/parser/pair-${run}/${side}`,
-        median,
-        p99: median + 1,
-        samples: [],
-      });
+  for (const fixture of ["segment", "flow"]) {
+    for (let run = 0; run < 6; run += 1) {
+      const first = run % 2 === 0 ? "main" : "candidate";
+      const second = first === "main" ? "candidate" : "main";
+      for (const side of [first, second]) {
+        const median = side === "main" ? 10 : 11;
+        benchmarks.push({
+          name: `fast/${fixture}/pair-${run}/${side}`,
+          median,
+          p99: median + 1,
+          samples: [],
+        });
+      }
     }
   }
 
@@ -69,6 +91,43 @@ test("paired benchmark aggregates Vitest JSON percentile statistics when raw sam
   });
 
   assert.equal(result.status, "pass");
-  assert.equal(result.groups[0].report.deltaMs.p50, 1);
-  assert.equal(result.groups[0].report.deltaMs.p90, 1);
+  assert.equal(result.groups.length, 2);
+  assert.equal(result.groups.find((group) => group.report.fixture === "flow").report.deltaMs.p50, 1);
+  assert.equal(result.groups.find((group) => group.report.fixture === "flow").report.deltaMs.p90, 1);
+});
+
+test("paired benchmark rejects a Vitest report with no matching fast benchmark records", () => {
+  const { evaluateVitestReport } = require("./paired.mjs");
+
+  assert.throws(
+    () => evaluateVitestReport({ files: [] }),
+    /expected fast benchmark fixtures/,
+  );
+});
+
+test("paired benchmark rejects a Vitest report missing the flow fixture", () => {
+  const { evaluateVitestReport } = require("./paired.mjs");
+
+  assert.throws(
+    () => evaluateVitestReport(makeFastReport(["segment"])),
+    /expected fast benchmark fixtures.*flow/,
+  );
+});
+
+test("paired benchmark rejects a Vitest report missing one flow pair", () => {
+  const { evaluateVitestReport } = require("./paired.mjs");
+
+  assert.throws(
+    () => evaluateVitestReport(makeFastReport(["flow", "segment"], 5)),
+    /flow.*expected 6 paired samples.*received 5/,
+  );
+});
+
+test("paired benchmark rejects a Vitest report with an extra flow pair", () => {
+  const { evaluateVitestReport } = require("./paired.mjs");
+
+  assert.throws(
+    () => evaluateVitestReport(makeFastReport(["segment", "flow"], 7)),
+    /flow.*expected 6 paired samples.*received 7/,
+  );
 });
