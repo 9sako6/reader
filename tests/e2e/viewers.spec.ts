@@ -58,6 +58,22 @@ async function scrollTextToEnd(marker: ReturnType<Page["getByRole"]>): Promise<v
 type ChromeOpenOptions = {
   delay?: number;
   text?: string;
+  readingContext?: {
+    language?: string;
+    title?: string;
+    blocks?: Array<{
+      text: string;
+      kind: "heading" | "paragraph" | "quote" | "preformatted";
+      level: number | null;
+      start: number;
+      end: number;
+    }>;
+    headings?: Array<{ text: string; level: number }>;
+    sectionOffsets?: number[];
+    sectionTransitions?: Array<{ offset: number; headingIndex: number }>;
+    initialHeadingIndex?: number;
+    figures?: [];
+  };
   image?: "immediate" | "delayed" | "missing" | "broken" | "vertical" | "horizontal" | "transparent" | "huge" | "default";
   figureFirst?: boolean;
   alt?: string;
@@ -534,6 +550,208 @@ test("Chrome viewer preserves the first complete sentence after 50 mode round tr
     await dialog.getByRole("button", { name: "RSVPで読む" }).click();
     await pauseReaderIfPlaying(dialog);
     expect(await readReaderPosition(dialog)).toEqual(expected);
+  }
+});
+
+test("Chrome viewer resumes at the first complete sentence below a partially visible sentence", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await loadViewer(page, "chrome");
+  const firstSentence = "上端で途中まで見える最初の文です、文章ビューの上端に一部だけ残り、下には次の文を全文表示できるように十分な長さを持たせています、さらに行をまたいで続きます、読書領域の選択規則を確かめるためここまで続きます。";
+  const secondSentence = "完全に見える二番目の文です。";
+  const thirdSentence = "さらに後ろの文です。";
+  const text = `${firstSentence}\n${secondSentence}\n${thirdSentence}`;
+  await openChrome(page, {
+    text,
+    paused: true,
+    readingContext: {
+      blocks: [
+        { text: firstSentence, kind: "paragraph", level: null, start: 0, end: firstSentence.length },
+        { text: secondSentence, kind: "paragraph", level: null, start: firstSentence.length + 1, end: firstSentence.length + 1 + secondSentence.length },
+        { text: thirdSentence, kind: "paragraph", level: null, start: firstSentence.length + secondSentence.length + 2, end: text.length },
+      ],
+    },
+  });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const markers = dialog.locator('[data-reader-position-kind="text"][data-reader-text-anchor]');
+  await expect(markers).toHaveCount(3);
+  await markers.nth(0).evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    const markerRect = element.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    scroller.scrollTop += markerRect.top - scrollerRect.top + 40;
+  });
+  const geometry = await markers.evaluateAll((elements) => {
+    const scroller = elements[0]?.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    const scrollerRect = scroller.getBoundingClientRect();
+    return elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, scrollerTop: scrollerRect.top, scrollerBottom: scrollerRect.bottom };
+    });
+  });
+  expect(geometry[0]?.top).toBeLessThan(geometry[0]?.scrollerTop ?? 0);
+  expect(geometry[0]?.bottom).toBeGreaterThan(geometry[0]?.scrollerTop ?? 0);
+  expect(geometry[1]?.top).toBeGreaterThanOrEqual((geometry[1]?.scrollerTop ?? 0) + 72);
+  expect(geometry[1]?.bottom).toBeLessThanOrEqual((geometry[1]?.scrollerBottom ?? 0) - 112);
+
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+  await dialog.getByRole("button", { name: "一時停止" }).click();
+  await expect(dialog.locator('[data-reader-unit]:visible').first()).toHaveText(secondSentence);
+});
+
+test("Chrome viewer falls back to the visible sentence when one long sentence cannot fit", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await loadViewer(page, "chrome");
+  const leadingSentence = "画面より前の文です。";
+  const longSentence = "画面より高い長文がここから始まり、読書領域に全文を収めることができないまま何行も続き、上端から見えているこの文の文頭へ戻れることを確認するための内容をさらに重ね、まだまだ下へ伸びていく文章として表示されます、最後まで一つの文として扱います。";
+  const trailingSentence = "長文の後ろの文です。";
+  const text = `${leadingSentence}\n${longSentence}\n${trailingSentence}`;
+  await openChrome(page, {
+    text,
+    paused: true,
+    readingContext: {
+      blocks: [
+        { text: leadingSentence, kind: "paragraph", level: null, start: 0, end: leadingSentence.length },
+        { text: longSentence, kind: "paragraph", level: null, start: leadingSentence.length + 1, end: leadingSentence.length + 1 + longSentence.length },
+        { text: trailingSentence, kind: "paragraph", level: null, start: leadingSentence.length + longSentence.length + 2, end: text.length },
+      ],
+    },
+  });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const markers = dialog.locator('[data-reader-position-kind="text"][data-reader-text-anchor]');
+  await expect(markers).toHaveCount(3);
+  await markers.nth(1).evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    const markerRect = element.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    scroller.scrollTop += markerRect.top - scrollerRect.top + 20;
+  });
+  const longMarkerGeometry = await markers.nth(1).evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    const markerRect = element.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    return { markerTop: markerRect.top, markerBottom: markerRect.bottom, scrollerTop: scrollerRect.top, scrollerBottom: scrollerRect.bottom, scrollerHeight: scrollerRect.height };
+  });
+  expect(longMarkerGeometry.markerTop).toBeLessThan(longMarkerGeometry.scrollerTop);
+  expect(longMarkerGeometry.markerBottom).toBeGreaterThan(longMarkerGeometry.scrollerBottom);
+  expect(longMarkerGeometry.markerBottom - longMarkerGeometry.markerTop).toBeGreaterThan(longMarkerGeometry.scrollerHeight);
+
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+  await dialog.getByRole("button", { name: "一時停止" }).click();
+  await expect(dialog.locator('[data-reader-unit]:visible').first()).toContainText("画面より高い長文");
+});
+
+test("Chrome viewer preserves sentence selection across heading quote and preformatted blocks", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await loadViewer(page, "chrome");
+  const heading = "構造化された本文";
+  const quote = "「引用ブロックの文です。」";
+  const preformatted = "preformatted blockの文です。";
+  const following = "最後に続く本文です。";
+  const text = `${heading}\n${quote}\n${preformatted}\n${following}`;
+  await openChrome(page, {
+    text,
+    paused: true,
+    readingContext: {
+      blocks: [
+        { text: heading, kind: "heading", level: 1, start: 0, end: heading.length },
+        { text: quote, kind: "quote", level: null, start: heading.length + 1, end: heading.length + 1 + quote.length },
+        { text: preformatted, kind: "preformatted", level: null, start: heading.length + quote.length + 2, end: heading.length + quote.length + 2 + preformatted.length },
+        { text: following, kind: "paragraph", level: null, start: heading.length + quote.length + preformatted.length + 3, end: text.length },
+      ],
+    },
+  });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const textView = dialog.locator('[data-reader-text-shell="true"]');
+  await expect(textView.locator("h1")).toHaveText(heading);
+  await expect(textView.locator("blockquote")).toHaveText(quote);
+  await expect(textView.locator("pre")).toHaveText(preformatted);
+  const preMarker = textView.locator('pre [data-reader-position-kind="text"][data-reader-text-anchor]');
+  await expect(preMarker).toHaveCount(1);
+  await preMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    const markerRect = element.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    scroller.scrollTop += markerRect.top - scrollerRect.top - 140;
+  });
+  const preGeometry = await preMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    const markerRect = element.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    return { markerTop: markerRect.top, markerBottom: markerRect.bottom, scrollerTop: scrollerRect.top, scrollerBottom: scrollerRect.bottom };
+  });
+  expect(preGeometry.markerTop).toBeGreaterThanOrEqual(preGeometry.scrollerTop + 72);
+  expect(preGeometry.markerBottom).toBeLessThanOrEqual(preGeometry.scrollerBottom - 112);
+
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+  await dialog.getByRole("button", { name: "一時停止" }).click();
+  await expect(dialog.locator('[data-reader-unit]:visible').first()).toHaveText(preformatted);
+});
+
+test("Chrome viewer does not move to the previous sentence during repeated text and RSVP round trips", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await loadViewer(page, "chrome");
+  const firstSentence = "最初の前文です。";
+  const selectedSentence = "往復しても前の文へ戻らない選択文です。";
+  const followingSentence = "選択文の後ろです。";
+  const text = `${firstSentence}\n${selectedSentence}\n${followingSentence}`;
+  await openChrome(page, {
+    text,
+    paused: true,
+    readingContext: {
+      blocks: [
+        { text: firstSentence, kind: "paragraph", level: null, start: 0, end: firstSentence.length },
+        { text: selectedSentence, kind: "paragraph", level: null, start: firstSentence.length + 1, end: firstSentence.length + 1 + selectedSentence.length },
+        { text: followingSentence, kind: "paragraph", level: null, start: firstSentence.length + selectedSentence.length + 2, end: text.length },
+      ],
+    },
+  });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const selectedMarker = dialog.locator('[data-reader-position-kind="text"][data-reader-text-anchor]').nth(1);
+  await expect(selectedMarker).toHaveCount(1);
+  await selectedMarker.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>("[data-reader-text-scroller], .text-view");
+    if (!scroller) throw new Error("text scroller not found");
+    const markerRect = element.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    scroller.scrollTop += markerRect.top - scrollerRect.top - 140;
+  });
+
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+  await dialog.getByRole("button", { name: "一時停止" }).click();
+  await expect(dialog.locator('[data-reader-unit]:visible').first()).toHaveText(selectedSentence);
+
+  for (let roundTrip = 0; roundTrip < 6; roundTrip += 1) {
+    await dialog.getByRole("button", { name: "文章で読む" }).click();
+    await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+    await expect(dialog.getByRole("button", { name: "一時停止" })).toBeVisible();
+    await dialog.getByRole("button", { name: "一時停止" }).click();
+    await expect(dialog.locator('[data-reader-unit]:visible').first()).toHaveText(selectedSentence);
   }
 });
 

@@ -115,7 +115,7 @@
         };
       }
 
-      function customFixtureContent(text) {
+      function customFixtureContent(text, suppliedReadingContext = {}) {
         return {
           text,
           readingContext: {
@@ -125,6 +125,7 @@
             sectionTransitions: [],
             initialHeadingIndex: -1,
             figures: [],
+            ...suppliedReadingContext,
           },
         };
       }
@@ -182,7 +183,7 @@
             ? customTextOrOptions
             : options.text;
           const { text, readingContext } = typeof customText === "string"
-            ? customFixtureContent(customText)
+            ? customFixtureContent(customText, options.readingContext)
             : fixtureContent({
               image: options.image || imageFixture,
               figureFirst: options.figureFirst || figureFirst,
