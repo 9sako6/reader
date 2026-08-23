@@ -1037,8 +1037,8 @@ test("Chrome RSVP centers quote and aside backgrounds without moving surrounding
   expect(finalSurrounding).toEqual(surrounding);
 });
 
-test("Chrome RSVP keeps structural units within a narrow zoom-equivalent viewport", async ({ page }) => {
-  await page.setViewportSize({ width: 256, height: 512 });
+test("Chrome RSVP keeps structural units centered and unclipped at 125% reader zoom", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
   const cases = [
     { kind: "body", text: "通常文です。" },
     { kind: "quote", text: "「引用文です。」" },
@@ -1051,21 +1051,27 @@ test("Chrome RSVP keeps structural units within a narrow zoom-equivalent viewpor
     await openChrome(page, { text: structuralCase.text, paused: true });
     const dialog = page.getByRole("dialog", { name: "reader" });
     await expect(dialog).toBeVisible();
+    await dialog.evaluate((element) => { (element as HTMLElement).style.zoom = "1.25"; });
     await pauseReaderIfPlaying(dialog);
     const unit = dialog.locator('[data-reader-unit]:visible').first();
     await expect(unit).toHaveAttribute("data-source-start", "0");
-    const geometry = await unit.evaluate((element) => {
+    const geometry = await dialog.evaluate((dialogElement) => {
+      const element = dialogElement.querySelector<HTMLElement>('[data-reader-unit]');
+      if (!element) throw new Error("RSVP unit is missing");
+      const dialogRectangle = dialogElement.getBoundingClientRect();
       const rectangle = element.getBoundingClientRect();
       return {
-        left: rectangle.left,
-        right: rectangle.right,
+        leftOverflow: dialogRectangle.left - rectangle.left,
+        rightOverflow: rectangle.right - dialogRectangle.right,
+        centerDeltaY: Math.abs((rectangle.top + rectangle.height / 2) - (dialogRectangle.top + dialogRectangle.height / 2)),
         widthOverflow: element.scrollWidth - element.clientWidth,
         kind: element.getAttribute("data-reader-unit-kind"),
       };
     });
     expect(geometry.kind).toBe(structuralCase.kind);
-    expect(geometry.left).toBeGreaterThanOrEqual(-1);
-    expect(geometry.right).toBeLessThanOrEqual(viewportWidth + 1);
+    expect(geometry.leftOverflow).toBeLessThanOrEqual(1);
+    expect(geometry.rightOverflow).toBeLessThanOrEqual(1);
+    expect(geometry.centerDeltaY).toBeLessThanOrEqual(1);
     expect(geometry.widthOverflow).toBeLessThanOrEqual(1);
   }
 });
