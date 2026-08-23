@@ -262,7 +262,7 @@ test("Safari React harness preserves DOM move and hierarchy semantics", () => {
 function createSafariReaderHarness(
   engine = Engine,
   language = "ja",
-  options: { pageOwnedHost?: boolean; init?: () => Promise<void>; ready?: () => boolean; mountFailsOnce?: boolean; reducedMotion?: boolean } = {},
+  options: { pageOwnedHost?: boolean; init?: () => Promise<void>; ready?: () => boolean; mountFailsOnce?: boolean; reducedMotion?: boolean; extractionElapsedMs?: number } = {},
 ) {
   const documentElement = new FakeElement("html");
   documentElement.lang = language;
@@ -369,6 +369,7 @@ function createSafariReaderHarness(
   let nextTimerId = 1;
   const timers = new Map();
   let launchFeedbackDuringExtraction = null;
+  let launchHandleClassDuringExtraction = "";
   let extractionCount = 0;
   let now = 0;
   const performanceMarks = [];
@@ -386,11 +387,15 @@ function createSafariReaderHarness(
     Extractor: {
       fromPage: () => {
         extractionCount += 1;
-        now = 120;
+        now = options.extractionElapsedMs ?? 120;
         launchFeedbackDuringExtraction = findElement(
           documentElement,
           (element) => element.className === "launch-feedback",
         );
+        launchHandleClassDuringExtraction = findElement(
+          documentElement,
+          (element) => element.className.includes("entry"),
+        )?.className ?? "";
         return activeContent;
       },
     },
@@ -522,6 +527,9 @@ function createSafariReaderHarness(
     launchFeedbackDuringExtraction() {
       return launchFeedbackDuringExtraction;
     },
+    launchHandleClassDuringExtraction() {
+      return launchHandleClassDuringExtraction;
+    },
     extractionCount() {
       return extractionCount;
     },
@@ -620,7 +628,7 @@ test("Safari mounts one React root per open session and removes it on close", as
   assert.equal(reactRoots().length, 0);
 });
 
-test("Safari releases the Session handle with each React mount", async () => {
+test("Safari keeps the Session handle while reopening the same page", async () => {
   const harness = createSafariReaderHarness();
   const { context, documentElement } = harness;
   const reactRoots = () => findElements(
@@ -635,15 +643,16 @@ test("Safari releases the Session handle with each React mount", async () => {
   assert.equal(harness.reactMountCount(), 1);
   assert.equal(reactRoots().length, 1);
   context.MobileViewer.close();
-  assert.equal(harness.liveHandleCount(), 0);
+  assert.equal(harness.liveHandleCount(), 1);
   assert.equal(harness.reactMountCount(), harness.reactUnmountCount());
   assert.equal(reactRoots().length, 0);
 
   await context.MobileViewer.open();
   assert.equal(harness.liveHandleCount(), 1);
   assert.equal(harness.reactMountCount(), 2);
+  assert.equal(harness.extractionCount(), 1);
   context.MobileViewer.close();
-  assert.equal(harness.liveHandleCount(), 0);
+  assert.equal(harness.liveHandleCount(), 1);
   assert.equal(harness.reactMountCount(), harness.reactUnmountCount());
   assert.equal(reactRoots().length, 0);
 });
@@ -853,7 +862,7 @@ for (const scenario of safariLateTimerScenarios) {
   });
 }
 
-test("Safari reader shows extraction progress before opening", async () => {
+test("Safari reader acknowledges the tap at the page edge before 200ms", async () => {
   const harness = createSafariReaderHarness();
   const { context, createdElements } = harness;
   const readerStyle = createdElements.find((element) => element.tagName === "STYLE");
@@ -862,6 +871,7 @@ test("Safari reader shows extraction progress before opening", async () => {
 
   const launchFeedbackDuringExtraction = harness.launchFeedbackDuringExtraction();
   assert.ok(launchFeedbackDuringExtraction);
+  assert.equal(harness.launchHandleClassDuringExtraction(), "entry preparing");
   assert.equal(launchFeedbackDuringExtraction.textContent, "");
   assert.equal(findElement(
     launchFeedbackDuringExtraction,
@@ -881,12 +891,9 @@ test("Safari reader shows extraction progress before opening", async () => {
   );
   assert.ok(progressTrack);
   assert.ok(progressIndicator);
-  assert.equal(launchLoader.style.display, "block");
-  assert.equal(launchLoader.style.opacity, "1");
-  assert.equal(progressIndicator.animations.length, 1);
-  assert.equal(progressIndicator.animations[0].options.iterations, Infinity);
-  assert.equal(progressIndicator.animations[0].keyframes[0].transform, "translateX(-100%) scaleX(.35)");
-  assert.equal(progressIndicator.animations[0].keyframes[1].transform, "translateX(220%) scaleX(.35)");
+  assert.equal(launchLoader.style.display, "none");
+  assert.equal(launchLoader.style.opacity, "0");
+  assert.equal(progressIndicator.animations.length, 0);
   assert.equal(findElement(
     launchFeedbackDuringExtraction,
     (element) => element.className === "launch-status",
@@ -894,6 +901,32 @@ test("Safari reader shows extraction progress before opening", async () => {
   assert.equal(findElement(
     launchFeedbackDuringExtraction,
     (element) => element.textContent === "中止",
+  ), null);
+});
+
+test("Safari reader shows only the thin progress bar from 200ms", async () => {
+  const harness = createSafariReaderHarness(Engine, "ja", { extractionElapsedMs: 200 });
+  await harness.context.MobileViewer.open();
+
+  const launchFeedbackDuringExtraction = harness.launchFeedbackDuringExtraction();
+  const progressIndicator = findElement(
+    launchFeedbackDuringExtraction,
+    (element) => element.className === "launch-progress-indicator",
+  );
+  assert.ok(progressIndicator);
+  assert.equal(findElement(
+    launchFeedbackDuringExtraction,
+    (element) => element.className === "launch-loader",
+  ).style.display, "block");
+  assert.equal(progressIndicator.animations.length, 1);
+  assert.equal(progressIndicator.animations[0].options.iterations, Infinity);
+  assert.equal(findElement(
+    launchFeedbackDuringExtraction,
+    (element) => element.className === "launch-status",
+  ), null);
+  assert.equal(findElement(
+    launchFeedbackDuringExtraction,
+    (element) => element.className === "launch-cancel",
   ), null);
 });
 
@@ -1572,7 +1605,7 @@ test("Safari reader ignores a clipped figure even when its center is readable", 
   assert.equal(unit.dataset.sourceStart, "30");
 });
 
-test("Safari reader discards the closed article and extracts fresh content", async () => {
+test("Safari reader reopens the same page without extracting the article again", async () => {
   const harness = createSafariReaderHarness();
   const { context, documentElement } = harness;
   await context.MobileViewer.open();
@@ -1597,19 +1630,43 @@ test("Safari reader discards the closed article and extracts fresh content", asy
     },
   });
   await context.MobileViewer.open();
-  assert.equal(harness.extractionCount(), 2);
-  const secondArticleUnit = findElement(
+  assert.equal(harness.extractionCount(), 1);
+  const reopenedUnit = findElement(
     documentElement,
     (element) => element.className.startsWith("rsvp-unit"),
   );
-  assert.match(secondArticleUnit.textContent, /別の記事/u);
-  assert.equal(findElement(
-    documentElement,
-    (element) => element.className.startsWith("rsvp-unit") && /画像より前/u.test(element.textContent),
-  ), null);
+  assert.match(reopenedUnit.textContent, /画像より前/u);
 });
 
-test("Safari reader destroys autoplay state when closed", async () => {
+test("Safari reader extracts a fresh article after the page URL changes", async () => {
+  const harness = createSafariReaderHarness();
+  const { context, documentElement } = harness;
+  await context.MobileViewer.open();
+  context.MobileViewer.close();
+  context.location.href = "https://example.com/articles/second";
+  harness.setActiveContent({
+    text: "別の記事の本文です。",
+    readingContext: {
+      title: "別の記事",
+      blocks: [{ text: "別の記事の本文です。", kind: "paragraph", level: null, start: 0, end: 10 }],
+      headings: [],
+      sectionOffsets: [],
+      sectionTransitions: [],
+      initialHeadingIndex: -1,
+      figures: [],
+    },
+  });
+
+  await context.MobileViewer.open();
+
+  assert.equal(harness.extractionCount(), 2);
+  assert.match(findElement(
+    documentElement,
+    (element) => element.className.startsWith("rsvp-unit"),
+  ).textContent, /別の記事/u);
+});
+
+test("Safari reader pauses autoplay while dismissed", async () => {
   const harness = createSafariReaderHarness();
   const { context, documentElement, timers } = harness;
   await context.MobileViewer.open();
@@ -1619,6 +1676,7 @@ test("Safari reader destroys autoplay state when closed", async () => {
 
   assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
   assert.equal(timers.size, 0);
+  assert.equal(harness.liveHandleCount(), 1);
   assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
 });
 
@@ -1689,7 +1747,7 @@ test("Safari reader pauses without destroying its session in the background", as
   assert.ok(findElement(documentElement, (element) => element.className === "reader"));
 });
 
-test("Safari reader destroys paused text mode state when closed", async () => {
+test("Safari reader preserves paused text mode while dismissed", async () => {
   const harness = createSafariReaderHarness();
   const { context, documentElement, timers } = harness;
   await context.MobileViewer.open();
@@ -1702,6 +1760,9 @@ test("Safari reader destroys paused text mode state when closed", async () => {
 
   assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
   assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
+  await context.MobileViewer.open();
+  assert.ok(findElement(documentElement, (element) => element.className === "text-view"));
+  assert.equal(timers.size, 0);
 });
 
 test("Safari keeps one timer and ends paused after a 30-minute-equivalent RSVP flow", async () => {
@@ -1817,7 +1878,7 @@ test("Safari reader ignores extraction completion after close", async () => {
   assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
 });
 
-test("Safari reader exposes a cancel action only for slow preparation", async () => {
+test("Safari reader keeps only the thin progress bar during a long preparation", async () => {
   const harness = createSafariReaderHarness();
   const { context, documentElement, timers } = harness;
   let resolveExtraction: (value: unknown) => void = () => {};
@@ -1827,17 +1888,15 @@ test("Safari reader exposes a cancel action only for slow preparation", async ()
 
   const opening = context.MobileViewer.open();
   await Promise.resolve();
-  fireTimerWithDelay(timers, 100);
+  fireTimerWithDelay(timers, 200);
+  assert.ok(findElement(documentElement, (element) => element.className === "launch-progress-track"));
   assert.equal(findElement(documentElement, (element) => element.textContent === "文章を準備しています"), null);
-  fireTimerWithDelay(timers, 400);
-  const cancelButton = findElement(documentElement, (element) => element.textContent === "中止");
-  assert.ok(cancelButton);
-  cancelButton.dispatchEvent({ type: "click" });
+  assert.equal(findElement(documentElement, (element) => element.textContent === "中止"), null);
   resolveExtraction(harness.activeContent());
   await opening;
 
-  assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
-  assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
-  assert.equal(context.document.documentElement.style.overflow, "");
-  assert.deepEqual(harness.sessionCommands().map(({ type }) => type), ["open", "cancel", "close"]);
+  assert.ok(findElement(documentElement, (element) => element.className === "reader"));
+  assert.equal(findElement(documentElement, (element) => element.className === "launch-status"), null);
+  assert.equal(findElement(documentElement, (element) => element.className === "launch-cancel"), null);
+  assert.deepEqual(harness.sessionCommands().map(({ type }) => type), ["open", "rebuildUnits", "prepareSucceeded"]);
 });

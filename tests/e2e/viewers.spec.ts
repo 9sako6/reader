@@ -735,27 +735,46 @@ test("Chrome reader restores source overflow and scroll through consecutive read
   await expect.poll(() => page.evaluate(() => ({ html: document.documentElement.style.overflow, body: document.body.style.overflow, y: window.scrollY }))).toEqual({ html: "scroll", body: "auto", y: 400 });
 });
 
-test("mobile reader keeps the launch indicator hidden for a 99ms preparation", async ({ page }) => {
-  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&delay=99");
+test("mobile reader acknowledges the tap at the page edge before 200ms", async ({ page }) => {
+  await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&delay=199");
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
   await page.evaluate(() => { void (globalThis as typeof globalThis & { ReaderE2E: { open(): Promise<void> } }).ReaderE2E.open(); });
 
+  await expect(page.getByRole("button", { name: "readerで読む" })).toHaveClass(/\bpreparing\b/u);
   await expect(page.locator(".launch-progress-track")).toHaveCount(0);
   await expect(page.locator(".reader")).toBeVisible();
 });
 
-test("mobile reader shows a bar and then slow preparation cancel feedback", async ({ page }) => {
+test("mobile reader shows only the thin progress bar after 200ms", async ({ page }) => {
   await page.goto("/tests/e2e/fixtures/article.html?viewer=mobile&delay=800");
   await page.evaluate(() => (globalThis as typeof globalThis & { ReaderE2EReady: Promise<void> }).ReaderE2EReady);
   await page.evaluate(() => { void (globalThis as typeof globalThis & { ReaderE2E: { open(): Promise<void> } }).ReaderE2E.open(); });
 
   await expect(page.locator(".launch-progress-track")).toBeVisible();
-  await expect(page.locator(".launch-status")).toHaveText("文章を準備しています");
-  await expect(page.locator(".launch-cancel")).toBeVisible();
-  await page.locator(".launch-cancel").click();
-  await expect(page.locator(".reader")).toHaveCount(0);
-  await page.waitForTimeout(900);
-  await expect(page.locator(".reader")).toHaveCount(0);
+  await expect(page.locator(".launch-status")).toHaveCount(0);
+  await expect(page.locator(".launch-cancel")).toHaveCount(0);
+  await expect(page.locator(".reader")).toBeVisible();
+});
+
+test("mobile reader reopens the same page at the same position without loading", async ({ page }) => {
+  await loadViewer(page, "mobile");
+  await openMobile(page, { text: "最初の文章です。次の文章です。さらに続く文章です。最後の文章です。" });
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await pauseReaderIfPlaying(dialog);
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const marker = dialog.locator('[data-reader-text-anchor="true"]').nth(2);
+  await placeTextMarker(marker, 84);
+  await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await pauseReaderIfPlaying(dialog);
+  const positionBeforeDismiss = await readReaderPosition(dialog);
+
+  await dialog.getByRole("button", { name: "readerを閉じる" }).click();
+  await page.getByRole("button", { name: "readerで読む" }).click();
+
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => readReaderPosition(dialog)).toEqual(positionBeforeDismiss);
+  await expect(page.locator(".launch-progress-track")).toHaveCount(0);
 });
 
 test("mobile reader restores launch focus and source scroll after error retry", async ({ page }) => {

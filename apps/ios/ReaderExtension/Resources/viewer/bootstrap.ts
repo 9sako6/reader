@@ -33,9 +33,12 @@
     .handle:active::after, .handle:focus-visible::after { width: 10px; opacity: 1; }
     .handle.scrolling::after { opacity: .24; }
     .handle.loading::after { width: 10px; opacity: 1; }
-    .feedback { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(5, 5, 5, .84); color: #eeeeef; pointer-events: auto; }
+    .feedback { position: fixed; inset: 0; display: grid; place-items: center; background: transparent; color: #eeeeef; pointer-events: auto; }
     .feedback[hidden], .handle[hidden] { display: none; }
-    .panel { width: min(80vw, 320px); display: grid; gap: 16px; justify-items: center; padding: 24px; border-radius: 16px; background: #171717; text-align: center; }
+    .panel { width: min(56vw, 360px); }
+    .feedback:not(.error) [role="status"], .feedback:not(.error) .actions { display: none; }
+    .feedback.error { background: rgba(5, 5, 5, .84); }
+    .feedback.error .panel { width: min(80vw, 320px); display: grid; gap: 16px; justify-items: center; padding: 24px; border-radius: 16px; background: #171717; text-align: center; }
     .bar { width: 100%; height: 3px; overflow: hidden; border-radius: 999px; background: rgba(238,238,239,.24); }
     .bar::after { content: ""; display: block; width: 35%; height: 100%; background: #eeeeef; animation: reader-bootstrap-progress 900ms linear infinite; }
     .actions { display: flex; gap: 8px; }
@@ -59,15 +62,11 @@
   bar.hidden = true;
   const actions = globalThis.document.createElement("div");
   actions.className = "actions";
-  const cancel = globalThis.document.createElement("button");
-  cancel.type = "button";
-  cancel.textContent = "キャンセル";
-  cancel.hidden = true;
   const retry = globalThis.document.createElement("button");
   retry.type = "button";
   retry.textContent = "再試行";
   retry.hidden = true;
-  actions.append(cancel, retry);
+  actions.append(retry);
   panel.append(status, bar, actions);
   feedback.append(panel);
   shadow.append(style, handle, feedback);
@@ -75,7 +74,6 @@
 
   const importRuntime = (runtimeURL: string): Promise<unknown> => import(runtimeURL);
   let revealTimer: number | null = null;
-  let feedbackTimer: number | null = null;
   let scrollFadeTimer: number | null = null;
   let loading = false;
 
@@ -86,10 +84,9 @@
 
   const hideFeedback = (): void => {
     if (revealTimer !== null) globalThis.clearTimeout(revealTimer);
-    if (feedbackTimer !== null) globalThis.clearTimeout(feedbackTimer);
     revealTimer = null;
-    feedbackTimer = null;
     feedback.hidden = true;
+    feedback.classList.remove("error");
     bar.hidden = true;
     handle.hidden = false;
     handle.classList.remove("loading");
@@ -116,9 +113,7 @@
 
   const clearLoadingTimers = (): void => {
     if (revealTimer !== null) globalThis.clearTimeout(revealTimer);
-    if (feedbackTimer !== null) globalThis.clearTimeout(feedbackTimer);
     revealTimer = null;
-    feedbackTimer = null;
   };
 
   const loadRuntime = globalThis.ReaderLazyRuntime.createExtensionRuntimeLoader(
@@ -145,10 +140,10 @@
     loading = true;
     feedback.hidden = true;
     bar.hidden = true;
-    cancel.hidden = true;
     retry.hidden = true;
     handle.hidden = false;
     handle.classList.add("loading");
+    feedback.classList.remove("error");
     status.textContent = "";
     revealTimer = globalThis.setTimeout(() => {
       revealTimer = null;
@@ -156,13 +151,7 @@
       showFeedback("");
       bar.hidden = false;
       handle.hidden = true;
-    }, 100);
-    feedbackTimer = globalThis.setTimeout(() => {
-      feedbackTimer = null;
-      if (!loading) return;
-      status.textContent = "もう少しお待ちください";
-      cancel.hidden = false;
-    }, 400);
+    }, 200);
     try {
       const current = await controller.open();
       if (!current) return;
@@ -174,24 +163,17 @@
     } catch (error) {
       if (!loading) return;
       clearLoadingTimers();
+      feedback.classList.add("error");
       status.textContent = error instanceof Error ? error.message : "Readerを開けませんでした";
       bar.hidden = true;
       feedback.hidden = false;
       handle.hidden = true;
       retry.hidden = false;
-      cancel.hidden = true;
       loading = false;
     }
   };
 
-  const cancelLoad = (): void => {
-    if (!loading) return;
-    controller.close();
-    hideFeedback();
-  };
-
   handle.addEventListener("click", open);
-  cancel.addEventListener("click", cancelLoad);
   retry.addEventListener("click", open);
   globalThis.addEventListener("scroll", fadeHandleDuringScroll, { passive: true });
   pagehideHandler = () => {

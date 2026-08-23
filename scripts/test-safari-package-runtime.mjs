@@ -451,34 +451,46 @@ async function verifyGeneratedLazyRuntimeFeedbackBoundariesInWebKit() {
         feedbackHidden: root?.querySelector(".feedback")?.hidden ?? null,
         barHidden: root?.querySelector(".bar")?.hidden ?? null,
         status: root?.querySelector('[role="status"]')?.textContent ?? null,
-        cancelHidden: root?.querySelector(".actions button")?.hidden ?? null,
+        cancelPresent: Boolean([...root?.querySelectorAll(".actions button") || []].some((button) => button.textContent === "キャンセル")),
         handleHidden: root?.querySelector(".handle")?.hidden ?? null,
+        handleLoading: root?.querySelector(".handle")?.classList.contains("loading") ?? null,
       };
     });
     assert.deepEqual(await readFeedbackState(), {
       feedbackHidden: true,
       barHidden: true,
       status: "",
-      cancelHidden: true,
+      cancelPresent: false,
       handleHidden: false,
+      handleLoading: true,
     });
     await page.waitForTimeout(150);
+    assert.deepEqual(await readFeedbackState(), {
+      feedbackHidden: true,
+      barHidden: true,
+      status: "",
+      cancelPresent: false,
+      handleHidden: false,
+      handleLoading: true,
+    });
+    await page.waitForTimeout(100);
     assert.deepEqual(await readFeedbackState(), {
       feedbackHidden: false,
       barHidden: false,
       status: "",
-      cancelHidden: true,
+      cancelPresent: false,
       handleHidden: true,
+      handleLoading: true,
     });
     await page.waitForTimeout(300);
     assert.deepEqual(await readFeedbackState(), {
       feedbackHidden: false,
       barHidden: false,
-      status: "もう少しお待ちください",
-      cancelHidden: false,
+      status: "",
+      cancelPresent: false,
       handleHidden: true,
+      handleLoading: true,
     });
-    await page.locator("#__reader-bootstrap").getByRole("button", { name: "キャンセル" }).click();
   } finally {
     await browser.close();
   }
@@ -556,28 +568,7 @@ async function verifyGeneratedLazyRuntimeRetryInWebKit() {
   }
 }
 
-async function verifyGeneratedLazyRuntimeCancelInWebKit() {
-  const browser = await webkit.launch({ headless: true });
-  try {
-    const page = await browser.newPage();
-    await page.goto(`${lazyPageUrl}?slow=1&runtime=${Date.now()}-${process.pid}`, { waitUntil: "load" });
-    const bootstrap = page.locator("#__reader-bootstrap");
-    await bootstrap.getByRole("button", { name: "readerで読む" }).click();
-    await bootstrap.getByRole("button", { name: "キャンセル" }).click();
-    await page.waitForTimeout(2200);
-    const state = await page.evaluate(() => ({
-      bootstrapHost: Boolean(document.getElementById("__reader-bootstrap")),
-      readerHost: Boolean(document.getElementById("__reader-host")),
-      mobileViewer: typeof globalThis.MobileViewer,
-      bootstrapHandleCount: document.getElementById("__reader-bootstrap")?.shadowRoot?.querySelectorAll(".handle").length || 0,
-    }));
-    assert.deepEqual(state, { bootstrapHost: true, readerHost: false, mobileViewer: "object", bootstrapHandleCount: 1 });
-  } finally {
-    await browser.close();
-  }
-}
-
-async function verifyGeneratedLazyRuntimeHandoffCancelInWebKit() {
+async function verifyGeneratedLazyRuntimeHandoffProgressInWebKit() {
   const browser = await webkit.launch({ headless: true });
   try {
     const page = await browser.newPage();
@@ -585,19 +576,19 @@ async function verifyGeneratedLazyRuntimeHandoffCancelInWebKit() {
     const bootstrap = page.locator("#__reader-bootstrap");
     await bootstrap.getByRole("button", { name: "readerで読む" }).click();
     const reader = page.locator("#__reader-host");
-    await reader.getByRole("button", { name: "中止" }).waitFor();
-    await reader.getByRole("button", { name: "中止" }).click();
-    await page.waitForTimeout(1100);
+    await reader.locator(".launch-progress-track").waitFor();
+    assert.equal(await reader.locator(".launch-status").count(), 0);
+    assert.equal(await reader.locator(".launch-cancel").count(), 0);
+    await reader.locator('[data-reader-unit="true"]').waitFor();
     const state = await page.evaluate(() => {
       const host = document.getElementById("__reader-host");
       return {
         bootstrapHost: Boolean(document.getElementById("__reader-bootstrap")),
         readerHost: Boolean(host),
         readerOverlay: Boolean(host?.shadowRoot?.querySelector(".reader")),
-        readerHandleCount: host?.shadowRoot?.querySelectorAll(".entry").length || 0,
       };
     });
-    assert.deepEqual(state, { bootstrapHost: false, readerHost: true, readerOverlay: false, readerHandleCount: 1 });
+    assert.deepEqual(state, { bootstrapHost: false, readerHost: true, readerOverlay: true });
   } finally {
     await browser.close();
   }
@@ -618,8 +609,7 @@ try {
   await verifyGeneratedLazyRuntimeFeedbackBoundariesInWebKit();
   await verifyGeneratedLazyRuntimeNavigationInWebKit();
   await verifyGeneratedLazyRuntimeRetryInWebKit();
-  await verifyGeneratedLazyRuntimeCancelInWebKit();
-  await verifyGeneratedLazyRuntimeHandoffCancelInWebKit();
+  await verifyGeneratedLazyRuntimeHandoffProgressInWebKit();
   process.stdout.write("Generated Safari resources initialized ReaderSession in WebKit\n");
   try {
     await verifySafariRuntime();

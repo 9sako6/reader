@@ -12,12 +12,10 @@
   interface LaunchProgress {
     startedAt: number;
     revealTimer: number | null;
-    slowTimer: number | null;
     revealed: boolean;
   }
   const HOST_ID = "__reader-host";
-  const LOADER_REVEAL_DELAY_MS = 100;
-  const SLOW_PREPARATION_DELAY_MS = 400;
+  const LOADER_REVEAL_DELAY_MS = 200;
   const TEXT_VIEW_READABLE_TOP_PX = 72;
   const TEXT_VIEW_READABLE_BOTTOM_PX = 96;
   const RSVP_FONT_SIZE = 40;
@@ -66,7 +64,9 @@
   let sessionInitFailure = false;
   let sessionEnabled = false;
   let applyingSession = false;
-  let slowPreparationVisible = false;
+  let retainedPageUrl: string | null = null;
+  let sessionDismissed = false;
+  let resumePlaybackOnReopen = false;
   let sessionLifecycleAttached = false;
   let reactViewMount: ReaderReactViewerMount | null = null;
   let reactViewHost: HTMLDivElement | null = null;
@@ -198,8 +198,7 @@
 
   function reactViewModel(): unknown {
     if (activePreparation.kind === "preparing") {
-      const elapsed = Date.now() - activePreparation.startedAt;
-      return { kind: "loading", slow: slowPreparationVisible || elapsed >= SLOW_PREPARATION_DELAY_MS, revealed: launchProgress?.revealed === true, reducedMotion: prefersReducedMotion(), mobile: true };
+      return { kind: "loading", slow: false, revealed: launchProgress?.revealed === true, reducedMotion: prefersReducedMotion(), mobile: true };
     }
     if (activePreparation.kind === "failed") {
       return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: true, mobile: true };
@@ -352,6 +351,8 @@
       .entry { position: fixed; right: 0; top: 62%; width: 44px; height: 52px; padding: 0; border: 0; background: transparent; pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
       .entry::after { content: ""; position: absolute; right: 0; top: 8px; width: 6px; height: 36px; border-radius: 6px 0 0 6px; background: var(--reader-accent); opacity: .82; box-shadow: 0 0 0 1px rgba(0,0,0,.18), 0 4px 16px rgba(0,0,0,.28); transition: opacity 160ms ease, width 160ms ease; }
       .entry:active::after, .entry:focus-visible::after { width: 10px; opacity: 1; }
+      .entry.preparing { pointer-events: none; }
+      .entry.preparing::after { width: 10px; opacity: 1; }
       .entry.scrolling::after { opacity: .24; }
       .entry[hidden] { display: none; }
       .launch-feedback { position: fixed; z-index: 3; inset: 0; pointer-events: auto; }
@@ -433,20 +434,23 @@
 
   function destroyLaunchProgress(progress: LaunchProgress): void {
     if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
-    if (progress.slowTimer !== null) global.clearTimeout(progress.slowTimer);
     if (launchProgress === progress) launchProgress = null;
   }
 
   async function open() {
     if (overlay || opening || !handle || !shadow) return;
     markPerformance("reader:tap");
+    if (sessionDismissed && retainedPageUrl === global.location.href && activePreparation.kind === "ready" && readingSessionState()) {
+      reopenRetainedSession();
+      return;
+    }
+    if (sessionDismissed) destroyRetainedSession();
     if (!reactViewMount) mountReactViewer(shadow);
     if (!reactViewMount || !reactViewHost) throw new Error("reader_view_unavailable");
     performanceRenderMarked = false;
     performanceControlsMarked = false;
     performanceUnitMarked = false;
     sessionInitFailure = false;
-    slowPreparationVisible = false;
     const generation = ++sessionGeneration;
     preparationGeneration = generation;
     opening = true;
@@ -459,11 +463,10 @@
     sourceScrollY = global.scrollY || 0;
     sourceOverflow = global.document.documentElement.style.overflow;
     sourceBodyOverflow = global.document.body?.style.overflow ?? null;
-    handle.hidden = true;
+    handle.classList.add("preparing");
     const progress: LaunchProgress = {
       startedAt: Date.now(),
       revealTimer: null,
-      slowTimer: null,
       revealed: false,
     };
     launchProgress = progress;
@@ -471,19 +474,9 @@
       if (!isCurrentSession(generation) || progress.revealed) return;
       progress.revealed = true;
       progress.revealTimer = null;
+      if (handle) handle.hidden = true;
       renderReactView();
     }, LOADER_REVEAL_DELAY_MS);
-    progress.slowTimer = global.setTimeout(() => {
-      if (!isCurrentSession(generation)) return;
-      if (!progress.revealed) {
-        progress.revealed = true;
-        if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
-        progress.revealTimer = null;
-      }
-      progress.slowTimer = null;
-      slowPreparationVisible = true;
-      renderReactView();
-    }, SLOW_PREPARATION_DELAY_MS);
     if (!isCurrentSession(generation)) {
       destroyLaunchProgress(progress);
       return;
@@ -556,13 +549,7 @@
       progress.revealed = true;
       if (progress.revealTimer !== null) global.clearTimeout(progress.revealTimer);
       progress.revealTimer = null;
-      launchProgressChanged = true;
-    }
-    if (elapsed >= SLOW_PREPARATION_DELAY_MS) {
-      progress.revealed = true;
-      if (progress.slowTimer !== null) global.clearTimeout(progress.slowTimer);
-      progress.slowTimer = null;
-      slowPreparationVisible = true;
+      if (handle) handle.hidden = true;
       launchProgressChanged = true;
     }
     if (launchProgressChanged) renderReactView();
@@ -579,6 +566,8 @@
     overlay = reader;
     global.addEventListener("keydown", handleKeyDown);
     destroyLaunchProgress(progress);
+    handle.classList.remove("preparing");
+    handle.hidden = true;
     lockSourcePage();
     if (!isCurrentSession(generation)) return;
     if (preparationError) {
@@ -590,6 +579,7 @@
       showError("session_unavailable");
     } else {
       activePreparation = { kind: "ready", requestId: String(generation) };
+      retainedPageUrl = global.location.href;
       dispatchSession({
         type: "prepareSucceeded",
         requestId: String(generation),
@@ -1460,6 +1450,91 @@
     ));
   }
 
+  function reopenRetainedSession(): void {
+    if (!handle || !shadow) return;
+    const generation = ++sessionGeneration;
+    preparationGeneration = generation;
+    opening = true;
+    performanceRenderMarked = false;
+    performanceControlsMarked = false;
+    performanceUnitMarked = false;
+    mountReactViewer(shadow);
+    if (!reactViewMount || !reactViewHost) throw new Error("reader_view_unavailable");
+    launchFocus = handle;
+    makeBackgroundInert(host);
+    sourceScrollY = global.scrollY || 0;
+    sourceOverflow = global.document.documentElement.style.overflow;
+    sourceBodyOverflow = global.document.body?.style.overflow ?? null;
+    handle.classList.remove("preparing");
+    handle.hidden = true;
+    controlsVisible = true;
+    attachSessionLifecycle();
+    overlay = reactViewHost;
+    global.addEventListener("keydown", handleKeyDown);
+    lockSourcePage();
+    sessionDismissed = false;
+    const shouldResume = resumePlaybackOnReopen;
+    resumePlaybackOnReopen = false;
+    markPerformance("reader:first-feedback");
+    if (shouldResume && sessionMode() === "rsvp") dispatchSession({ type: "play" });
+    else renderReader();
+    global.requestAnimationFrame(() => {
+      if (!isCurrentSession(generation)) return;
+      findCloseButton()?.focus();
+    });
+    if (isCurrentSession(generation)) opening = false;
+  }
+
+  function dismissReadySession(): void {
+    sessionGeneration += 1;
+    preparationGeneration += 1;
+    detachSessionLifecycle();
+    const restoreFocus = launchFocus;
+    resumePlaybackOnReopen = sessionIsPlaying();
+    if (sessionHandle && !applyingSession) dispatchSession({ type: "pause" }, false);
+    overlay = null;
+    clearPendingLeftTap();
+    lastLeftTapAt = 0;
+    if (rewindFeedbackClearTimer !== null) global.clearTimeout(rewindFeedbackClearTimer);
+    rewindFeedbackClearTimer = null;
+    rewindFeedback = null;
+    invalidateFigureLoad();
+    reactTextScroller = null;
+    reactTextMarkers = [];
+    reactTextRestoreGeneration += 1;
+    reactTextRestoring = false;
+    reactTextRestorePending = false;
+    reactTextRestoreScrollTop = null;
+    unmountReactViewer();
+    global.removeEventListener?.("keydown", handleKeyDown);
+    opening = false;
+    launchFocus = null;
+    sessionDismissed = true;
+    try {
+      restoreSourcePage();
+      if (handle) {
+        handle.classList.remove("preparing");
+        handle.hidden = false;
+      }
+    } finally {
+      restoreBackgroundInert();
+      const focusTarget = restoreFocus && restoreFocus.isConnected !== false
+        ? restoreFocus
+        : handle;
+      focusTarget?.focus?.();
+    }
+  }
+
+  function destroyRetainedSession(): void {
+    sessionGeneration += 1;
+    preparationGeneration += 1;
+    if (sessionHandle && !applyingSession) {
+      dispatchSession({ type: "close" }, false);
+      global.ReaderSession.destroy(sessionHandle);
+    }
+    destroySessionState();
+  }
+
   function destroySessionState(): void {
     unmountReactViewer();
     if (playbackTimer !== null) global.clearTimeout(playbackTimer);
@@ -1488,7 +1563,9 @@
     pendingSessionCommands = [];
     sessionInitFailure = false;
     applyingSession = false;
-    slowPreparationVisible = false;
+    retainedPageUrl = null;
+    sessionDismissed = false;
+    resumePlaybackOnReopen = false;
     reactTextScroller = null;
     reactTextMarkers = [];
     reactTextRestoreGeneration += 1;
@@ -1516,6 +1593,10 @@
   }
 
   function close(): void {
+    if (activePreparation.kind === "ready" && readingSessionState() && content) {
+      dismissReadySession();
+      return;
+    }
     sessionGeneration += 1;
     preparationGeneration += 1;
     detachSessionLifecycle();
@@ -1545,7 +1626,10 @@
     } finally {
       try {
         restoreSourcePage();
-        if (handle) handle.hidden = false;
+        if (handle) {
+          handle.classList.remove("preparing");
+          handle.hidden = false;
+        }
       } finally {
         restoreBackgroundInert();
         const focusTarget = restoreFocus && restoreFocus.isConnected !== false
