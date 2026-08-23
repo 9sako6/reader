@@ -43,7 +43,7 @@ targets:
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/session-wasm-module.js
         buildPhase: resources
-      - path: ReaderExtension/Resources/generated/session.js
+      - path: ReaderExtension/Resources/generated/runtime.js
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/reader_session_bg.wasm
         buildPhase: resources
@@ -51,7 +51,6 @@ targets:
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/extractor.js
         buildPhase: resources
-      - path: ReaderExtension/Resources/generated/icons.js
         buildPhase: resources
       - path: ReaderExtension/Resources/generated/viewer.js
         buildPhase: resources

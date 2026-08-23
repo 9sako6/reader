@@ -16,15 +16,14 @@ test("Chrome build contains the shared pipeline and only the desktop viewer", ()
   }]);
   assert.equal(fs.existsSync(path.join(output, "engine.js")), true);
   assert.equal(fs.existsSync(path.join(output, "extractor.js")), true);
-  assert.equal(fs.existsSync(path.join(output, "icons.js")), true);
   assert.equal(fs.existsSync(path.join(output, "viewer.js")), true);
   assert.equal(fs.existsSync(path.join(output, "service-worker.js")), true);
-  assert.equal(fs.existsSync(path.join(output, "session.js")), true);
+  assert.equal(fs.existsSync(path.join(output, "runtime.js")), true);
   assert.equal(fs.existsSync(path.join(output, "session-wasm.js")), true);
   assert.equal(fs.existsSync(path.join(output, "reader_session_bg.wasm")), true);
-  const session = fs.readFileSync(path.join(output, "session.js"), "utf8");
+  const session = fs.readFileSync(path.join(output, "runtime.js"), "utf8");
   assert.equal(session.includes("require("), false);
-  assert.match(session, /ReaderReactViewer/u);
+  assert.match(session, /ReaderView/u);
   assert.match(session, /createRoot/u);
   const noticePath = path.join(output, "LICENSES", "reader-session-dependencies.txt");
   assert.equal(fs.existsSync(noticePath), true);

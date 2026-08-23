@@ -6,8 +6,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const Engine = require("../../../.build/packages/engine/src/engine.js");
 const Extractor = require("../../../.build/packages/extractor/src/extractor.js");
-const ReaderIcons = require("../../../.build/packages/icons/src/icons.js");
-const ReaderViewBundle = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "reader-view", "reader-view.js"), "utf8");
+const ReaderViewBundle = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "view", "view.js"), "utf8");
 
 class FakeElement {
   [key: string]: any;
@@ -361,7 +360,11 @@ function revealLoading(timers) {
   entry[1].callback();
 }
 
-function createSessionStub(commands, options: { initFails?: boolean } = {}) {
+function createSessionStub(commands, options: {
+  initFails?: boolean;
+  setTimeout?: (callback: () => void, delay: number) => number;
+  clearTimeout?: (id: number) => void;
+} = {}) {
   let nextId = 1;
   let lastHandle = null;
   const handles = new Set();
@@ -405,18 +408,17 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
     const unitIndex = flow.units.findIndex((unit) => unit.start <= position.sourceOffset && position.sourceOffset < unit.end);
     return flow.flow.findIndex((item) => item.kind === "unit" && item.unitIndex === Math.max(0, unitIndex));
   };
-  return {
-    async init() {
-      if (options.initFails) throw new Error("wasm unavailable");
-    },
-    ready: () => !options.initFails,
-    create() {
-      lastHandle = { id: nextId++, state: initialState(), destroyed: false, flow: null };
+  const api = {
+    create(onStateChange = () => {}) {
+      lastHandle = { id: nextId++, state: initialState(), destroyed: false, flow: null, timerId: null, onStateChange };
+      lastHandle.ready = options.initFails ? Promise.reject(new Error("wasm unavailable")) : Promise.resolve();
+      lastHandle.dispatch = (command) => api.dispatch(lastHandle, command);
+      lastHandle.destroy = () => api.destroy(lastHandle);
       handles.add(lastHandle);
       return lastHandle;
     },
     dispatch(handle, command) {
-      if (handle.destroyed) throw new Error("destroyed");
+      if (handle.destroyed) return;
       commands.push(command);
       const previous = handle.state;
       let state = previous;
@@ -496,9 +498,22 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
         effects = [{ type: "cancelTimer" }];
       }
       handle.state = state;
+      for (const effect of effects) {
+        if (handle.timerId !== null) options.clearTimeout?.(handle.timerId);
+        handle.timerId = null;
+        if (effect.type === "scheduleTick") {
+          handle.timerId = options.setTimeout?.(
+            () => handle.dispatch({ type: "tick", generation: effect.generation }),
+            effect.delayMs,
+          ) ?? null;
+        }
+      }
+      handle.onStateChange(state);
       return { state, effects };
     },
     destroy(handle) {
+      if (handle.timerId !== null) options.clearTimeout?.(handle.timerId);
+      handle.timerId = null;
       handle.destroyed = true;
       handles.delete(handle);
     },
@@ -509,6 +524,7 @@ function createSessionStub(commands, options: { initFails?: boolean } = {}) {
       return lastHandle?.state;
     },
   };
+  return api;
 }
 
 function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOnce?: boolean; unmountFailsOnce?: boolean } = {}) {
@@ -589,7 +605,18 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
   let reduceMotion = false;
   const runtimeMessages = [];
   const sessionCommands = [];
-  const session = createSessionStub(sessionCommands, options);
+  const session = createSessionStub(sessionCommands, {
+    initFails: options.initFails,
+    setTimeout(callback, delay) {
+      const id = nextTimerId;
+      nextTimerId += 1;
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+  });
   const context: any = {
     chrome: {
       runtime: {
@@ -626,7 +653,6 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
     },
     Engine,
     Extractor,
-    ReaderIcons,
     ReaderSession: session,
     Intl,
     console,
@@ -671,8 +697,8 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
   loadReaderView(context, document);
   let reactMountCount = 0;
   let reactUnmountCount = 0;
-  const originalReactMount = context.ReaderReactViewer.mount;
-  context.ReaderReactViewer.mount = (host) => {
+  const originalReactMount = context.ReaderView.mount;
+  context.ReaderView.mount = (host) => {
     const mount = originalReactMount(host);
     reactMountCount += 1;
     return {
@@ -684,9 +710,9 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
     };
   };
   if (options.mountFailsOnce) {
-    const mount = context.ReaderReactViewer.mount;
+    const mount = context.ReaderView.mount;
     let failed = false;
-    context.ReaderReactViewer.mount = (host) => {
+    context.ReaderView.mount = (host) => {
       if (!failed) {
         failed = true;
         throw new Error("reader_view_mount_failed");
@@ -696,8 +722,8 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
   }
   let unmountFailed = false;
   if (options.unmountFailsOnce) {
-    const mount = context.ReaderReactViewer.mount;
-    context.ReaderReactViewer.mount = (host) => {
+    const mount = context.ReaderView.mount;
+    context.ReaderView.mount = (host) => {
       const mounted = mount(host);
       return {
         ...mounted,
@@ -1157,6 +1183,7 @@ const chromeLateTimerScenarios = [
           sectionTransitions: [],
           initialHeadingIndex: -1,
           figures: [{
+            kind: "image",
             src: "https://example.com/late.png",
             alt: "遅い画像",
             caption: "図1",
@@ -2129,6 +2156,7 @@ test("reader uses sentence and figure markers to preserve a shared position", ()
     sectionTransitions: [],
     initialHeadingIndex: -1,
     figures: [{
+      kind: "image",
       src: "https://example.com/figure.png",
       alt: "図1",
       caption: "図1",
@@ -2179,6 +2207,7 @@ test("reader keeps the current figure anchor ahead of earlier readable text", ()
     sectionTransitions: [],
     initialHeadingIndex: -1,
     figures: [{
+      kind: "image",
       src: "https://example.com/figure.png",
       alt: "図1",
       caption: "図1",
@@ -2231,6 +2260,7 @@ test("reader ignores a clipped figure even when its center is readable", () => {
     sectionTransitions: [],
     initialHeadingIndex: -1,
     figures: [{
+      kind: "image",
       src: "https://example.com/figure.png",
       alt: "図1",
       caption: "図1",
@@ -2351,8 +2381,17 @@ function createTimingReaderHarness(engine = Engine) {
     },
     Engine: engine,
     Extractor,
-    ReaderIcons,
-    ReaderSession: createSessionStub([]),
+    ReaderSession: createSessionStub([], {
+      setTimeout(callback, delay) {
+        const id = nextTimerId;
+        nextTimerId += 1;
+        timers.set(id, { callback, delay });
+        return id;
+      },
+      clearTimeout(id) {
+        timers.delete(id);
+      },
+    }),
     Intl,
     console,
     setTimeout(callback, delay) {
@@ -2641,7 +2680,17 @@ function createFigureReaderHarness() {
   let messageListener = null;
   let nextTimerId = 1;
   const timers = new Map();
-  const session = createSessionStub([]);
+  const session = createSessionStub([], {
+    setTimeout(callback, delay) {
+      const id = nextTimerId;
+      nextTimerId += 1;
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+  });
   const context: any = {
     chrome: {
       runtime: {
@@ -2664,7 +2713,6 @@ function createFigureReaderHarness() {
     },
     Engine,
     Extractor,
-    ReaderIcons,
     ReaderSession: session,
     Intl,
     console,
@@ -2713,6 +2761,7 @@ test("reader pauses on an article image and exposes its context", () => {
     initialHeadingIndex: -1,
     figures: [
       {
+        kind: "image",
         src: "https://example.com/chart.png",
         alt: "処理時間の比較グラフ",
         caption: captionText,
@@ -2792,10 +2841,8 @@ test("reader pauses on a code block and keeps it once in the article flow", () =
     headings: [],
     sectionTransitions: [],
     initialHeadingIndex: -1,
-    inlineCodes: [],
     figures: [{
       kind: "code",
-      src: "",
       alt: "コードブロック",
       caption: "",
       code,
@@ -2843,14 +2890,12 @@ test("reader shows the original Mermaid source when its rendered diagram fails",
     headings: [],
     sectionTransitions: [],
     initialHeadingIndex: -1,
-    inlineCodes: [],
     figures: [{
       kind: "mermaid",
       src: "data:image/svg+xml,%3Csvg%3Ebroken%3C%2Fsvg%3E",
       alt: "Mermaid図",
       caption: "",
       code: mermaid,
-      language: "mermaid",
       sourceOffset: 0,
       sourceEnd: mermaid.length,
     }],
@@ -2874,12 +2919,18 @@ test("reader keeps a long inline code expression atomic in RSVP and marks it in 
   const text = `Use ${code} before continuing.`;
   const start = 4;
   const readingContext = {
-    blocks: [{ text, kind: "paragraph", level: null, start: 0, end: text.length }],
+    blocks: [{
+      text,
+      kind: "paragraph",
+      level: null,
+      start: 0,
+      end: text.length,
+      codeRanges: [{ text: code, start, end: start + code.length }],
+    }],
     headings: [],
     sectionTransitions: [],
     initialHeadingIndex: -1,
     figures: [],
-    inlineCodes: [{ text: code, start, end: start + code.length }],
   };
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "inline-code" });
   messageListener({ type: "START_RSVP", text, requestId: "inline-code", readingContext });
@@ -2919,6 +2970,7 @@ test("reader reveals figure loading feedback after 100ms and resumes after a loa
     sectionTransitions: [],
     initialHeadingIndex: -1,
     figures: [{
+      kind: "image",
       src: "https://example.com/delayed.png",
       alt: "遅延画像の説明",
       caption: "図1",
@@ -2969,6 +3021,7 @@ test("reader ignores a stale figure completion after switching modes", async () 
     sectionTransitions: [],
     initialHeadingIndex: -1,
     figures: [{
+      kind: "image",
       src: "https://example.com/slow.png",
       alt: "遅い画像",
       caption: "図1",
@@ -3214,6 +3267,7 @@ test("reader preserves an article-leading figure through a text round trip", () 
     sectionTransitions: [],
     initialHeadingIndex: -1,
     figures: [{
+      kind: "image",
       src: "https://example.com/leading.png",
       alt: "先頭画像",
       caption: "図A",
@@ -3281,6 +3335,7 @@ test("reader preserves an article-ending figure through a text round trip", () =
     sectionTransitions: [],
     initialHeadingIndex: -1,
     figures: [{
+      kind: "image",
       src: "https://example.com/ending.png",
       alt: "末尾画像",
       caption: "図A",
@@ -3352,6 +3407,7 @@ test("reader returns from an image to the previous sentence and stays paused", a
     initialHeadingIndex: -1,
     figures: [
       {
+        kind: "image",
         src: "https://example.com/chart.png",
         alt: "処理時間の比較グラフ",
         caption: "図1 処理時間",
@@ -3431,6 +3487,7 @@ test("reader keeps the article image and veil in text mode", () => {
     initialHeadingIndex: -1,
     figures: [
       {
+        kind: "image",
         src: "https://example.com/chart.png",
         alt: "処理時間の比較グラフ",
         caption: "図1 処理時間",
@@ -3476,6 +3533,7 @@ test("reader preserves the text marker when an earlier responsive text image cha
     sectionTransitions: [],
     initialHeadingIndex: -1,
     figures: [{
+      kind: "image",
       src: "https://example.com/delayed-text.png",
       srcset: "https://example.com/delayed-text@1x.png 1x, https://example.com/delayed-text@2x.png 2x",
       sizes: "100vw",
@@ -3549,6 +3607,7 @@ test("reader leaves scroll position unchanged for a text image below the marker"
     sectionTransitions: [],
     initialHeadingIndex: -1,
     figures: [{
+      kind: "image",
       src: "https://example.com/later-text.png",
       alt: "後方画像",
       caption: "図1",

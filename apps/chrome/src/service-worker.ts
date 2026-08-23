@@ -137,7 +137,7 @@ function beginPreparation(tabId: number, operation: PreparationOperation): strin
 async function openReader(tabId: number, requestId: string): Promise<void> {
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["session-wasm.js", "session.js", "engine.js", "extractor.js", "icons.js", "viewer.js"],
+    files: ["session-wasm.js", "runtime.js", "engine.js", "extractor.js", "viewer.js"],
   });
   if (!isActiveRequest(tabId, requestId)) return;
   await chrome.tabs.sendMessage(tabId, {

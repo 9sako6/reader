@@ -16,10 +16,9 @@
       "resources": [
         "defuddle.js",
         "session-wasm-module.js",
-        "session.js",
+        "runtime.js",
         "engine.js",
         "extractor.js",
-        "icons.js",
         "viewer.js",
         "reader_session_bg.wasm"
       ],

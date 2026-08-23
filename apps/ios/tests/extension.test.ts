@@ -8,7 +8,11 @@ const path = require("node:path");
 const vm = require("node:vm");
 const Engine = require("../../../.build/packages/engine/src/engine.js");
 
-function createSessionStub(commands, options: { init?: () => Promise<void>; ready?: () => boolean } = {}) {
+function createSessionStub(commands, options: {
+  init?: () => Promise<void>;
+  setTimeout?: (callback: () => void, delay: number) => number;
+  clearTimeout?: (id: number) => void;
+} = {}) {
   let nextId = 1;
   const handles = new Map();
   let lastHandle = null;
@@ -59,18 +63,25 @@ function createSessionStub(commands, options: { init?: () => Promise<void>; read
     return flow.flow.findIndex((item) => item.kind === "unit" && item.unitIndex === Math.max(0, unitIndex));
   };
   const api = {
-    async init() {
-      if (options.init) await options.init();
-    },
-    ready: () => options.ready?.() ?? true,
-    create() {
-      const handle = { id: nextId++, state: initialState(), destroyed: false, flow: null };
+    create(onStateChange = () => {}) {
+      const handle: any = { id: nextId++, state: initialState(), destroyed: false, flow: null, timerId: null, initialized: false, pending: [], onStateChange };
+      handle.ready = Promise.resolve().then(() => options.init?.()).then(() => {
+        if (handle.destroyed) return;
+        handle.initialized = true;
+        for (const command of handle.pending.splice(0)) api.dispatch(handle, command);
+      });
+      handle.dispatch = (command) => {
+        if (handle.destroyed) return;
+        if (!handle.initialized) handle.pending.push(command);
+        else api.dispatch(handle, command);
+      };
+      handle.destroy = () => api.destroy(handle);
       handles.set(handle.id, handle);
       lastHandle = handle;
       return handle;
     },
     dispatch(handle, command) {
-      if (handle.destroyed) throw new Error("destroyed");
+      if (handle.destroyed) return;
       commands.push(command);
       const previous = handle.state;
       let state = previous;
@@ -156,9 +167,23 @@ function createSessionStub(commands, options: { init?: () => Promise<void>; read
         effects = [{ type: "cancelTimer" }];
       }
       handle.state = state;
+      for (const effect of effects) {
+        if (handle.timerId !== null) options.clearTimeout?.(handle.timerId);
+        handle.timerId = null;
+        if (effect.type === "scheduleTick") {
+          handle.timerId = options.setTimeout?.(
+            () => handle.dispatch({ type: "tick", generation: effect.generation }),
+            effect.delayMs,
+          ) ?? null;
+        }
+      }
+      handle.onStateChange(state);
       return { state, effects };
     },
     destroy(handle) {
+      if (handle.timerId !== null) options.clearTimeout?.(handle.timerId);
+      handle.timerId = null;
+      handle.pending.length = 0;
       handles.delete(handle.id);
       handle.destroyed = true;
     },
@@ -197,10 +222,9 @@ test("Safari extension loads reader resources in dependency order", () => {
     resources: [
       "defuddle.js",
       "session-wasm-module.js",
-      "session.js",
+      "runtime.js",
       "engine.js",
       "extractor.js",
-      "icons.js",
       "viewer.js",
       "reader_session_bg.wasm",
     ],
@@ -213,12 +237,11 @@ test("Xcode project embeds every manifest script in the extension", () => {
   const project = fs.readFileSync(path.join(root, "reader.xcodeproj", "project.pbxproj"), "utf8");
   assert.match(project, /defuddle\.js in Resources/);
   assert.match(project, /session-wasm-module\.js in Resources/);
-  assert.match(project, /session\.js in Resources/);
+  assert.match(project, /runtime\.js in Resources/);
   assert.match(project, /reader_session_bg\.wasm in Resources/);
   assert.match(project, /reader-session-dependencies\.txt in Resources/);
   assert.match(project, /engine\.js in Resources/);
   assert.match(project, /extractor\.js in Resources/);
-  assert.match(project, /icons\.js in Resources/);
   assert.match(project, /viewer\.js in Resources/);
   assert.match(project, /bootstrap\.js in Resources/);
   assert.match(project, /reader-extension\.appex in Embed Foundation Extensions/);
@@ -226,9 +249,9 @@ test("Xcode project embeds every manifest script in the extension", () => {
 });
 
 test("Safari package includes the locked React runtime notices", () => {
-  const session = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "generated", "session.js"), "utf8");
+  const session = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "generated", "runtime.js"), "utf8");
   assert.equal(session.includes("require("), false);
-  assert.match(session, /ReaderReactViewer/u);
+  assert.match(session, /ReaderView/u);
   assert.match(session, /createRoot/u);
   const notice = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "generated", "reader-session-dependencies.txt"), "utf8");
   for (const packageName of ["react@19.2.8", "react-dom@19.2.8", "scheduler@0.27.0", "esbuild@0.28.2"]) {
@@ -239,7 +262,7 @@ test("Safari package includes the locked React runtime notices", () => {
 
 test("Safari viewer leaves loading and rendering to ReaderView", () => {
   const source = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "viewer", "viewer.ts"), "utf8");
-  for (const symbol of ["createLaunchFeedback", "revealLaunchProgress", "finishLaunchProgress", "launchProgress.element", "launchProgress.animation", "showRewindFeedback", "global.ReaderIcons.create", "feedback.append"]) {
+  for (const symbol of ["createLaunchFeedback", "revealLaunchProgress", "finishLaunchProgress", "launchProgress.element", "launchProgress.animation", "showRewindFeedback", "feedback.append"]) {
     assert.equal(source.includes(symbol), false, `obsolete Safari renderer symbol: ${symbol}`);
   }
 });
@@ -262,7 +285,7 @@ test("Safari React harness preserves DOM move and hierarchy semantics", () => {
 function createSafariReaderHarness(
   engine = Engine,
   language = "ja",
-  options: { pageOwnedHost?: boolean; init?: () => Promise<void>; ready?: () => boolean; mountFailsOnce?: boolean; reducedMotion?: boolean; extractionElapsedMs?: number } = {},
+  options: { pageOwnedHost?: boolean; init?: () => Promise<void>; mountFailsOnce?: boolean; reducedMotion?: boolean; extractionElapsedMs?: number } = {},
 ) {
   const documentElement = new FakeElement("html");
   documentElement.lang = language;
@@ -355,6 +378,7 @@ function createSafariReaderHarness(
       sectionTransitions: [],
       initialHeadingIndex: -1,
       figures: [{
+        kind: "image",
         src: "https://example.com/figure.png",
         srcset: "https://example.com/figure@1x.png 1x, https://example.com/figure@2x.png 2x",
         sizes: "100vw",
@@ -379,7 +403,18 @@ function createSafariReaderHarness(
   let mutationObserverLiveCount = 0;
   let reactMountCount = 0;
   let reactUnmountCount = 0;
-  const session = createSessionStub(sessionCommands, options);
+  const session = createSessionStub(sessionCommands, {
+    init: options.init,
+    setTimeout(callback, delay) {
+      const id = nextTimerId;
+      nextTimerId += 1;
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+  });
   const context: any = {
     document,
     location: { href: "https://example.com/articles/first" },
@@ -399,7 +434,6 @@ function createSafariReaderHarness(
         return activeContent;
       },
     },
-    ReaderIcons: { create: () => new FakeElement("svg") },
     Defuddle: class {},
     innerWidth: 390,
     innerHeight: 844,
@@ -482,13 +516,13 @@ function createSafariReaderHarness(
   };
   document.defaultView = context;
   const sessionSource = fs.readFileSync(
-    path.join(root, "ReaderExtension", "Resources", "generated", "session.js"),
+    path.join(root, "ReaderExtension", "Resources", "generated", "runtime.js"),
     "utf8",
   );
   vm.runInNewContext(sessionSource, context);
-  assert.equal(typeof context.ReaderReactViewer?.mount, "function");
-  const originalReactMount = context.ReaderReactViewer.mount;
-  context.ReaderReactViewer.mount = (host) => {
+  assert.equal(typeof context.ReaderView?.mount, "function");
+  const originalReactMount = context.ReaderView.mount;
+  context.ReaderView.mount = (host) => {
     const mount = originalReactMount(host);
     reactMountCount += 1;
     return {
@@ -500,9 +534,9 @@ function createSafariReaderHarness(
     };
   };
   if (options.mountFailsOnce) {
-    const mount = context.ReaderReactViewer.mount;
+    const mount = context.ReaderView.mount;
     let failed = false;
-    context.ReaderReactViewer.mount = (root) => {
+    context.ReaderView.mount = (root) => {
       if (!failed) {
         failed = true;
         throw new Error("reader_view_mount_failed");
@@ -718,6 +752,8 @@ test("Safari reader marks startup phases without including page content", async 
     "reader:bootstrap-ready",
     "reader:tap",
     "reader:react-init-start",
+    "reader:session-init-start",
+    "reader:wasm-init-start",
     "reader:react-init-end",
     "reader:first-feedback",
     "reader:extraction-start",
@@ -726,6 +762,8 @@ test("Safari reader marks startup phases without including page content", async 
     "reader:controls-ready",
     "reader:first-unit",
     "reader:first-render",
+    "reader:session-init-end",
+    "reader:wasm-init-end",
   ]);
 });
 
@@ -1010,7 +1048,6 @@ test("Safari reader applies queued mode changes after session initialization", a
     resolveInit = resolve;
   });
   const harness = createSafariReaderHarness(Engine, "ja", {
-    ready: () => false,
     init: () => initPromise,
   });
 

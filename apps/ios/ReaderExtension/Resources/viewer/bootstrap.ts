@@ -8,10 +8,9 @@
   const ASSETS = [
     "defuddle.js",
     "session-wasm-module.js",
-    "session.js",
+    "runtime.js",
     "engine.js",
     "extractor.js",
-    "icons.js",
     "viewer.js",
   ];
   const extensionRuntime = globalThis.browser?.runtime ?? globalThis.chrome?.runtime;

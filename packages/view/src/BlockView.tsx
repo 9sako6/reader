@@ -34,7 +34,7 @@ export function BlockView({ block, index }: { block: ReaderViewBlock; index: num
 function inlineCodeChildren(block: ReaderViewBlock, relativeStart: number, relativeEnd: number): ReactNode[] {
   const absoluteStart = block.start + relativeStart;
   const absoluteEnd = block.start + relativeEnd;
-  const ranges = (block.inlineCodes || [])
+  const ranges = (block.codeRanges || [])
     .filter((range) => range.start >= absoluteStart && range.end <= absoluteEnd)
     .sort((left, right) => left.start - right.start);
   if (ranges.length === 0) return [block.text.slice(relativeStart, relativeEnd)];

@@ -8,7 +8,7 @@
     | { kind: "loading"; token: number; figureIndex: number }
     | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "failed"; token: number; figureIndex: number };
-  type ReactReaderBlock = ReaderBlock & { sentenceSpans: SentenceSpan[] };
+  type ReactReaderBlock = Extract<ReaderViewModel, { kind: "text" }>["blocks"][number];
   interface LaunchProgress {
     startedAt: number;
     revealTimer: number | null;
@@ -38,7 +38,6 @@
   let units: ReaderUnit[] = [];
   let flowItems: ReaderFlowItem[] = [];
   let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
-  let playbackTimer: number | null = null;
   let figureViewState: FigureViewState = { kind: "idle" };
   let reactFigureBrightness: "dimmed" | "revealed" = "dimmed";
   let figureLoadToken = 0;
@@ -59,16 +58,13 @@
   let activePreparation: PreparationState = { kind: "idle" };
   let sessionState: ReaderSessionState | null = null;
   let sessionHandle: ReaderSessionHandle | null = null;
-  let sessionInitPromise: Promise<void> | null = null;
-  let pendingSessionCommands: ReaderSessionCommand[] = [];
   let sessionInitFailure = false;
-  let sessionEnabled = false;
   let applyingSession = false;
   let retainedPageUrl: string | null = null;
   let sessionDismissed = false;
   let resumePlaybackOnReopen = false;
   let sessionLifecycleAttached = false;
-  let reactViewMount: ReaderReactViewerMount | null = null;
+  let reactViewMount: ReaderViewMount | null = null;
   let reactViewHost: HTMLDivElement | null = null;
   let reactTextScroller: HTMLElement | null = null;
   let reactTextMarkers: HTMLElement[] = [];
@@ -86,7 +82,7 @@
   let performanceReactInitStarted = false;
   let performanceReactInitMarked = false;
 
-  function readingSessionState(): ReaderSessionObservableState | null {
+  function readingSessionState(): Extract<ReaderSessionState, { phase: "reading" }> | null {
     return sessionState?.phase === "reading" ? sessionState : null;
   }
 
@@ -169,7 +165,7 @@
 
   function mountReactViewer(shadowRoot: ShadowRoot | null): void {
     if (!shadowRoot || reactViewMount) return;
-    if (!globalThis.ReaderReactViewer || typeof globalThis.ReaderReactViewer.mount !== "function") throw new Error("reader_view_unavailable");
+    if (!globalThis.ReaderView || typeof globalThis.ReaderView.mount !== "function") throw new Error("reader_view_unavailable");
     const root = global.document.createElement("div");
     root.setAttribute("data-reader-react-root", "true");
     Object.assign(root.style, { position: "absolute", inset: "0", pointerEvents: "auto" });
@@ -177,7 +173,7 @@
     performanceReactInitStarted = true;
     markPerformance("reader:react-init-start");
     try {
-      reactViewMount = globalThis.ReaderReactViewer.mount(root);
+      reactViewMount = globalThis.ReaderView.mount(root);
       reactViewHost = root;
     } catch (error) {
       root.remove();
@@ -196,7 +192,7 @@
     performanceReactInitMarked = false;
   }
 
-  function reactViewModel(): unknown {
+  function reactViewModel(): ReaderViewModel {
     if (activePreparation.kind === "preparing") {
       return { kind: "loading", slow: false, revealed: launchProgress?.revealed === true, reducedMotion: prefersReducedMotion(), mobile: true };
     }
@@ -214,7 +210,7 @@
     const figureStatus = figure && figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.kind : figure ? "loading" : null;
     const unit = item?.kind === "unit" ? units[unitIndex] || null : null;
     const context = unit ? global.Engine.surroundingSentences(units, unitIndex) : { previous: "", next: "" };
-    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus, token: figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.token : undefined, loadingVisible: figureStatus === "loading" && figureLoadRevealTimerId === null, brightness: reactFigureBrightness } : null, playing: state?.playback === "playing", controlsVisible, reducedMotion: prefersReducedMotion(), progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, rewindFeedback, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
+    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus, token: figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.token : undefined, loadingVisible: figureStatus === "loading" && figureLoadRevealTimerId === null, brightness: reactFigureBrightness } : null, playing: state?.playback === "playing", controlsVisible, reducedMotion: prefersReducedMotion(), progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, rewindFeedback: rewindFeedback || undefined, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
   }
 
   function renderReactView(): void {
@@ -529,11 +525,9 @@
       if (!content?.text) throw new Error("content_not_found");
       const locale = content.readingContext?.language || "ja";
       const sourceBlocks = content.readingContext?.blocks?.length ? content.readingContext.blocks : fallbackBlocks(content.text);
-      const inlineCodes = content.readingContext?.inlineCodes || [];
       viewBlocks = sourceBlocks.map((block) => ({
         ...block,
         sentenceSpans: global.Engine.splitSentenceSpans(block.text, locale),
-        inlineCodes: inlineCodes.filter((range) => range.start >= block.start && range.end <= block.end),
       }));
       rebuildUnits();
       markPerformance("reader:segmentation-end");
@@ -675,10 +669,7 @@
   }
 
   function readerSessionAvailable(): boolean {
-    const candidate = global.ReaderSession;
-    return typeof candidate?.init === "function"
-      && typeof candidate.create === "function"
-      && typeof candidate.dispatch === "function";
+    return typeof global.ReaderSession?.create === "function";
   }
 
   function sessionPreparation(): ReaderSessionPreparation {
@@ -709,60 +700,41 @@
   }
 
   function beginReaderSession(requestId: string): void {
-    pendingSessionCommands = [{ type: "open", requestId }];
     if (!readerSessionAvailable()) {
       sessionInitFailure = true;
       return;
     }
-    if (global.ReaderSession.ready()) {
-      if (sessionHandle) {
-        if (!applyingSession) dispatchSession({ type: "close" });
-        global.ReaderSession.destroy(sessionHandle);
-        sessionHandle = null;
-        sessionState = null;
-        sessionEnabled = false;
+    if (sessionHandle) {
+      if (!applyingSession) sessionHandle.dispatch({ type: "close" });
+      sessionHandle.destroy();
+    }
+    markPerformance("reader:session-init-start");
+    markPerformance("reader:wasm-init-start");
+    const handle = global.ReaderSession.create((state) => {
+      if (sessionHandle !== handle) return;
+      const wasFigure = sessionState?.phase === "reading" && sessionState.currentKind === "figure";
+      sessionState = state;
+      syncReaderSessionState();
+      if (!wasFigure && state.phase === "reading" && state.currentKind === "figure") controlsVisible = true;
+      applyingSession = true;
+      try {
+        if (content && units.length > 0) renderSessionState();
+      } finally {
+        applyingSession = false;
       }
-      sessionHandle = global.ReaderSession.create();
-      sessionState = sessionHandle.state;
-      sessionEnabled = true;
-      flushPendingSessionCommands();
-      return;
-    }
-    if (!sessionInitPromise) {
-      markPerformance("reader:session-init-start");
-      markPerformance("reader:wasm-init-start");
-      sessionInitPromise = global.ReaderSession.init()
-        .then(() => {
-          markPerformance("reader:session-init-end");
-          markPerformance("reader:wasm-init-end");
-          if (activePreparation.kind === "idle" || activePreparation.kind === "cancelled") return;
-          if (sessionHandle) {
-            if (!applyingSession) dispatchSession({ type: "close" });
-            global.ReaderSession.destroy(sessionHandle);
-            sessionHandle = null;
-            sessionState = null;
-            sessionEnabled = false;
-          }
-          sessionHandle = global.ReaderSession.create();
-          sessionState = sessionHandle.state;
-          sessionEnabled = true;
-          flushPendingSessionCommands();
-        })
-        .catch(() => {
-          sessionInitPromise = null;
-          sessionInitFailure = true;
-          if (activePreparation.kind === "ready") showError("session_unavailable");
-        });
-    }
-  }
-
-  function flushPendingSessionCommands(): void {
-    const queued = pendingSessionCommands;
-    pendingSessionCommands = [];
-    for (const command of queued) dispatchSession(command, false);
-    if (content && units.length > 0 && sessionState?.phase === "reading") {
-      renderReader();
-    }
+    });
+    sessionHandle = handle;
+    sessionState = null;
+    handle.dispatch({ type: "open", requestId });
+    void handle.ready.then(() => {
+      if (sessionHandle !== handle) return;
+      markPerformance("reader:session-init-end");
+      markPerformance("reader:wasm-init-end");
+    }).catch(() => {
+      if (sessionHandle !== handle) return;
+      sessionInitFailure = true;
+      if (activePreparation.kind === "ready") showError("session_unavailable");
+    });
   }
 
   function syncReaderSessionState(): void {
@@ -771,48 +743,9 @@
     if (state.phase === "reading" && state.position) currentPosition = state.position;
   }
 
-  function dispatchSession(command: ReaderSessionCommand, render = true): void {
+  function dispatchSession(command: ReaderSessionCommand): void {
     if (applyingSession) return;
-    if (!sessionEnabled || !sessionHandle || !sessionState) {
-      if (command.type === "open") pendingSessionCommands = [command];
-      else pendingSessionCommands.push(command);
-      return;
-    }
-    const wasFigure = sessionState.phase === "reading" && sessionState.currentKind === "figure";
-    const transition = global.ReaderSession.dispatch(sessionHandle, command);
-    sessionState = transition.state;
-    syncReaderSessionState();
-    if (!wasFigure && sessionState.phase === "reading" && sessionState.currentKind === "figure") {
-      controlsVisible = true;
-    }
-    applyingSession = true;
-    try {
-      for (const effect of transition.effects) {
-        if (effect.type === "cancelTimer") {
-          if (playbackTimer !== null) global.clearTimeout(playbackTimer);
-          playbackTimer = null;
-        } else if (effect.type === "scheduleTick") {
-          if (playbackTimer !== null) global.clearTimeout(playbackTimer);
-          const scheduledHandle = sessionHandle;
-          const scheduledTimerId = global.setTimeout(() => {
-            if (playbackTimer !== scheduledTimerId) return;
-            playbackTimer = null;
-            if (
-              !scheduledHandle
-              || sessionHandle !== scheduledHandle
-              || sessionState?.phase !== "reading"
-              || sessionState.generation !== effect.generation
-              || sessionState.playback !== "playing"
-            ) return;
-            dispatchSession({ type: "tick", generation: effect.generation });
-          }, effect.delayMs);
-          playbackTimer = scheduledTimerId;
-        }
-      }
-      if (render) renderSessionState();
-    } finally {
-      applyingSession = false;
-    }
+    sessionHandle?.dispatch(command);
   }
 
   function renderSessionState(): void {
@@ -1103,7 +1036,7 @@
       dispatchSession({
         type: nextMode === "text" ? "switchToText" : "switchToRsvp",
         position: capturedPosition,
-      }, false);
+      });
     }
     if (nextMode === "rsvp") controlsVisible = true;
     renderSessionState();
@@ -1118,13 +1051,13 @@
     const previousPosition = currentPosition;
     const locale = content?.readingContext?.language || "ja";
     const articleFigures = content.readingContext?.figures || [];
-    const inlineCodes = content.readingContext?.inlineCodes || [];
+    const codeRanges = (content.readingContext?.blocks || []).flatMap((block) => block.codeRanges || []);
     const figureBoundaries = articleFigures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
-    const inlineCodeBoundaries = inlineCodes.flatMap((range) => [range.start, range.end]);
-    const segmented = global.Engine.preserveInlineCode(
-      global.Engine.segmentText(content.text, locale, [...figureBoundaries, ...inlineCodeBoundaries]),
+    const codeBoundaries = codeRanges.flatMap((range) => [range.start, range.end]);
+    const segmented = global.Engine.preserveCodeRanges(
+      global.Engine.segmentText(content.text, locale, [...figureBoundaries, ...codeBoundaries]),
       content.text,
-      inlineCodes,
+      codeRanges,
     )
       .map((unit) => {
         if (unit.kind === "code") return unit;
@@ -1158,7 +1091,7 @@
     const availableWidth = Math.max(160, global.innerWidth - 48);
     const locale = content?.readingContext?.language || "ja";
     const graphemeWidth = /^(?:ja|zh|ko)(?:-|$)/iu.test(locale)
-      ? RSVP_FONT_SIZE
+      ? RSVP_FONT_SIZE * 0.9
       : RSVP_FONT_SIZE * 0.58;
     return Math.min(12, Math.max(3, Math.floor(availableWidth / graphemeWidth)));
   }
@@ -1515,7 +1448,7 @@
     detachSessionLifecycle();
     const restoreFocus = launchFocus;
     resumePlaybackOnReopen = sessionIsPlaying();
-    if (sessionHandle && !applyingSession) dispatchSession({ type: "pause" }, false);
+    if (sessionHandle && !applyingSession) dispatchSession({ type: "pause" });
     overlay = null;
     clearPendingLeftTap();
     lastLeftTapAt = 0;
@@ -1553,16 +1486,14 @@
     sessionGeneration += 1;
     preparationGeneration += 1;
     if (sessionHandle && !applyingSession) {
-      dispatchSession({ type: "close" }, false);
-      global.ReaderSession.destroy(sessionHandle);
+      dispatchSession({ type: "close" });
+      sessionHandle.destroy();
     }
     destroySessionState();
   }
 
   function destroySessionState(): void {
     unmountReactViewer();
-    if (playbackTimer !== null) global.clearTimeout(playbackTimer);
-    playbackTimer = null;
     clearPendingLeftTap();
     if (rewindFeedbackClearTimer !== null) global.clearTimeout(rewindFeedbackClearTimer);
     rewindFeedbackClearTimer = null;
@@ -1583,8 +1514,6 @@
     launchFocus = null;
     sessionState = null;
     sessionHandle = null;
-    sessionEnabled = false;
-    pendingSessionCommands = [];
     sessionInitFailure = false;
     applyingSession = false;
     retainedPageUrl = null;
@@ -1636,14 +1565,10 @@
       }
       if (sessionHandle && !applyingSession) {
         dispatchSession({ type: "close" });
-        global.ReaderSession.destroy(sessionHandle);
+        sessionHandle.destroy();
       }
       sessionHandle = null;
-      sessionEnabled = false;
       sessionState = null;
-      pendingSessionCommands = [];
-      if (playbackTimer !== null) global.clearTimeout(playbackTimer);
-      playbackTimer = null;
       currentOverlay?.remove();
       global.removeEventListener?.("keydown", handleKeyDown);
       destroySessionState();

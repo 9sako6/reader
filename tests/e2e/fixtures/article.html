@@ -107,6 +107,7 @@
               : [],
             initialHeadingIndex: 0,
             figures: [{
+              kind: "image",
               src: imageUrl.href,
               ...(imageDimensions || {}),
               alt: configuredAlt,
@@ -171,10 +172,9 @@
         for (const source of [
           "/apps/chrome/dist/vendor/defuddle/defuddle.js",
           "/apps/chrome/dist/session-wasm.js",
-          "/apps/chrome/dist/session.js",
+          "/apps/chrome/dist/runtime.js",
           "/apps/chrome/dist/engine.js",
           "/apps/chrome/dist/extractor.js",
-          "/apps/chrome/dist/icons.js",
           "/apps/chrome/dist/viewer.js",
         ]) {
           await loadScript(source);
@@ -269,10 +269,9 @@
         for (const source of [
           "/apps/ios/ReaderExtension/Resources/generated/defuddle.js",
           "/apps/ios/ReaderExtension/Resources/generated/session-wasm-module.js",
-          "/apps/ios/ReaderExtension/Resources/generated/session.js",
+          "/apps/ios/ReaderExtension/Resources/generated/runtime.js",
           "/apps/ios/ReaderExtension/Resources/generated/engine.js",
           "/apps/ios/ReaderExtension/Resources/generated/extractor.js",
-          "/apps/ios/ReaderExtension/Resources/generated/icons.js",
           "/apps/ios/ReaderExtension/Resources/generated/viewer.js",
           "/apps/ios/ReaderExtension/Resources/generated/bootstrap.js",
         ]) {

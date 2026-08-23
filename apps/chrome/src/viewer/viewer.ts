@@ -5,7 +5,7 @@
     | { kind: "loading"; token: number; figureIndex: number; brightness?: "dimmed" | "revealed" }
     | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "failed"; token: number; figureIndex: number };
-  type ReactReaderBlock = ReaderBlock & { sentenceSpans: SentenceSpan[] };
+  type ReactReaderBlock = Extract<ReaderViewModel, { kind: "text" }>["blocks"][number];
   type ReaderMessage =
     | { type: "SHOW_RSVP_LOADING"; requestId: string }
     | { type: "START_RSVP"; requestId: string; text: string; readingContext?: Partial<ReadingContext> | null }
@@ -28,7 +28,6 @@
   let units: ReaderUnit[] = [];
   let segmentationLocale = "ja";
   let currentGraphemeLimit = 12;
-  let timerId: number | null = null;
   let rootHost: HTMLDivElement | null = null;
   let readerShadow: ShadowRoot | null = null;
   let root: HTMLDialogElement | HTMLDivElement | null = null;
@@ -86,12 +85,9 @@
   let activePreparation: PreparationState = { kind: "idle" };
   let sessionState: ReaderSessionState | null = null;
   let sessionHandle: ReaderSessionHandle | null = null;
-  let sessionInitPromise: Promise<void> | null = null;
-  let pendingSessionCommands: ReaderSessionCommand[] = [];
-  let sessionEnabled = false;
   let applyingSession = false;
   let sessionLifecycleAttached = false;
-  let reactViewMount: ReaderReactViewerMount | null = null;
+  let reactViewMount: ReaderViewMount | null = null;
   let reactRenderedKind: ReactReaderViewModel["kind"] | null = null;
   let reactRenderedPositionKey: string | null = null;
   let reactLoadingRevealed = false;
@@ -99,31 +95,10 @@
   let performanceReactInitMarked = false;
   let performanceUnitMarked = false;
 
-  type ReactReaderViewModel = {
-    kind: "closed" | "loading" | "error" | "rsvp" | "text";
-    slow?: boolean;
-    revealed?: boolean;
-    reducedMotion?: boolean;
-    message?: string;
-    canRetry?: boolean;
-    previous?: string;
-    next?: string;
-    unit?: ReaderUnit | null;
-    figure?: { figure: ReaderFigure; figureIndex: number; status: "loading" | "ready" | "failed" } | null;
-    playing?: boolean;
-    progress?: number;
-    loadingCover?: boolean;
-    headings?: ReaderHeading[];
-    activeHeadingIndex?: number;
-    blocks?: ReactReaderBlock[];
-    figures?: ReaderFigure[];
-    language?: string;
-    position?: ReaderPosition;
-    title?: string;
-  };
+  type ReactReaderViewModel = ReaderViewModel;
 
   function reactViewerAvailable(): boolean {
-    return typeof globalThis.ReaderReactViewer?.mount === "function";
+    return typeof globalThis.ReaderView?.mount === "function";
   }
 
   function mountReactViewer(dialog: HTMLDialogElement): void {
@@ -133,7 +108,7 @@
     host.setAttribute("data-reader-react-root", "true");
     Object.assign(host.style, { position: "absolute", inset: "0", pointerEvents: "auto" });
     dialog.append(host);
-    const viewer = globalThis.ReaderReactViewer;
+    const viewer = globalThis.ReaderView;
     if (!viewer) throw new Error("reader_view_unavailable");
     performanceReactInitStarted = true;
     markPerformance("reader:react-init-start");
@@ -335,7 +310,7 @@
     renderReactView(reactViewModel());
   }
 
-  function readingSessionState(): ReaderSessionObservableState | null {
+  function readingSessionState(): Extract<ReaderSessionState, { phase: "reading" }> | null {
     return sessionState?.phase === "reading" ? sessionState : null;
   }
 
@@ -468,7 +443,6 @@
       cancelLoadingReveal();
     }
 
-    stopTimer();
 
     const content = globalThis.Extractor.fromText(
       text,
@@ -487,15 +461,15 @@
     initialHeadingIndex = readingContext.initialHeadingIndex;
     figures = Array.isArray(readingContext.figures) ? readingContext.figures : [];
 
-    const inlineCodes = Array.isArray(readingContext.inlineCodes) ? readingContext.inlineCodes : [];
+    const codeRanges = blocks.flatMap((block) => block.codeRanges || []);
     const figureBoundaries = figures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
-    const inlineCodeBoundaries = inlineCodes.flatMap((range) => [range.start, range.end]);
+    const codeBoundaries = codeRanges.flatMap((range) => [range.start, range.end]);
     segmentationLocale = readingContext.language;
-    viewBlocks = buildViewBlocks(blocks.length > 0 ? blocks : fallbackBlocks(sourceText), segmentationLocale, inlineCodes);
-    baseUnits = globalThis.Engine.preserveInlineCode(
-      globalThis.Engine.segmentText(content.text, segmentationLocale, [...figureBoundaries, ...inlineCodeBoundaries]),
+    viewBlocks = buildViewBlocks(blocks.length > 0 ? blocks : fallbackBlocks(sourceText), segmentationLocale);
+    baseUnits = globalThis.Engine.preserveCodeRanges(
+      globalThis.Engine.segmentText(content.text, segmentationLocale, [...figureBoundaries, ...codeBoundaries]),
       content.text,
-      inlineCodes,
+      codeRanges,
     )
       .map((unit) => {
         if (unit.kind === "code") return unit;
@@ -541,10 +515,7 @@
   }
 
   function readerSessionAvailable(): boolean {
-    const candidate = globalThis.ReaderSession;
-    return typeof candidate?.init === "function"
-      && typeof candidate.create === "function"
-      && typeof candidate.dispatch === "function";
+    return typeof globalThis.ReaderSession?.create === "function";
   }
 
   function sessionPreparation(): ReaderSessionPreparation {
@@ -574,56 +545,37 @@
 
   function beginReaderSession(requestId: string): void {
     attachSessionLifecycle();
-    pendingSessionCommands = [{ type: "open", requestId }];
     if (!readerSessionAvailable()) {
       showSessionUnavailable(requestId);
       return;
     }
-    if (globalThis.ReaderSession.ready()) {
-      if (sessionHandle) {
-        if (!applyingSession) dispatchSession({ type: "close" });
-        globalThis.ReaderSession.destroy(sessionHandle);
-        sessionHandle = null;
-        sessionState = null;
-        sessionEnabled = false;
+    if (sessionHandle) {
+      if (!applyingSession) sessionHandle.dispatch({ type: "close" });
+      sessionHandle.destroy();
+    }
+    markPerformance("reader:session-init-start");
+    markPerformance("reader:wasm-init-start");
+    const handle = globalThis.ReaderSession.create((state) => {
+      if (sessionHandle !== handle) return;
+      sessionState = state;
+      syncReaderSessionState();
+      applyingSession = true;
+      try {
+        renderSessionState();
+      } finally {
+        applyingSession = false;
       }
-      sessionHandle = globalThis.ReaderSession.create();
-      sessionState = sessionHandle.state;
-      sessionEnabled = true;
-      const queued = pendingSessionCommands;
-      pendingSessionCommands = [];
-      for (const command of queued) dispatchSession(command);
-      return;
-    }
-    if (!sessionInitPromise) {
-      markPerformance("reader:session-init-start");
-      markPerformance("reader:wasm-init-start");
-      sessionInitPromise = globalThis.ReaderSession.init()
-        .then(() => {
-          markPerformance("reader:session-init-end");
-          markPerformance("reader:wasm-init-end");
-          const currentRequestId = activeRequestId;
-          if (!currentRequestId || activePreparation.kind === "cancelled") return;
-          if (sessionHandle) {
-            if (!applyingSession) dispatchSession({ type: "close" });
-            globalThis.ReaderSession.destroy(sessionHandle);
-            sessionHandle = null;
-            sessionState = null;
-            sessionEnabled = false;
-          }
-          sessionHandle = globalThis.ReaderSession.create();
-          sessionState = sessionHandle.state;
-          sessionEnabled = true;
-          const queued = pendingSessionCommands;
-          pendingSessionCommands = [];
-          for (const command of queued) dispatchSession(command);
-        })
-        .catch(() => {
-          sessionInitPromise = null;
-          const currentRequestId = activeRequestId;
-          if (currentRequestId) showSessionUnavailable(currentRequestId);
-        });
-    }
+    });
+    sessionHandle = handle;
+    sessionState = null;
+    handle.dispatch({ type: "open", requestId });
+    void handle.ready.then(() => {
+      if (sessionHandle !== handle) return;
+      markPerformance("reader:session-init-end");
+      markPerformance("reader:wasm-init-end");
+    }).catch(() => {
+      if (sessionHandle === handle) showSessionUnavailable(requestId);
+    });
   }
 
   function showSessionUnavailable(requestId: string): void {
@@ -640,42 +592,7 @@
 
   function dispatchSession(command: ReaderSessionCommand): void {
     if (applyingSession) return;
-    if (!sessionEnabled || !sessionHandle || !sessionState) {
-      if (command.type === "open") pendingSessionCommands = [command];
-      else pendingSessionCommands.push(command);
-      return;
-    }
-    const transition = globalThis.ReaderSession.dispatch(sessionHandle, command);
-    sessionState = transition.state;
-    syncReaderSessionState();
-    applyingSession = true;
-    try {
-      for (const effect of transition.effects) {
-        if (effect.type === "cancelTimer") {
-          stopTimer();
-        } else if (effect.type === "scheduleTick") {
-          stopTimer();
-          const scheduledHandle = sessionHandle;
-          const scheduledTimerId = globalThis.setTimeout(() => {
-            if (timerId !== scheduledTimerId) return;
-            timerId = null;
-            if (
-              !scheduledHandle
-              || sessionHandle !== scheduledHandle
-              || !sessionEnabled
-              || sessionState?.phase !== "reading"
-              || sessionState.generation !== effect.generation
-              || sessionState.playback !== "playing"
-            ) return;
-            dispatchSession({ type: "tick", generation: effect.generation });
-          }, effect.delayMs);
-          timerId = scheduledTimerId;
-        }
-      }
-      renderSessionState();
-    } finally {
-      applyingSession = false;
-    }
+    sessionHandle?.dispatch(command);
   }
 
   function renderSessionState(): void {
@@ -1315,11 +1232,10 @@
     return result;
   }
 
-  function buildViewBlocks(sourceBlocks: ReaderBlock[], locale: string, inlineCodes: ReaderInlineCode[] = []): ReactReaderBlock[] {
+  function buildViewBlocks(sourceBlocks: ReaderBlock[], locale: string): ReactReaderBlock[] {
     return sourceBlocks.map((block) => ({
       ...block,
       sentenceSpans: globalThis.Engine.splitSentenceSpans(block.text, locale),
-      inlineCodes: inlineCodes.filter((range) => range.start >= block.start && range.end <= block.end),
     }));
   }
 
@@ -1835,13 +1751,6 @@
     };
   }
 
-  function stopTimer() {
-    if (timerId !== null) {
-      globalThis.clearTimeout(timerId);
-      timerId = null;
-    }
-  }
-
   function removeOverlay() {
     cancelLoadingReveal();
     invalidateFigureLoad();
@@ -1849,7 +1758,6 @@
       globalThis.clearTimeout(loadingCoverTimerId);
       loadingCoverTimerId = null;
     }
-    stopTimer();
     detachKeydownListener();
     displayResizeObserver?.disconnect();
     displayResizeObserver = null;
@@ -1905,12 +1813,10 @@
       }
       if (sessionHandle && !applyingSession) {
         dispatchSession({ type: "close" });
-        globalThis.ReaderSession.destroy(sessionHandle);
+        sessionHandle.destroy();
       }
       sessionHandle = null;
-      sessionEnabled = false;
       sessionState = null;
-      pendingSessionCommands = [];
       if (notifyServiceWorker && requestId) {
         sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
         if (activePreparation.kind !== "idle") activePreparation = { kind: "cancelled", requestId };
@@ -1918,7 +1824,6 @@
       const restoreFocus = launchFocus;
       const restoreScroll = sourceScrollPosition;
       try {
-        stopTimer();
         removeOverlay();
       } finally {
         try {

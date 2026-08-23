@@ -28,7 +28,7 @@ await compile("pnpm", [
   ".build/safari-bootstrap",
   "apps/ios/ReaderExtension/Resources/viewer/bootstrap.ts",
   "apps/ios/ReaderExtension/Resources/viewer/globals.d.ts",
-  "packages/session-ts/src/contracts.d.ts",
+  "packages/session/browser/contracts.d.ts",
   "packages/extractor/src/contracts.d.ts",
 ], { cwd: repositoryRoot });
 const bootstrap = await readFile(

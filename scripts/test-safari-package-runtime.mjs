@@ -77,10 +77,9 @@ async function verifyPackage() {
     resources: [
       "defuddle.js",
       "session-wasm-module.js",
-      "session.js",
+      "runtime.js",
       "engine.js",
       "extractor.js",
-      "icons.js",
       "viewer.js",
       "reader_session_bg.wasm",
     ],
@@ -97,9 +96,9 @@ async function verifyPackage() {
   const generatedBootstrap = await readFile(join(generatedRoot, "bootstrap.js"), "utf8");
   assert.equal(generatedBootstrap.includes("require("), false);
   assert.match(generatedBootstrap, /import\(runtimeURL\)/);
-  const generatedSession = await readFile(join(generatedRoot, "session.js"), "utf8");
+  const generatedSession = await readFile(join(generatedRoot, "runtime.js"), "utf8");
   assert.equal(generatedSession.includes("require("), false);
-  assert.match(generatedSession, /ReaderReactViewer/u);
+  assert.match(generatedSession, /ReaderView/u);
   assert.match(generatedSession, /createRoot/u);
   const generatedAssets = new Map();
   for (const asset of requiredAssets) {
@@ -163,7 +162,7 @@ async function verifySafariRuntime() {
     function openWhenRuntimeIsReady() {
       if (typeof globalThis.wasm_bindgen !== "function"
         || typeof globalThis.MobileViewer?.open !== "function"
-        || typeof globalThis.ReaderSession?.init !== "function") {
+        || typeof globalThis.ReaderSession?.create !== "function") {
         if (Date.now() >= dependencyDeadline) {
           done({ error: "generated runtime dependencies did not become ready", wasmBindgen: typeof globalThis.wasm_bindgen, mobileViewer: typeof globalThis.MobileViewer, readerSession: typeof globalThis.ReaderSession });
           return;
@@ -172,22 +171,14 @@ async function verifySafariRuntime() {
         return;
       }
       globalThis.MobileViewer.close();
-      const originalInit = globalThis.ReaderSession.init;
       const originalCreate = globalThis.ReaderSession.create;
-      let initCount = 0;
       let createCount = 0;
-      let initError;
+      let sessionHandle;
       const wasmResponses = [];
-      globalThis.ReaderSession.init = (...args) => {
-        initCount += 1;
-        return originalInit(...args).catch((error) => {
-          initError = String(error);
-          throw error;
-        });
-      };
       globalThis.ReaderSession.create = (...args) => {
         createCount += 1;
-        return originalCreate(...args);
+        sessionHandle = originalCreate(...args);
+        return sessionHandle;
       };
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (...args) => originalFetch(...args).then((response) => {
@@ -200,16 +191,14 @@ async function verifySafariRuntime() {
       function finishWhenRuntimeIsReady() {
       const host = document.getElementById("__reader-host");
       const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
-      const initialized = globalThis.ReaderSession.ready() === true;
+      const initialized = Boolean(sessionHandle?.state);
       const unitText = unit?.textContent?.trim() || "";
       const wasmReady = wasmResponses.some(({ status, contentType }) => status === 200 && contentType === "application/wasm");
-      if (initialized && initCount === 1 && createCount === 1 && wasmReady && unitText) {
+      if (initialized && createCount === 1 && wasmReady && unitText) {
         done({
           initialized,
-          initCount,
           createCount,
           wasmResponses,
-          initError,
           host: Boolean(host),
           unit: true,
           unitText,
@@ -220,10 +209,8 @@ async function verifySafariRuntime() {
         done({
           error: "ReaderSession and first reader unit did not become ready together",
           initialized,
-          initCount,
           createCount,
           wasmResponses,
-          initError,
           host: Boolean(host),
           unit: Boolean(unit),
           unitText,
@@ -232,13 +219,12 @@ async function verifySafariRuntime() {
       }
       setTimeout(finishWhenRuntimeIsReady, 16);
     }
-      globalThis.MobileViewer.open().then(finishWhenRuntimeIsReady).catch((error) => done({ error: String(error), initError }));
+      globalThis.MobileViewer.open().then(finishWhenRuntimeIsReady).catch((error) => done({ error: String(error) }));
     }
     openWhenRuntimeIsReady();
   `);
   assert.equal(result.error, undefined, JSON.stringify(result));
   assert.equal(result.initialized, true);
-  assert.equal(result.initCount, 1);
   assert.equal(result.createCount, 1);
   assert.deepEqual(result.wasmResponses, [{ status: 200, contentType: "application/wasm" }]);
   assert.equal(result.host, true);
@@ -253,18 +239,14 @@ async function verifyGeneratedRuntimeInWebKit() {
     await page.goto(freshPageUrl(), { waitUntil: "load" });
     const result = await page.evaluate(async () => {
       globalThis.MobileViewer.close();
-      const originalInit = globalThis.ReaderSession.init;
       const originalCreate = globalThis.ReaderSession.create;
-      let initCount = 0;
       let createCount = 0;
+      let sessionHandle;
       const wasmResponses = [];
-      globalThis.ReaderSession.init = (...args) => {
-        initCount += 1;
-        return originalInit(...args);
-      };
       globalThis.ReaderSession.create = (...args) => {
         createCount += 1;
-        return originalCreate(...args);
+        sessionHandle = originalCreate(...args);
+        return sessionHandle;
       };
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (...args) => originalFetch(...args).then((response) => {
@@ -279,10 +261,10 @@ async function verifyGeneratedRuntimeInWebKit() {
         const poll = () => {
           const host = document.getElementById("__reader-host");
           const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
-          const initialized = globalThis.ReaderSession.ready() === true;
+          const initialized = Boolean(sessionHandle?.state);
           const unitText = unit?.textContent?.trim() || "";
           const wasmReady = wasmResponses.some(({ status, contentType }) => status === 200 && contentType === "application/wasm");
-          if (initialized && initCount === 1 && createCount === 1 && wasmReady && unitText) {
+          if (initialized && createCount === 1 && wasmReady && unitText) {
             resolve();
             return;
           }
@@ -290,7 +272,6 @@ async function verifyGeneratedRuntimeInWebKit() {
             reject(new Error(JSON.stringify({
               error: "ReaderSession and first reader unit did not become ready together",
               initialized,
-              initCount,
               createCount,
               wasmResponses,
               host: Boolean(host),
@@ -305,8 +286,7 @@ async function verifyGeneratedRuntimeInWebKit() {
       });
       const host = document.getElementById("__reader-host");
       return {
-        initialized: globalThis.ReaderSession.ready(),
-        initCount,
+        initialized: Boolean(sessionHandle?.state),
         createCount,
         wasmResponses,
         host: Boolean(host),
@@ -315,7 +295,6 @@ async function verifyGeneratedRuntimeInWebKit() {
       };
     });
     assert.equal(result.initialized, true);
-    assert.equal(result.initCount, 1);
     assert.equal(result.createCount, 1);
     assert.deepEqual(result.wasmResponses, [{ status: 200, contentType: "application/wasm" }]);
     assert.equal(result.host, true);
@@ -361,7 +340,7 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
       bootstrapHost: true,
       entryStyle: { opacity: "0.82", transitionDuration: "0.16s, 0.16s", touchAction: "manipulation" },
     });
-    for (const asset of ["defuddle.js", "session-wasm-module.js", "session.js", "engine.js", "extractor.js", "icons.js", "viewer.js", "reader_session_bg.wasm"]) {
+    for (const asset of ["defuddle.js", "session-wasm-module.js", "runtime.js", "engine.js", "extractor.js", "viewer.js", "reader_session_bg.wasm"]) {
       assert.equal(assetRequests.get(asset) || 0, 0, `${asset} must not load before tap`);
     }
     await page.evaluate(() => window.dispatchEvent(new Event("scroll")));
@@ -374,19 +353,19 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
       while (performance.now() < deadline) {
         const host = document.getElementById("__reader-host");
         const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
-        if (globalThis.ReaderSession?.ready?.() === true && unit?.textContent?.trim()) {
+        if (typeof globalThis.ReaderSession?.create === "function" && unit?.textContent?.trim()) {
           return { unitText: unit.textContent.trim(), initialized: true };
         }
         await new Promise((resolve) => setTimeout(resolve, 16));
       }
       return {
-        initialized: globalThis.ReaderSession?.ready?.() === true,
+        initialized: typeof globalThis.ReaderSession?.create === "function",
         unitText: document.getElementById("__reader-host")?.shadowRoot?.querySelector('[data-reader-unit="true"]')?.textContent?.trim() || "",
       };
     });
     assert.equal(result.initialized, true);
     assert.notEqual(result.unitText, "");
-    for (const asset of ["defuddle.js", "session-wasm-module.js", "session.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]) {
+    for (const asset of ["defuddle.js", "session-wasm-module.js", "runtime.js", "engine.js", "extractor.js", "viewer.js"]) {
       assert.equal(assetRequests.get(asset), 1, `${asset} should load once`);
     }
   } finally {
@@ -413,7 +392,7 @@ async function verifyGeneratedLazyRuntimeSingleFlightInWebKit() {
       while (performance.now() < deadline) {
         const host = document.getElementById("__reader-host");
         const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
-        if (globalThis.ReaderSession?.ready?.() === true && unit?.textContent?.trim()) {
+        if (typeof globalThis.ReaderSession?.create === "function" && unit?.textContent?.trim()) {
           return {
             initialized: true,
             hostCount: document.querySelectorAll("#__reader-host").length,
@@ -423,7 +402,7 @@ async function verifyGeneratedLazyRuntimeSingleFlightInWebKit() {
         await new Promise((resolve) => setTimeout(resolve, 16));
       }
       return {
-        initialized: globalThis.ReaderSession?.ready?.() === true,
+        initialized: typeof globalThis.ReaderSession?.create === "function",
         hostCount: document.querySelectorAll("#__reader-host").length,
         unitText: "",
       };
@@ -431,7 +410,7 @@ async function verifyGeneratedLazyRuntimeSingleFlightInWebKit() {
     assert.equal(result.initialized, true, JSON.stringify(result));
     assert.equal(result.hostCount, 1);
     assert.notEqual(result.unitText, "");
-    for (const asset of ["defuddle.js", "session-wasm-module.js", "session.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]) {
+    for (const asset of ["defuddle.js", "session-wasm-module.js", "runtime.js", "engine.js", "extractor.js", "viewer.js"]) {
       assert.equal(assetRequests.get(asset), 1, `${asset} must be imported once for repeated taps`);
     }
   } finally {
@@ -542,13 +521,13 @@ async function verifyGeneratedLazyRuntimeRetryInWebKit() {
       while (performance.now() < deadline) {
         const host = document.getElementById("__reader-host");
         const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
-        if (globalThis.ReaderSession?.ready?.() === true && unit?.textContent?.trim()) {
+        if (typeof globalThis.ReaderSession?.create === "function" && unit?.textContent?.trim()) {
           return { initialized: true, unitText: unit.textContent.trim() };
         }
         await new Promise((resolve) => setTimeout(resolve, 16));
       }
       return {
-        initialized: globalThis.ReaderSession?.ready?.() === true,
+        initialized: typeof globalThis.ReaderSession?.create === "function",
         unitText: "",
         mobileViewer: typeof globalThis.MobileViewer,
         readerSession: typeof globalThis.ReaderSession,
@@ -557,10 +536,10 @@ async function verifyGeneratedLazyRuntimeRetryInWebKit() {
     });
     assert.equal(result.initialized, true, JSON.stringify({ ...result, requestedAssets: Object.fromEntries(requestedAssets), pageErrors }));
     assert.notEqual(result.unitText, "");
-    for (const asset of ["defuddle.js", "session-wasm-module.js", "session.js", "engine.js", "extractor.js"]) {
+    for (const asset of ["defuddle.js", "session-wasm-module.js", "runtime.js", "engine.js", "extractor.js"]) {
       assert.equal(requestedAssets.get(asset), 2, `${asset} should reload after the intermediate failure`);
     }
-    for (const asset of ["icons.js", "viewer.js"]) {
+    for (const asset of ["viewer.js"]) {
       assert.equal(requestedAssets.get(asset), 1, `${asset} should load once after retry`);
     }
   } finally {

@@ -4,9 +4,9 @@ import type { ReaderFigureView, ReaderViewHandlers } from "./types";
 
 export function Figure({ figureView, handlers, text }: { figureView: ReaderFigureView; handlers: ReaderViewHandlers; text: boolean }): ReactElement {
   const { figure, figureIndex, status, token } = figureView;
-  const kind = figure.kind || "image";
+  const kind = figure.kind;
   const [textAssetFailed, setTextAssetFailed] = useState(false);
-  useEffect(() => setTextAssetFailed(false), [figure.src]);
+  useEffect(() => setTextAssetFailed(false), [kind === "code" ? figure.code : figure.src]);
   const loading = status === "loading";
   const loadingVisible = figureView.loadingVisible === true;
   const failed = status === "failed" || (text && textAssetFailed);
@@ -69,11 +69,11 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
     >
       <img
         src={figure.src}
-        srcSet={figure.srcset}
-        sizes={figure.sizes}
+        srcSet={kind === "image" ? figure.srcset : undefined}
+        sizes={kind === "image" ? figure.sizes : undefined}
         alt={figure.alt || figure.caption || label}
-        width={figure.width}
-        height={figure.height}
+        width={kind === "image" ? figure.width : undefined}
+        height={kind === "image" ? figure.height : undefined}
         decoding="async"
         loading={text ? "lazy" : undefined}
         data-reader-source={text ? figure.src : undefined}

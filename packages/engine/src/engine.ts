@@ -1,3 +1,7 @@
+type EngineCodeRange = import("../../extractor/src/types").ReaderCodeRange;
+type EngineFigure = import("../../extractor/src/types").ReaderFigure;
+type EngineSectionTransition = import("../../extractor/src/types").ReaderSectionTransition;
+
 (function installEngine(root: typeof globalThis, factory: () => ReaderEngine) {
   const api = factory();
   if (typeof module !== "undefined" && module.exports) module.exports = api;
@@ -140,7 +144,7 @@
     return units.flatMap((unit) => unit.kind === "code" ? [{ ...unit }] : splitUnitAtGraphemeLimit(unit, locale, limit));
   }
 
-  function preserveInlineCode(units: ReaderUnit[], text: string, ranges: ReaderInlineCode[]): ReaderUnit[] {
+  function preserveCodeRanges(units: ReaderUnit[], text: string, ranges: EngineCodeRange[]): ReaderUnit[] {
     if (!Array.isArray(units) || !Array.isArray(ranges) || ranges.length === 0) return [...units];
     const safeRanges = ranges
       .filter((range) => Number.isInteger(range?.start) && Number.isInteger(range?.end) && range.start >= 0 && range.end > range.start && range.end <= text.length)
@@ -296,7 +300,7 @@
     });
   }
 
-  function buildReadingFlow(units: ReaderUnit[], figures: ReaderFigure[]): ReaderFlowItem[] {
+  function buildReadingFlow(units: ReaderUnit[], figures: EngineFigure[]): ReaderFlowItem[] {
     const items: Array<ReaderFlowItem & { order: number }> = [];
     for (const [unitIndex, unit] of (Array.isArray(units) ? units : []).entries()) {
       if (!unit) continue;
@@ -324,42 +328,6 @@
       .map(({ order: _order, ...item }) => item);
   }
 
-  function findFlowIndexForPosition(
-    flow: ReaderFlowItem[],
-    units: ReaderUnit[],
-    position: ReaderPosition,
-  ): number {
-    if (!Array.isArray(flow) || flow.length === 0) return -1;
-    if (position?.kind === "text") {
-      const unitIndex = findUnitIndex(units, position.sourceOffset);
-      const exact = flow.findIndex((item) => item.kind === "unit" && item.unitIndex === unitIndex);
-      return exact >= 0 ? exact : flow.findIndex((item) => item.kind === "unit");
-    }
-
-    if (position?.kind === "figure") {
-      const exactFigure = flow.findIndex((item) => (
-        item.kind === "figure" && item.figureIndex === position.figureIndex
-      ));
-      if (exactFigure >= 0) return exactFigure;
-
-      const sameOffset = flow.findIndex((item) => item.sourceOffset === position.sourceOffset);
-      if (sameOffset >= 0) return sameOffset;
-
-      const textItems = flow
-        .map((item, index) => ({ item, index }))
-        .filter(({ item }) => item.kind === "unit")
-        .sort((left, right) => (
-          Math.abs(left.item.sourceOffset - position.sourceOffset)
-          - Math.abs(right.item.sourceOffset - position.sourceOffset)
-          || left.item.sourceOffset - right.item.sourceOffset
-          || left.index - right.index
-        ));
-      return textItems[0]?.index ?? 0;
-    }
-
-    return 0;
-  }
-
   function positionForFlowItem(flowItem: ReaderFlowItem, units: ReaderUnit[]): ReaderPosition {
     if (flowItem.kind === "figure") {
       return {
@@ -374,27 +342,7 @@
     };
   }
 
-  function findSentenceStart(units: ReaderUnit[], currentUnitIndex: number): number {
-    if (!Array.isArray(units) || units.length === 0) return 0;
-    const safeIndex = Math.min(Math.max(Number.isInteger(currentUnitIndex) ? currentUnitIndex : 0, 0), units.length - 1);
-    const sentenceIndex = units[safeIndex]?.sentenceIndex;
-    if (sentenceIndex === undefined) return 0;
-    const sentenceStart = units.findIndex((unit) => unit.sentenceIndex === sentenceIndex);
-    return sentenceStart < 0 ? 0 : sentenceStart;
-  }
-
-  function findPreviousSentenceStart(units: ReaderUnit[], currentUnitIndex: number): number {
-    if (!Array.isArray(units) || units.length === 0) return 0;
-    const safeIndex = Math.min(Math.max(Number.isInteger(currentUnitIndex) ? currentUnitIndex : 0, 0), units.length - 1);
-    const currentUnit = units[safeIndex];
-    if (!currentUnit) return 0;
-    const currentSentenceIndex = currentUnit.sentenceIndex;
-    const targetSentenceIndex = Math.max(0, currentSentenceIndex - 1);
-    const targetIndex = units.findIndex((unit) => unit.sentenceIndex === targetSentenceIndex);
-    return targetIndex === -1 ? 0 : targetIndex;
-  }
-
-  function findActiveHeadingIndex(transitions: ReaderSectionTransition[], currentOffset: number, fallbackIndex = -1): number {
+  function findActiveHeadingIndex(transitions: EngineSectionTransition[], currentOffset: number, fallbackIndex = -1): number {
     let activeIndex = fallbackIndex;
     if (!Array.isArray(transitions)) return activeIndex;
     for (const transition of transitions) {
@@ -497,60 +445,19 @@
     return Math.max(1, Math.round(total / timing.speedMultiplier));
   }
 
-  function sourceOffsetAtViewportCenter(blocks: ReaderOffsetBlock[], viewportCenter: number): number {
-    if (!Array.isArray(blocks) || blocks.length === 0 || !Number.isFinite(viewportCenter)) return 0;
-    let closest = blocks[0];
-    if (!closest) return 0;
-    let closestDistance = Infinity;
-    for (const block of blocks) {
-      const top = Number(block.top);
-      const bottom = Number(block.bottom);
-      if (!Number.isFinite(top) || !Number.isFinite(bottom)) continue;
-      if (top <= viewportCenter && bottom >= viewportCenter) {
-        const ratio = bottom > top ? (viewportCenter - top) / (bottom - top) : 0;
-        return Math.round(block.start + (block.end - block.start) * ratio);
-      }
-      const distance = Math.min(Math.abs(viewportCenter - top), Math.abs(viewportCenter - bottom));
-      if (distance < closestDistance) {
-        closest = block;
-        closestDistance = distance;
-      }
-    }
-    return viewportCenter < Number(closest.top) ? closest.start : closest.end;
-  }
-
-  function findBlockIndexForOffset(blocks: ReaderOffsetBlock[], offset: number): number {
-    if (!Array.isArray(blocks) || blocks.length === 0) return -1;
-    const safeOffset = Number.isFinite(offset) ? Math.max(0, offset) : 0;
-    const containingIndex = blocks.findIndex((block) => block.start <= safeOffset && block.end >= safeOffset);
-    if (containingIndex >= 0) return containingIndex;
-    for (let index = blocks.length - 1; index >= 0; index -= 1) {
-      const block = blocks[index];
-      if (block && block.start <= safeOffset) return index;
-    }
-    return 0;
-  }
-
   return {
-    MAX_WORDS_PER_UNIT,
     MAX_GRAPHEMES_PER_UNIT,
     DEFAULT_TIMING_PROFILE,
     segmentText,
     splitSentenceSpans,
     splitLongUnits,
-    preserveInlineCode,
-    splitStructuralSpans,
+    preserveCodeRanges,
     buildReadingFlow,
-    findFlowIndexForPosition,
     positionForFlowItem,
-    findSentenceStart,
-    findPreviousSentenceStart,
     findActiveHeadingIndex,
     calculateReadingProgress,
     findUnitIndex,
     surroundingSentences,
     displayDuration,
-    sourceOffsetAtViewportCenter,
-    findBlockIndexForOffset,
   };
 });

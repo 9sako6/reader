@@ -202,18 +202,22 @@
       headingIndex: headingIndex + (includeTitle ? 1 : 0),
     }));
 
+    const blocks = extractBlocks(sourceDocument, contentRoot, text, leadingTrim, indexedSource);
+    const codeRanges = extractCodeRanges(sourceDocument, contentRoot, text, leadingTrim, indexedSource);
     return {
       text,
       readingContext: normalizeReadingContext({
         language: sourceDocument.documentElement?.lang || "",
         title: title || headingEntries[0]?.text || "",
-        blocks: extractBlocks(sourceDocument, contentRoot, text, leadingTrim, indexedSource),
+        blocks: blocks.map((block) => {
+          const ranges = codeRanges.filter((range) => range.start >= block.start && range.end <= block.end);
+          return ranges.length > 0 ? { ...block, codeRanges: ranges } : block;
+        }),
         headings,
         sectionOffsets,
         sectionTransitions,
         initialHeadingIndex: includeTitle ? 0 : -1,
         figures: extractFigures(sourceDocument, contentRoot, text, leadingTrim, indexedSource, mermaidSources),
-        inlineCodes: extractInlineCodes(sourceDocument, contentRoot, text, leadingTrim, indexedSource),
       }),
     };
   }
@@ -319,7 +323,6 @@
         ? value.initialHeadingIndex
         : -1,
       figures: Array.isArray(value?.figures) ? value.figures : [],
-      inlineCodes: Array.isArray(value?.inlineCodes) ? value.inlineCodes : [],
     };
   }
 
@@ -428,7 +431,7 @@
     indexedSource: IndexedSource,
   ): ReaderBlock[] {
     if (typeof contentRoot.querySelectorAll !== "function") return [];
-    const blockSelector = "h1, h2, h3, h4, h5, h6, p, blockquote, pre, li";
+    const blockSelector = "h1, h2, h3, h4, h5, h6, p, blockquote, li";
     return [...contentRoot.querySelectorAll(blockSelector)]
       .map((element) => {
         const parentBlock = element.parentElement?.closest?.(blockSelector);
@@ -441,7 +444,7 @@
         const tagName = String(element.tagName || "p").toLowerCase();
         return {
           text: blockRange.value,
-          kind: /^h[1-6]$/u.test(tagName) ? "heading" : tagName === "blockquote" ? "quote" : tagName === "pre" ? "preformatted" : "paragraph",
+          kind: /^h[1-6]$/u.test(tagName) ? "heading" : tagName === "blockquote" ? "quote" : "paragraph",
           level: /^h[1-6]$/u.test(tagName) ? Number(tagName.slice(1)) : null,
           start: blockRange.start,
           end: blockRange.end,
@@ -473,6 +476,7 @@
         ? toTextOffset(indexedRange.contentEnd, leadingTrim, text.length)
         : fallbackFigureEnd(sourceDocument, contentRoot, container, figureOffset, text.length, leadingTrim, caption);
       const figure: ReaderFigure = {
+        kind: "image",
         src,
         alt: (image.getAttribute?.("alt") || "").trim(),
         caption,
@@ -503,16 +507,24 @@
       const languageMatch = className.match(/(?:lang(?:uage)?-)([\w+-]+)/iu);
       const language = languageMatch?.[1] || "";
       const mermaid = /(?:^|\s)mermaid(?:\s|$)/iu.test(className) || language.toLowerCase() === "mermaid" || MERMAID_START.test(code);
-      figures.push({
-        kind: mermaid ? "mermaid" : "code",
-        src: "",
-        alt: mermaid ? "Mermaid図" : "コードブロック",
-        caption: "",
-        code,
-        language: mermaid ? "mermaid" : language,
-        sourceOffset: blockRange.start,
-        sourceEnd: blockRange.end,
-      });
+      figures.push(mermaid
+        ? {
+          kind: "mermaid",
+          alt: "Mermaid図",
+          caption: "",
+          code,
+          sourceOffset: blockRange.start,
+          sourceEnd: blockRange.end,
+        }
+        : {
+          kind: "code",
+          alt: "コードブロック",
+          caption: "",
+          code,
+          language,
+          sourceOffset: blockRange.start,
+          sourceEnd: blockRange.end,
+        });
     }
     for (const svg of contentRoot.querySelectorAll("svg[aria-roledescription]")) {
       if (String(svg.tagName || "").toUpperCase() !== "SVG") continue;
@@ -530,11 +542,10 @@
       const serialized = typeof svg.outerHTML === "string" ? svg.outerHTML.trim() : "";
       figures.push({
         kind: "mermaid",
-        src: serialized ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}` : "",
+        src: serialized ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}` : undefined,
         alt: String(svg.getAttribute?.("aria-label") || "Mermaid図").trim() || "Mermaid図",
         caption: "",
         code: source,
-        language: "mermaid",
         sourceOffset,
         sourceEnd,
       });
@@ -592,17 +603,16 @@
     return sources;
   }
 
-  function extractInlineCodes(
+  function extractCodeRanges(
     sourceDocument: Document,
     contentRoot: DocumentFragment | HTMLElement,
     text: string,
     leadingTrim: number,
     indexedSource: IndexedSource,
-  ): ReaderInlineCode[] {
+  ): ReaderCodeRange[] {
     if (typeof contentRoot.querySelectorAll !== "function") return [];
     return [...contentRoot.querySelectorAll("code")]
-      .filter((element) => String(element.tagName || "").toUpperCase() === "CODE")
-      .filter((element) => !element.closest?.("pre"))
+      .filter((element) => String(element.tagName || "").toUpperCase() === "CODE" && !element.closest?.("pre"))
       .map((element) => {
         const indexedRange = indexedSource.ranges.get(element);
         const range = indexedRange
@@ -610,7 +620,7 @@
           : fallbackNodeRange(sourceDocument, contentRoot, element, text, leadingTrim, indexedSource);
         return range.value ? { text: range.value, start: range.start, end: range.end } : null;
       })
-      .filter((range): range is ReaderInlineCode => range !== null);
+      .filter((range): range is ReaderCodeRange => range !== null);
   }
 
   function optionalAttribute(element: Element, name: string): string | undefined {

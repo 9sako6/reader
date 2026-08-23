@@ -20,30 +20,28 @@ const baselineCommit = process.env.READER_PERFORMANCE_BASE_COMMIT || null;
 const candidateCommit = process.env.READER_PERFORMANCE_CANDIDATE_COMMIT || null;
 const generatedPath = "/apps/ios/ReaderExtension/Resources/generated";
 const baselineGeneratedRoot = baselineRoot ? resolve(baselineRoot, "apps/ios/ReaderExtension/Resources/generated") : null;
-const runtimeScripts = (root) => ["session-wasm-module.js", "session.js", "defuddle.js", "engine.js", "extractor.js", "icons.js", "viewer.js"]
+const runtimeScripts = (root) => ["session-wasm-module.js", "runtime.js", "defuddle.js", "engine.js", "extractor.js", "viewer.js"]
   .map((name) => resolve(root, name));
 const scripts = runtimeScripts(generatedRoot);
 const baselineScripts = baselineGeneratedRoot ? runtimeScripts(baselineGeneratedRoot) : null;
 const bundleAssets = {
   chrome: [
-    "apps/chrome/dist/session.js",
+    "apps/chrome/dist/runtime.js",
     "apps/chrome/dist/session-wasm.js",
     "apps/chrome/dist/reader_session_bg.wasm",
     "apps/chrome/dist/vendor/defuddle/defuddle.js",
     "apps/chrome/dist/engine.js",
     "apps/chrome/dist/extractor.js",
-    "apps/chrome/dist/icons.js",
     "apps/chrome/dist/viewer.js",
   ],
   safari: [
     "apps/ios/ReaderExtension/Resources/generated/bootstrap.js",
     "apps/ios/ReaderExtension/Resources/generated/session-wasm-module.js",
-    "apps/ios/ReaderExtension/Resources/generated/session.js",
+    "apps/ios/ReaderExtension/Resources/generated/runtime.js",
     "apps/ios/ReaderExtension/Resources/generated/reader_session_bg.wasm",
     "apps/ios/ReaderExtension/Resources/generated/defuddle.js",
     "apps/ios/ReaderExtension/Resources/generated/engine.js",
     "apps/ios/ReaderExtension/Resources/generated/extractor.js",
-    "apps/ios/ReaderExtension/Resources/generated/icons.js",
     "apps/ios/ReaderExtension/Resources/generated/viewer.js",
   ],
 };

@@ -180,7 +180,6 @@ test("fromText produces the same Content contract as page extraction", () => {
       sectionTransitions: [],
       initialHeadingIndex: -1,
       figures: [],
-      inlineCodes: [],
     },
   });
 });
@@ -212,7 +211,7 @@ test("extractPage keeps inline code atomic and promotes code and Mermaid blocks 
 
   const result = extractPage(document, Defuddle);
 
-  assert.deepEqual(result.readingContext.inlineCodes, [{
+  assert.deepEqual(result.readingContext.blocks[0].codeRanges, [{
     text: "client.readFully()",
     start: 5,
     end: 23,
@@ -220,7 +219,7 @@ test("extractPage keeps inline code atomic and promotes code and Mermaid blocks 
   assert.deepEqual(result.readingContext.figures.map((figure) => ({
     kind: figure.kind,
     code: figure.code,
-    language: figure.language,
+    language: figure.kind === "code" ? figure.language : undefined,
     source: result.text.slice(figure.sourceOffset, figure.sourceEnd),
   })), [
     {
@@ -232,7 +231,7 @@ test("extractPage keeps inline code atomic and promotes code and Mermaid blocks 
     {
       kind: "mermaid",
       code: "flowchart LR\n  A --> B",
-      language: "mermaid",
+      language: undefined,
       source: "flowchart LR\n  A --> B",
     },
   ]);
@@ -366,12 +365,10 @@ test("extractPage shares canonical ranges across nested blocks and figures", () 
     { text: "前強調後", kind: "paragraph", level: null, start: 16, end: 20 },
     { text: "引用\n続き", kind: "quote", level: null, start: 21, end: 26 },
     { text: "項目", kind: "paragraph", level: null, start: 27, end: 29 },
-    { text: "line 1\n  line 2", kind: "preformatted", level: null, start: 30, end: 45 },
   ]);
   assert.deepEqual(result.readingContext.figures, [
     {
       kind: "code",
-      src: "",
       alt: "コードブロック",
       caption: "",
       code: "line 1\n  line 2",
@@ -380,6 +377,7 @@ test("extractPage shares canonical ranges across nested blocks and figures", () 
       sourceEnd: 45,
     },
     {
+      kind: "image",
       src: "https://example.com/caption.png",
       srcset: "https://example.com/caption-2x.png 2x",
       sizes: "(max-width: 600px) 100vw, 600px",
@@ -391,6 +389,7 @@ test("extractPage shares canonical ranges across nested blocks and figures", () 
       sourceEnd: 58,
     },
     {
+      kind: "image",
       src: "https://example.com/only.png",
       alt: "本文画像",
       caption: "",
@@ -514,7 +513,6 @@ test("extractPage returns article text and heading offsets", () => {
       ],
       initialHeadingIndex: -1,
       figures: [],
-      inlineCodes: [],
     },
   });
   assert.equal(defuddleDocument, document);
@@ -806,6 +804,7 @@ test("extractPage keeps every article image at its source offset", () => {
 
   assert.deepEqual(result.readingContext.figures, [
     {
+      kind: "image",
       src: "https://example.com/hero.png",
       alt: "装飾画像",
       caption: "",
@@ -813,6 +812,7 @@ test("extractPage keeps every article image at its source offset", () => {
       sourceEnd: 0,
     },
     {
+      kind: "image",
       src: "https://example.com/chart.png",
       alt: "処理時間の比較グラフ",
       caption: "図1 処理時間",

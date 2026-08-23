@@ -8,6 +8,11 @@ const workflowPath = path.resolve(__dirname, "../../.github/workflows/ci.yml");
 const workflow = fs.readFileSync(workflowPath, "utf8");
 const fullWorkflowPath = path.resolve(__dirname, "../../.github/workflows/full-ci.yml");
 const fullWorkflow = fs.readFileSync(fullWorkflowPath, "utf8");
+const workflowsPath = path.resolve(__dirname, "../../.github/workflows");
+const workflows = fs.readdirSync(workflowsPath)
+  .filter((fileName) => fileName.endsWith(".yml"))
+  .map((fileName) => fs.readFileSync(path.join(workflowsPath, fileName), "utf8"))
+  .join("\n");
 const misePath = path.resolve(__dirname, "../../mise.toml");
 const mise = fs.readFileSync(misePath, "utf8");
 
@@ -72,10 +77,10 @@ test("Node test task explicitly excludes only generated-artifact Vitest files", 
   const artifactTests = [
     "apps/chrome/tests/build.test.ts",
     "apps/ios/tests/extension.test.ts",
-    "packages/session-ts/tests/session.real.test.ts",
+    "packages/session/browser/tests/session.real.test.ts",
   ];
 
-  assert.match(nodeTask, /depends = \["compile", "build:reader-view"\]/u);
+  assert.match(nodeTask, /depends = \["compile", "build:view"\]/u);
   assert.match(nodeTask, /pnpm exec vitest run/u);
   const excludes = [...nodeTask.matchAll(/--exclude\s+([^\s"]+)/gu)].map((match) => match[1]);
   assert.deepEqual(excludes, artifactTests);
@@ -83,7 +88,7 @@ test("Node test task explicitly excludes only generated-artifact Vitest files", 
     const escapedPath = testPath.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
     assert.match(nodeTask, new RegExp(`--exclude ${escapedPath}`, "u"));
   }
-  assert.match(nodeTask, /--exclude apps\/chrome\/tests\/build\.test\.ts[\s\S]*--exclude apps\/ios\/tests\/extension\.test\.ts[\s\S]*--exclude packages\/session-ts\/tests\/session\.real\.test\.ts/u);
+  assert.match(nodeTask, /--exclude apps\/chrome\/tests\/build\.test\.ts[\s\S]*--exclude apps\/ios\/tests\/extension\.test\.ts[\s\S]*--exclude packages\/session\/browser\/tests\/session\.real\.test\.ts/u);
 });
 
 test("scheduled full CI is main-only and retains the complete session, artifact, and Vitest suite", () => {
@@ -95,9 +100,11 @@ test("scheduled full CI is main-only and retains the complete session, artifact,
   assert.deepEqual(eventKeys, ["schedule", "workflow_dispatch"]);
   assert.match(fullWorkflow, /ref: main/u);
   assert.match(fullWorkflow, /timeout-minutes: 10/u);
-  assert.match(fullWorkflow, /rustup toolchain install 1\.97\.1[\s\S]*wasm32-unknown-unknown/u);
-  assert.match(fullWorkflow, /cargo install wasm-bindgen-cli --version 0\.2\.127 --locked/u);
-  assert.match(fullWorkflow, /openjdk-21-jre-headless/u);
+  assert.match(fullWorkflow, /install_args: node pnpm rust java cargo:wasm-bindgen-cli/u);
+  assert.doesNotMatch(workflows, /rustup toolchain|rustup override|cargo install wasm-bindgen|apt-get[\s\S]*openjdk/u);
+  assert.match(mise, /^java = "temurin-21\.0\.12\+101\.0\.LTS"$/mu);
+  assert.match(mise, /^rust = "1\.97\.1"$/mu);
+  assert.match(mise, /^"cargo:wasm-bindgen-cli" = "0\.2\.127"$/mu);
   assert.match(fullWorkflow, /run: mise run check/u);
   assert.match(fullWorkflow, /run: mise run test\n/u);
   assert.match(fullWorkflow, /cargo clippy --locked --all-targets --all-features -- -D warnings/u);

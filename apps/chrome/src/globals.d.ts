@@ -1,16 +1,19 @@
-export {};
+import type {
+  ReaderViewHandlers as ReaderViewHandlersContract,
+  ReaderViewModel as ReaderViewModelContract,
+  ReaderViewMount as ReaderViewMountContract,
+} from "../../../packages/view/src/types";
 
 declare global {
   var __rsvpReaderInstalled: boolean;
 
-  interface ReaderReactViewerMount {
-    render(model: unknown, handlers: unknown): void;
-    unmount(): void;
+  type ReaderViewModel = ReaderViewModelContract;
+  type ReaderViewHandlers = ReaderViewHandlersContract;
+  type ReaderViewMount = ReaderViewMountContract;
+
+  interface ReaderViewApi {
+    mount(host: Element): ReaderViewMount;
   }
 
-  interface ReaderReactViewerApi {
-    mount(host: Element): ReaderReactViewerMount;
-  }
-
-  var ReaderReactViewer: ReaderReactViewerApi | undefined;
+  var ReaderView: ReaderViewApi | undefined;
 }

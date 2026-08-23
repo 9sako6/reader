@@ -6,10 +6,10 @@ import type { ReaderViewHandlers, ReaderViewModel } from "./types";
 export function orderedTextChildren(model: Extract<ReaderViewModel, { kind: "text" }>, handlers: ReaderViewHandlers): ReactNode[] {
   const blocks = model.blocks
     .filter((block) => !model.figures.some((figure) => (
-      (figure.kind === "code" || figure.kind === "mermaid")
+      figure.kind !== "image"
       && (
         (block.kind === "preformatted" && block.start === figure.sourceOffset && block.end === figure.sourceEnd)
-        || (figure.kind === "mermaid" && block.start >= figure.sourceOffset && block.end <= figure.sourceEnd)
+        || (block.start >= figure.sourceOffset && block.end <= figure.sourceEnd)
       )
     )))
     .map((block, index) => ({ kind: "block" as const, offset: block.start, order: index, value: <BlockView key={`block-${block.start}-${index}`} block={block} index={index} /> }));

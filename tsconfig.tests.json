@@ -8,7 +8,7 @@
   },
   "include": [
     "apps/*/tests/**/*.test.ts",
-    "packages/*/tests/**/*.test.ts",
+    "packages/**/tests/**/*.test.ts",
     "benchmark/**/*.test.ts",
     "tests/ci/**/*.test.ts",
     "tests/e2e/**/*.ts",

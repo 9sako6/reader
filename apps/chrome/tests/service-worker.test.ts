@@ -136,10 +136,9 @@ test("toolbar action loads the reader and starts extracted page content", async 
   await harness.extractionStarted;
   assert.deepEqual(Array.from(harness.scriptCalls[0].files), [
     "session-wasm.js",
-    "session.js",
+    "runtime.js",
     "engine.js",
     "extractor.js",
-    "icons.js",
     "viewer.js",
   ]);
   assert.equal(harness.messages[0].tabId, 7);
@@ -179,10 +178,9 @@ test("selection action starts the selected text without page extraction", async 
   assert.equal(harness.scriptCalls.length, 1);
   assert.deepEqual(Array.from(harness.scriptCalls[0].files), [
     "session-wasm.js",
-    "session.js",
+    "runtime.js",
     "engine.js",
     "extractor.js",
-    "icons.js",
     "viewer.js",
   ]);
 });

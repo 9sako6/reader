@@ -17,7 +17,7 @@ function mount(host: Element): ReaderViewMount {
 }
 
 const scope = globalThis as typeof globalThis & {
-  ReaderReactViewer?: { mount(host: Element): ReaderViewMount };
+  ReaderView?: { mount(host: Element): ReaderViewMount };
 };
 
-scope.ReaderReactViewer = { mount };
+scope.ReaderView = { mount };

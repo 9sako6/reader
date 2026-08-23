@@ -1,3 +1,6 @@
+import type { ReaderPosition, ReaderUnit, SentenceSpan } from "../../engine/src/types";
+import type { ReaderBlock, ReaderFigure, ReaderHeading } from "../../extractor/src/types";
+
 export type ReaderViewModel =
   | { kind: "closed" }
   | { kind: "loading"; slow: boolean; reducedMotion: boolean; revealed?: boolean; mobile?: boolean }
@@ -29,7 +32,7 @@ export type ReaderViewModel =
     mobile?: boolean;
   };
 
-export type ReaderViewBlock = ReaderBlock & { sentenceSpans: SentenceSpan[]; inlineCodes?: ReaderInlineCode[] };
+export type ReaderViewBlock = ReaderBlock & { sentenceSpans: SentenceSpan[] };
 
 export type ReaderFigureView = {
   figure: ReaderFigure;

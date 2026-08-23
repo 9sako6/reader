@@ -67,15 +67,15 @@ type ChromeOpenOptions = {
       level: number | null;
       start: number;
       end: number;
+      codeRanges?: Array<{ text: string; start: number; end: number }>;
     }>;
     headings?: Array<{ text: string; level: number }>;
     sectionOffsets?: number[];
     sectionTransitions?: Array<{ offset: number; headingIndex: number }>;
     initialHeadingIndex?: number;
-    inlineCodes?: Array<{ text: string; start: number; end: number }>;
     figures?: Array<{
-      kind?: "image" | "code" | "mermaid";
-      src: string;
+      kind: "image" | "code" | "mermaid";
+      src?: string;
       alt: string;
       caption: string;
       code?: string;
@@ -530,7 +530,6 @@ test("mobile viewer keeps ordinary English words intact at phone width", async (
       sectionOffsets: [],
       sectionTransitions: [],
       initialHeadingIndex: -1,
-      inlineCodes: [],
       figures: [],
     },
   });
@@ -2059,10 +2058,8 @@ test("mobile RSVP gives a code block nearly the full phone width", async ({ page
       sectionOffsets: [],
       sectionTransitions: [],
       initialHeadingIndex: -1,
-      inlineCodes: [],
       figures: [{
         kind: "code",
-        src: "",
         alt: "コードブロック",
         caption: "",
         code,
@@ -2524,44 +2521,46 @@ test("generated assets extract the real fixture article", async ({ page }) => {
   expect(extraction.figureAlts).toContain("本文の読書フロー図");
 });
 
-test("real WASM session keeps close, stale preparation, and stale tick inert", async ({ page }) => {
+test("real WASM session keeps close, stale preparation, and scheduled ticks inert", async ({ page }) => {
   await loadViewer(page, "chrome");
-  const trace = await page.evaluate(() => {
+  const trace = await page.evaluate(async () => {
     const api = (globalThis as typeof globalThis & {
       ReaderSession: {
-        init(): Promise<void>;
-        create(): { id: number; state: unknown; destroyed: boolean };
-        dispatch(
-          handle: { id: number; state: unknown; destroyed: boolean },
-          command: Record<string, unknown> & { type: string },
-        ): { state: { phase: string; generation: number }; effects: unknown[] };
-        destroy(handle: { id: number; state: unknown; destroyed: boolean }): void;
+        create(): {
+          ready: Promise<void>;
+          state: { phase: string; generation: number } | null;
+          dispatch(command: Record<string, unknown> & { type: string }): void;
+          destroy(): void;
+        };
       };
     }).ReaderSession;
-    return api.init().then(() => {
-      const handle = api.create();
-      const prep = {
-        textLength: 4,
-        units: [{ sentenceIndex: 0, kind: "body" as const, start: 0, end: 4, durationMs: 1 }],
-        figures: [],
-        flow: [{ kind: "unit" as const, sourceOffset: 0, unitIndex: 0 }],
-      };
-      api.dispatch(handle, { type: "open", requestId: "A" });
-      api.dispatch(handle, { type: "open", requestId: "B" });
-      const stalePreparation = api.dispatch(handle, { type: "prepareSucceeded", requestId: "A", flow: prep });
-      const reading = api.dispatch(handle, { type: "prepareSucceeded", requestId: "B", flow: prep });
-      const closed = api.dispatch(handle, { type: "close" });
-      const lateTick = api.dispatch(handle, { type: "tick", generation: reading.state.generation });
-      api.destroy(handle);
-      return {
-        stalePhase: stalePreparation.state.phase,
-        readingPhase: reading.state.phase,
-        closedPhase: closed.state.phase,
-        closedGeneration: closed.state.generation,
-        latePhase: lateTick.state.phase,
-        lateGeneration: lateTick.state.generation,
-      };
-    });
+    const handle = api.create();
+    await handle.ready;
+    const prep = {
+      textLength: 4,
+      units: [{ sentenceIndex: 0, kind: "body" as const, start: 0, end: 4, durationMs: 1 }],
+      figures: [],
+      flow: [{ kind: "unit" as const, sourceOffset: 0, unitIndex: 0 }],
+    };
+    handle.dispatch({ type: "open", requestId: "A" });
+    handle.dispatch({ type: "open", requestId: "B" });
+    handle.dispatch({ type: "prepareSucceeded", requestId: "A", flow: prep });
+    const stalePreparation = handle.state;
+    handle.dispatch({ type: "prepareSucceeded", requestId: "B", flow: prep });
+    const reading = handle.state;
+    handle.dispatch({ type: "close" });
+    const closed = handle.state;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const afterScheduledTick = handle.state;
+    handle.destroy();
+    return {
+      stalePhase: stalePreparation?.phase,
+      readingPhase: reading?.phase,
+      closedPhase: closed?.phase,
+      closedGeneration: closed?.generation,
+      latePhase: afterScheduledTick?.phase,
+      lateGeneration: afterScheduledTick?.generation,
+    };
   });
   expect(trace).toEqual({
     stalePhase: "preparing",

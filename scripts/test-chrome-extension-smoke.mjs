@@ -96,7 +96,7 @@ try {
       target: { tabId: activeTabId },
       world: "ISOLATED",
       func: () => ({
-        initialized: typeof globalThis.ReaderSession?.ready === "function" && globalThis.ReaderSession.ready(),
+        initialized: typeof globalThis.ReaderSession?.create === "function",
         initializedMark: globalThis.performance.getEntriesByName("reader:session-init-end", "mark").length,
         firstUnitMark: globalThis.performance.getEntriesByName("reader:first-unit", "mark").length,
       }),

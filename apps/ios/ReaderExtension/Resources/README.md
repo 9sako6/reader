@@ -7,7 +7,6 @@ WASM本体の`reader_session_bg.wasm`を含むruntime生成物は、外部配信
 `viewer/`にTypeScriptのソース、`generated/`に`mise run build:ios`またはXcodeの事前ビルド処理による生成物が入ります。
 
 - `manifest.json`: Safari Web Extensionの権限、常時注入するbootstrap、runtimeから読み込めるリソース
-- `packages/icons`: Chromeと共有する操作アイコン
 - `viewer/viewer.ts`: Mobile Viewerの表示と操作
 - `viewer/bootstrap.ts`: handleを生成し、tap直後はhandleのloading stateを示し、遅延load中は段階的なfeedbackへ切り替え、runtimeを起動してMobile Viewerへ引き渡すentry point
 - `viewer/lazy-runtime.ts`: runtimeの順次dynamic import、同時openの単一promise化、失敗時のretry、close/navigation後のlate completion無効化

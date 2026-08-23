@@ -3,15 +3,11 @@ export {};
 const assert = require("node:assert/strict");
 
 const {
-  MAX_WORDS_PER_UNIT,
   MAX_GRAPHEMES_PER_UNIT,
   segmentText,
   splitLongUnits,
-  preserveInlineCode,
+  preserveCodeRanges,
   splitSentenceSpans,
-  splitStructuralSpans,
-  findSentenceStart,
-  findPreviousSentenceStart,
   findActiveHeadingIndex,
   calculateReadingProgress,
 } = require("../../../.build/packages/engine/src/engine.js");
@@ -23,7 +19,7 @@ test("a long inline code expression remains one scrollable RSVP unit", () => {
   const segmented = segmentText(source, "en", [start, start + code.length]);
 
   const units = splitLongUnits(
-    preserveInlineCode(segmented, source, [{ text: code, start, end: start + code.length }]),
+    preserveCodeRanges(segmented, source, [{ text: code, start, end: start + code.length }]),
     "en",
     6,
   );
@@ -48,7 +44,6 @@ test("segmentText preserves the selected source text and offsets", () => {
 });
 
 test("fallback segmentation keeps existing Japanese phrase behavior", () => {
-  assert.equal(MAX_WORDS_PER_UNIT, 7);
   assert.deepEqual(
     segmentText("Redisを利用して排他制御を実現する場合").map((unit) => unit.text),
     ["Redisを利用して", "排他制御を", "実現する場合"],
@@ -203,15 +198,6 @@ test("parenthetical text is marked as aside", () => {
   assert.deepEqual(units.map((unit) => unit.text), ["本文です", "（ただし、", "一部は例外です）。"]);
 });
 
-test("splitStructuralSpans identifies body, quote, and aside", () => {
-  assert.deepEqual(splitStructuralSpans("前「引用」後（補足）"), [
-    { text: "前", kind: "body", start: 0, end: 1 },
-    { text: "「引用」", kind: "quote", start: 1, end: 5 },
-    { text: "後", kind: "body", start: 5, end: 6 },
-    { text: "（補足）", kind: "aside", start: 6, end: 10 },
-  ]);
-});
-
 test("segmentText assigns sentence indices in order", () => {
   const units = segmentText("一文目です。二文目です。三文目です。");
   assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1, 2]);
@@ -306,14 +292,12 @@ test("English sentence spans retain Intl.Segmenter boundaries for decimals and U
 test("segmentText treats English periods as sentence boundaries", () => {
   const units = segmentText("First sentence. Second sentence. Third sentence.", "en");
   assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 0, 1, 1, 2, 2]);
-  assert.equal(findSentenceStart(units, 3), 2);
   assert.equal(units[2].text, " Second ");
 });
 
 test("segmentText starts a new sentence after a block boundary", () => {
   const units = segmentText("Transcript\nFirst, a quick intro.", "en");
   assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1, 1]);
-  assert.equal(findSentenceStart(units, 2), 1);
   assert.equal(units[1].text, "First, a ");
 });
 
@@ -324,18 +308,6 @@ test("segmentText never crosses a supplied content boundary", () => {
 
   assert.equal(units.map((unit) => unit.text).join(""), source);
   assert.ok(units.every((unit) => unit.end <= boundary || unit.start >= boundary));
-});
-
-test("findSentenceStart keeps the sentence immediately before an image", () => {
-  const units = segmentText(
-    "最初の文です。画像直前にある非常に長い文で複数の表示単位に分かれます。画像後です。",
-  );
-  assert.equal(findSentenceStart(units, 5), 1);
-});
-
-test("findPreviousSentenceStart moves to previous sentence", () => {
-  const units = segmentText("最初の文です。次の文です。最後の文です。");
-  assert.equal(findPreviousSentenceStart(units, 2), 1);
 });
 
 test("findActiveHeadingIndex follows section transitions", () => {
@@ -358,8 +330,4 @@ test("calculateReadingProgress clamps selection offsets to a percentage", () => 
 
 test("empty text produces no units", () => {
   assert.deepEqual(segmentText(""), []);
-});
-
-test("previous sentence lookup returns the first position for no units", () => {
-  assert.equal(findPreviousSentenceStart([], 0), 0);
 });

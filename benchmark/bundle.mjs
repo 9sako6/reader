@@ -4,9 +4,9 @@ import { resolve } from "node:path";
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const outputPath = resolve(repositoryRoot, "test-results/performance/bundle.json");
 const assets = {
-  "session.js": {
-    chrome: "apps/chrome/dist/session.js",
-    safari: "apps/ios/ReaderExtension/Resources/generated/session.js",
+  "runtime.js": {
+    chrome: "apps/chrome/dist/runtime.js",
+    safari: "apps/ios/ReaderExtension/Resources/generated/runtime.js",
   },
   "session-wasm.js": {
     chrome: "apps/chrome/dist/session-wasm.js",
@@ -35,10 +35,6 @@ const assets = {
   "viewer.js": {
     chrome: "apps/chrome/dist/viewer.js",
     safari: "apps/ios/ReaderExtension/Resources/generated/viewer.js",
-  },
-  "icons.js": {
-    chrome: "apps/chrome/dist/icons.js",
-    safari: "apps/ios/ReaderExtension/Resources/generated/icons.js",
   },
   "bootstrap.js": {
     chrome: null,
