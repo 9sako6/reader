@@ -37,5 +37,6 @@ Playwright WebKitではSafari Web Extensionの権限、実機のsafe area、Voic
 
 ## 記録
 
+- TestFlightで確認したVersion、Build、対応するGitコミットを記録する
 - 確認したiOS、端末、向き、SafariのバージョンをリリースIssueへ記録する
 - 不具合があれば対象記事の公開URL、再現操作、画面収録またはscreenshotをリリースIssueへ添付する

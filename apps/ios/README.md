@@ -6,10 +6,22 @@
 
 ```sh
 mise run build:ios
-mise exec -- xcodegen generate --spec apps/ios/project.yml
+mise run generate:ios-project
 ```
 
-`reader.xcodeproj`は生成済みです。Xcodeでビルドすると、Safari拡張のTypeScriptリソースも更新されます。
+`project.yml`を共有するXcodeプロジェクト設定の管理元とし、`reader.xcodeproj`をそこから生成します。生成済みプロジェクトのVersionやBuildを直接変更せず、共有設定の変更後は生成タスクを実行します。Xcodeでビルドすると、Safari拡張のTypeScriptリソースも更新されます。
+
+## 個人用TestFlightビルド
+
+自分の端末だけで使う間は、現在のVersionを区切りが必要になるまで固定し、TestFlightへアップロードするたびにBuildを増やします。シミュレータや一時的な実機ビルドでは増やしません。
+
+```sh
+mise run bump:ios-build
+```
+
+このタスクは`project.yml`のBuildを増やし、`reader.xcodeproj`を再生成します。コード変更とBuild更新を同じコミットに含め、そのコミットからArchiveします。利用者固有の署名設定はコミットに含めません。これにより、TestFlightのBuild番号から対応するコードをGit履歴で特定できます。
+
+動作確認できたBuildを長期的な基準にする場合は、そのコミットへ`ios-testflight-v<Version>-build.<Build>`形式の付け替えない注釈付きタグを付けます。過去のコードへ戻して再アップロードするときも、TestFlightで使用済みのBuild番号は再利用せず、新しい番号を割り当てます。
 
 ## iPhoneで試す
 
@@ -28,5 +40,5 @@ mise exec -- xcodegen generate --spec apps/ios/project.yml
 
 - [iOSホストアプリ](ReaderApp/README.md)
 - [Safari Web Extension](ReaderExtension/README.md)
-- `project.yml`: ターゲット、署名設定、リソース生成処理
-- `reader.xcodeproj`: `project.yml`から生成して共有するXcodeプロジェクト
+- `project.yml`: バージョン、Build、ターゲット、署名設定、リソース生成処理の管理元
+- `reader.xcodeproj`: `project.yml`から生成する共有Xcodeプロジェクト

@@ -60,6 +60,7 @@ test("platform workflow preserves WebKit E2E, iOS build, Safari smoke, artifacts
   assert.match(ios, /name: iOS build and WebKit viewer E2E/);
   assert.match(ios, /runs-on: macos-15/);
   assert.match(ios, /timeout-minutes: 20/);
+  assert.match(ios, /mise run verify:ios-project/);
   assert.match(ios, /pnpm exec playwright install webkit/);
   assert.match(ios, /mise run test:e2e -- --project=webkit/);
   assert.match(ios, /name: Upload WebKit reader timing reports/);
@@ -69,10 +70,11 @@ test("platform workflow preserves WebKit E2E, iOS build, Safari smoke, artifacts
   assert.match(ios, /run: READER_REQUIRE_IOS_EXTENSION_BUNDLE=1 mise run test:safari-package-runtime/);
   assert.match(ios, /name: Upload browser diagnostics/);
 
+  const projectVerification = ios.indexOf("run: mise run verify:ios-project");
   const webkitE2e = ios.indexOf("run: mise run test:e2e -- --project=webkit");
   const timingUpload = ios.indexOf("name: Upload WebKit reader timing reports");
   const build = ios.indexOf("name: Build for iOS Simulator");
   const safariSmoke = ios.indexOf("name: Verify generated Safari package runtime");
   const diagnostics = ios.indexOf("name: Upload browser diagnostics");
-  assert.ok(webkitE2e >= 0 && webkitE2e < timingUpload && timingUpload < build && build < safariSmoke && safariSmoke < diagnostics);
+  assert.ok(projectVerification >= 0 && projectVerification < webkitE2e && webkitE2e < timingUpload && timingUpload < build && build < safariSmoke && safariSmoke < diagnostics);
 });

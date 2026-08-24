@@ -74,6 +74,8 @@ jobs:
           cache: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify generated Xcode project
+        run: mise run verify:ios-project
       - name: Install WebKit
         run: pnpm exec playwright install webkit
       - name: Run generated viewer E2E in WebKit

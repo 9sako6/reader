@@ -143,6 +143,29 @@ cp LICENSES/lucide.txt apps/ios/ReaderExtension/Resources/generated/lucide-LICEN
 cp .build/session-licenses/reader-session-dependencies.txt apps/ios/ReaderExtension/Resources/generated/reader-session-dependencies.txt
 '''
 
+[tasks."generate:ios-project"]
+description = "Generate the shared Xcode project from project.yml"
+run = "xcodegen generate --spec apps/ios/project.yml"
+
+[tasks."verify:ios-project"]
+description = "Verify the shared Xcode project matches project.yml"
+run = '''
+mise run generate:ios-project
+if ! git diff --quiet -- apps/ios/reader.xcodeproj; then
+  printf 'apps/ios/reader.xcodeproj is not generated from apps/ios/project.yml\n' >&2
+  git diff -- apps/ios/reader.xcodeproj >&2
+  exit 1
+fi
+'''
+
+[tasks."bump:ios-build"]
+description = "Increment the personal iOS build and regenerate the Xcode project"
+run = '''
+build="$(node scripts/bump-ios-build.mjs)"
+mise run generate:ios-project
+printf 'iOS build: %s\n' "$build"
+'''
+
 [tasks.build]
 description = "Build the Chrome and Safari extensions"
 run = [{ tasks = ["build:chrome", "build:ios"] }]
