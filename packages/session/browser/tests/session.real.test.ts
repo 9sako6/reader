@@ -1,6 +1,7 @@
 export {};
 
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
@@ -63,4 +64,19 @@ test("browser facade drives the generated Rust WASM session through intent comma
     globalThis.ReaderSessionWasm = previousRuntime;
     delete require.cache[modulePath];
   }
+});
+
+test("session measurement executes the generated ESM wasm-bindgen module", () => {
+  const output = execFileSync(process.execPath, ["scripts/measure-session-wasm.mjs"], {
+    encoding: "utf8",
+  });
+
+  expect(JSON.parse(output)).toMatchObject({
+    artifact: "reader_session_bg.wasm",
+    bytes: expect.any(Number),
+    gzipBytes: expect.any(Number),
+    compileMilliseconds: expect.any(Number),
+    initializationMilliseconds: expect.any(Number),
+    dispatchMilliseconds: expect.any(Number),
+  });
 });

@@ -8,16 +8,15 @@ const startedAt = performance.now();
 await WebAssembly.compile(bytes);
 const compileMilliseconds = performance.now() - startedAt;
 const glue = await readFile(".build/session-wasm/reader_session.js", "utf8");
-const getWasmBindgen = new Function(`${glue}; return wasm_bindgen;`);
-const wasmBindgen = getWasmBindgen();
+const glueUrl = `data:text/javascript;base64,${Buffer.from(glue).toString("base64")}`;
+const { ReaderSession, initSync } = await import(glueUrl);
 const initializationStartedAt = performance.now();
-wasmBindgen.initSync({ module: bytes });
-const wasm = wasmBindgen;
+initSync({ module: bytes });
 const initializationMilliseconds = performance.now() - initializationStartedAt;
 const dispatchStartedAt = performance.now();
-const handle = wasm.reader_session_create();
-wasm.reader_session_dispatch(handle, JSON.stringify({ type: "open", requestId: "measurement" }));
-wasm.reader_session_dispatch(handle, JSON.stringify({
+const session = new ReaderSession();
+session.dispatch(JSON.stringify({ type: "open", requestId: "measurement" }));
+session.dispatch(JSON.stringify({
   type: "prepareSucceeded",
   requestId: "measurement",
   flow: {
@@ -28,7 +27,7 @@ wasm.reader_session_dispatch(handle, JSON.stringify({
   },
 }));
 const dispatchMilliseconds = performance.now() - dispatchStartedAt;
-wasm.reader_session_destroy(handle);
+session.free();
 
 console.log(JSON.stringify({
   artifact: "reader_session_bg.wasm",
