@@ -45,6 +45,26 @@ function summary(values) {
   };
 }
 
+function orderBalancedComparisons(samples) {
+  if (samples.length % ORDERS.length !== 0) {
+    throw new Error("paired benchmark requires complete alternating order pairs");
+  }
+  const comparisons = [];
+  for (let index = 0; index < samples.length; index += ORDERS.length) {
+    const first = samples[index];
+    const second = samples[index + 1];
+    const mainMs = (first.mainMs + second.mainMs) / ORDERS.length;
+    const candidateMs = (first.candidateMs + second.candidateMs) / ORDERS.length;
+    comparisons.push({
+      mainMs,
+      candidateMs,
+      deltaMs: candidateMs - mainMs,
+      deltaPercent: ((candidateMs - mainMs) / mainMs) * 100,
+    });
+  }
+  return comparisons;
+}
+
 export function summarizePairedSamples(samples) {
   if (!Array.isArray(samples) || samples.length < 2) {
     throw new Error("paired benchmark requires at least two samples");
@@ -55,14 +75,16 @@ export function summarizePairedSamples(samples) {
 
   const deltas = samples.map((sample) => sample.candidateMs - sample.mainMs);
   const deltaPercent = samples.map((sample) => ((sample.candidateMs - sample.mainMs) / sample.mainMs) * 100);
+  const comparisons = orderBalancedComparisons(samples);
   return {
     fixture,
     sampleCount: samples.length,
+    comparisonCount: comparisons.length,
     orders: samples.map((sample) => sample.order),
     mainMs: summary(samples.map((sample) => sample.mainMs)),
     candidateMs: summary(samples.map((sample) => sample.candidateMs)),
-    deltaMs: summary(deltas),
-    deltaPercent: summary(deltaPercent),
+    deltaMs: summary(comparisons.map((comparison) => comparison.deltaMs)),
+    deltaPercent: summary(comparisons.map((comparison) => comparison.deltaPercent)),
     samples: samples.map((sample, index) => ({
       ...sample,
       deltaMs: deltas[index],

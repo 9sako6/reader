@@ -32,13 +32,55 @@ function makeFastReport(fixtures = ["segment", "flow"], pairCount = 20) {
   return { files: [{ groups: [{ benchmarks }] }] };
 }
 
-test("paired benchmark reports percentile deltas from alternating main and candidate samples", () => {
+test("paired benchmark reports percentile deltas after balancing opposite execution orders", () => {
   const report = summarizePairedSamples(alternatingSamples);
 
   assert.deepEqual(report.orders, ["main-candidate", "candidate-main", "main-candidate", "candidate-main"]);
-  assert.equal(report.deltaMs.p50, 2);
-  assert.equal(report.deltaMs.p90, 4);
-  assert.equal(report.deltaPercent.p90, 40);
+  assert.equal(report.comparisonCount, 2);
+  assert.equal(report.deltaMs.p50, 1.5);
+  assert.equal(report.deltaMs.p90, 3.5);
+  assert.equal(report.deltaPercent.p90, 35);
+});
+
+test("paired benchmark ignores equal second-execution cost on main and candidate", () => {
+  const result = evaluatePairedBudget([
+    { fixture: "reader-text", run: 0, order: "main-candidate", mainMs: 10, candidateMs: 18 },
+    { fixture: "reader-text", run: 1, order: "candidate-main", mainMs: 18, candidateMs: 10 },
+    { fixture: "reader-text", run: 2, order: "main-candidate", mainMs: 10, candidateMs: 18 },
+    { fixture: "reader-text", run: 3, order: "candidate-main", mainMs: 18, candidateMs: 10 },
+  ], {
+    p50DeltaMs: 1,
+    p90DeltaMs: 1,
+    p90DeltaPercent: 1,
+  });
+
+  assert.equal(result.status, "pass");
+  assert.equal(result.report.deltaMs.p90, 0);
+  assert.equal(result.report.deltaPercent.p90, 0);
+});
+
+test("paired benchmark rejects a consistent candidate regression after balancing execution order", () => {
+  const result = evaluatePairedBudget([
+    { fixture: "reader-text", run: 0, order: "main-candidate", mainMs: 10, candidateMs: 18 },
+    { fixture: "reader-text", run: 1, order: "candidate-main", mainMs: 14, candidateMs: 14 },
+    { fixture: "reader-text", run: 2, order: "main-candidate", mainMs: 10, candidateMs: 18 },
+    { fixture: "reader-text", run: 3, order: "candidate-main", mainMs: 14, candidateMs: 14 },
+  ], {
+    p50DeltaMs: 3,
+    p90DeltaMs: 3,
+    p90DeltaPercent: 25,
+  });
+
+  assert.equal(result.status, "regression");
+  assert.equal(result.report.deltaMs.p90, 4);
+  assert.equal(result.report.deltaPercent.p90.toFixed(3), "33.333");
+});
+
+test("paired benchmark rejects an unmatched final execution order", () => {
+  assert.throws(
+    () => summarizePairedSamples(alternatingSamples.slice(0, 3)),
+    /complete alternating order pairs/,
+  );
 });
 
 test("paired benchmark rejects an intentionally regressing fixture at its allowed delta", () => {
