@@ -99,6 +99,9 @@ createServer(async (request, response) => {
     response.writeHead(200, {
       "content-type": mimeTypes.get(extname(filePath)) || "application/octet-stream",
       "cache-control": "no-store",
+      ...(requestUrl.searchParams.has("strict-csp")
+        ? { "content-security-policy": "default-src 'self'; script-src 'self'; object-src 'none'" }
+        : {}),
     });
     createReadStream(filePath).pipe(response);
   } catch {

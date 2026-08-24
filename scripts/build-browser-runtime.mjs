@@ -20,6 +20,8 @@ await build({
   ...shared,
   entryPoints: {
     chrome: "apps/chrome/src/runtime.ts",
+    "session-host": "apps/chrome/src/session-host.ts",
+    "session-worker": "apps/chrome/src/session-worker.ts",
     safari: "apps/ios/ReaderExtension/Resources/viewer/runtime.ts",
   },
   minify: true,

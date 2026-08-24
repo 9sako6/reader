@@ -8,10 +8,15 @@ test("Chrome build contains the shared pipeline and only the desktop viewer", ()
   const output = path.join(__dirname, "..", "dist");
   const manifest = JSON.parse(fs.readFileSync(path.join(output, "manifest.json"), "utf8"));
   assert.equal(manifest.name, "reader");
+  assert.equal(manifest.minimum_chrome_version, "116");
+  assert.deepEqual(manifest.permissions, ["contextMenus", "activeTab", "scripting", "offscreen"]);
   assert.equal(manifest.background.service_worker, "service-worker.js");
   assert.equal(manifest.host_permissions, undefined);
+  assert.deepEqual(manifest.content_security_policy, {
+    extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
+  });
   assert.deepEqual(manifest.web_accessible_resources, [{
-    resources: ["runtime.js", "session-wasm.js", "reader_session_bg.wasm"],
+    resources: ["runtime.js"],
     matches: ["<all_urls>"],
   }]);
   assert.equal(fs.existsSync(path.join(output, "engine.js")), false);
@@ -19,10 +24,18 @@ test("Chrome build contains the shared pipeline and only the desktop viewer", ()
   assert.equal(fs.existsSync(path.join(output, "viewer.js")), false);
   assert.equal(fs.existsSync(path.join(output, "service-worker.js")), true);
   assert.equal(fs.existsSync(path.join(output, "runtime.js")), true);
+  assert.equal(fs.existsSync(path.join(output, "session-host.html")), true);
+  assert.equal(fs.existsSync(path.join(output, "session-host.js")), true);
+  assert.equal(fs.existsSync(path.join(output, "session-worker.js")), true);
   assert.equal(fs.existsSync(path.join(output, "session-wasm.js")), true);
   assert.equal(fs.existsSync(path.join(output, "reader_session_bg.wasm")), true);
   const session = fs.readFileSync(path.join(output, "runtime.js"), "utf8");
   assert.equal(session.includes("require("), false);
+  assert.match(session, /reader-session/u);
+  const sessionHost = fs.readFileSync(path.join(output, "session-host.js"), "utf8");
+  assert.match(sessionHost, /session-worker\.js/u);
+  const sessionWorker = fs.readFileSync(path.join(output, "session-worker.js"), "utf8");
+  assert.match(sessionWorker, /reader_session_bg\.wasm/u);
   assert.match(session, /ReaderView/u);
   assert.match(session, /createRoot/u);
   assert.match(session, /reader-icon-button-play/u);

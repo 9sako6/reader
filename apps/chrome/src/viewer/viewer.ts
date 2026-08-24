@@ -559,7 +559,8 @@ import viewerStyles from "./viewer.css";
       if (sessionHandle !== handle) return;
       markPerformance("reader:session-init-end");
       markPerformance("reader:wasm-init-end");
-    }).catch(() => {
+    }).catch((error: unknown) => {
+      console.error("ReaderSession failed", error);
       if (sessionHandle === handle) showSessionUnavailable(requestId);
     });
   }

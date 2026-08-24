@@ -74,6 +74,9 @@ install -d apps/chrome/dist/vendor/defuddle apps/chrome/dist/LICENSES
 cp apps/chrome/manifest.json apps/chrome/dist/manifest.json
 cp .build/browser-runtime/service-worker.js apps/chrome/dist/service-worker.js
 cp .build/browser-runtime/chrome.js apps/chrome/dist/runtime.js
+cp .build/browser-runtime/session-host.js apps/chrome/dist/session-host.js
+cp .build/browser-runtime/session-worker.js apps/chrome/dist/session-worker.js
+cp apps/chrome/session-host.html apps/chrome/dist/session-host.html
 cp .build/session-wasm/reader_session.js apps/chrome/dist/session-wasm.js
 cp .build/session-wasm/reader_session_bg.wasm apps/chrome/dist/reader_session_bg.wasm
 cp node_modules/defuddle/dist/index.js apps/chrome/dist/vendor/defuddle/defuddle.js

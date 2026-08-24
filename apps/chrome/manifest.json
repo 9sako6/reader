@@ -1,18 +1,22 @@
 {
   "manifest_version": 3,
   "name": "reader",
-  "version": "0.0.8",
+  "version": "0.0.9",
+  "minimum_chrome_version": "116",
   "description": "表示中または選択した文章を通常表示またはRSVPで読みやすくします。",
-  "permissions": ["contextMenus", "activeTab", "scripting"],
+  "permissions": ["contextMenus", "activeTab", "scripting", "offscreen"],
   "action": {
     "default_title": "ページをreaderで読む"
   },
   "background": {
     "service_worker": "service-worker.js"
   },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
   "web_accessible_resources": [
     {
-      "resources": ["runtime.js", "session-wasm.js", "reader_session_bg.wasm"],
+      "resources": ["runtime.js"],
       "matches": ["<all_urls>"]
     }
   ]

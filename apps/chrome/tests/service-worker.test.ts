@@ -13,6 +13,8 @@ function createServiceWorkerHarness() {
     scriptCalls: [],
     messages: [],
     runtimeMessages: [],
+    sessionHostCreated: false,
+    sessionHostOptions: null,
     abortedRequestIds: [],
     extractionRequestIds: [],
     pendingExtractions: new Map(),
@@ -60,6 +62,16 @@ function createServiceWorkerHarness() {
       sendMessage(message) {
         harness.runtimeMessages.push(message);
         return Promise.resolve();
+      },
+      async getContexts() {
+        return harness.sessionHostCreated ? [{ contextType: "OFFSCREEN_DOCUMENT" }] : [];
+      },
+    },
+    offscreen: {
+      Reason: { WORKERS: "WORKERS" },
+      async createDocument(options) {
+        harness.sessionHostCreated = true;
+        harness.sessionHostOptions = options;
       },
     },
     action: {
@@ -138,6 +150,12 @@ test("toolbar action loads the reader and starts extracted page content", async 
 
   const actionPromise = harness.listeners.actionClicked({ id: 7 });
   await harness.extractionStarted;
+  assert.equal(harness.sessionHostOptions.url, "session-host.html");
+  assert.deepEqual(Array.from(harness.sessionHostOptions.reasons), ["WORKERS"]);
+  assert.equal(
+    harness.sessionHostOptions.justification,
+    "Run the local ReaderSession worker outside website content security policies.",
+  );
   assert.equal(harness.scriptCalls[0].world, "ISOLATED");
   assert.deepEqual(Array.from(harness.scriptCalls[0].args), ["chrome-extension://reader/runtime.js"]);
   assert.match(harness.scriptCalls[0].func.toString(), /import\(/u);

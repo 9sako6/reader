@@ -1,4 +1,5 @@
 const MENU_ID = "read-selection-rsvp";
+const SESSION_HOST_PATH = "session-host.html";
 
 type PreparationOperation =
   | { kind: "page" }
@@ -13,6 +14,26 @@ let requestSequence = 0;
 const activeRequestByTab = new Map<number, string>();
 const retryOperationByTab = new Map<number, RetryOperation>();
 let activePreparation: PreparationState = { kind: "idle" };
+let sessionHostCreation: Promise<void> | null = null;
+
+async function ensureSessionHost(): Promise<void> {
+  const sessionHostUrl = chrome.runtime.getURL(SESSION_HOST_PATH);
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [sessionHostUrl],
+  });
+  if (contexts.length > 0) return;
+  if (!sessionHostCreation) {
+    sessionHostCreation = chrome.offscreen.createDocument({
+      url: SESSION_HOST_PATH,
+      reasons: [chrome.offscreen.Reason.WORKERS],
+      justification: "Run the local ReaderSession worker outside website content security policies.",
+    }).finally(() => {
+      sessionHostCreation = null;
+    });
+  }
+  await sessionHostCreation;
+}
 
 function registerAndExtractPage(requestId: string): Promise<ReaderContent | null> {
   const scope = globalThis as typeof globalThis & {
@@ -120,6 +141,7 @@ async function startPreparation(tabId: number, operation: PreparationOperation):
       cancelPreparation(tabId, requestId);
       return;
     }
+    console.error("Failed to prepare page with reader", error);
     const reason = classifyPreparationFailure(error);
     activePreparation = { kind: "failed", requestId, reason };
     await showReaderError(tabId, requestId, reason);
@@ -154,6 +176,7 @@ function loadReaderRuntime(runtimeURL: string): Promise<void> {
 }
 
 async function openReader(tabId: number, requestId: string): Promise<void> {
+  await ensureSessionHost();
   await chrome.scripting.executeScript({
     target: { tabId },
     world: "ISOLATED",
