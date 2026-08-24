@@ -6,12 +6,12 @@ export function ErrorView({ model, handlers }: { model: Extract<ReaderViewModel,
   const actions = (
     <>
       {model.canRetry ? <Button label="やり直す" onClick={handlers.retry} /> : null}
-      <Button label="元に戻る" onClick={handlers.close} extra={{ "aria-label": "readerを閉じる" }} />
+      <Button label="元に戻る" onClick={handlers.close} ariaLabel="readerを閉じる" />
     </>
   );
   if (model.mobile) {
     return (
-      <section className="reader" role="dialog" aria-label="reader" aria-modal="true" style={{ gridTemplateRows: "minmax(0, 1fr)" }}>
+      <section className="reader reader-error-mobile" role="dialog" aria-label="reader" aria-modal="true">
         <main className="content">
           <div className="error" data-reader-error="true">
             <div>{model.message}</div>
@@ -22,11 +22,11 @@ export function ErrorView({ model, handlers }: { model: Extract<ReaderViewModel,
     );
   }
   return (
-    <div data-reader-error="true" style={{ position: "absolute", inset: "0" }}>
-      <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", fontSize: "clamp(22px, 3vw, 34px)", fontWeight: "600", whiteSpace: "nowrap" }}>
+    <div data-reader-error="true" className="reader-error">
+      <div className="reader-error-message">
         {model.message}
       </div>
-      <div style={{ position: "absolute", left: "50%", bottom: "32px", transform: "translateX(-50%)", display: "flex", gap: "10px" }}>
+      <div className="reader-error-actions">
         {actions}
       </div>
     </div>

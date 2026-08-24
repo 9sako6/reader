@@ -24,19 +24,12 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
     <div
       data-reader-code-surface="true"
       data-reader-highlighted-language={codeLanguage || undefined}
-      style={{
-        width: "min(100%, 760px)",
-        margin: "0 auto",
-        position: "relative",
-        boxSizing: "border-box",
-        borderRadius: text ? "10px" : "12px",
-        overflow: "hidden",
-      }}
+      className="reader-code-surface"
     >
       {codeLanguage ? (
         <span
           data-reader-code-language-label="true"
-          style={{ position: "absolute", zIndex: 1, top: "11px", right: "14px", color: "rgba(210,218,226,0.58)", fontSize: "11px", fontWeight: "600", lineHeight: "1", letterSpacing: "0.05em", pointerEvents: "none" }}
+          className="reader-code-language"
         >
           {codeLanguageLabel(codeLanguage)}
         </span>
@@ -45,23 +38,7 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
         data-reader-code-block="true"
         data-reader-mermaid-fallback={kind === "mermaid" ? "true" : undefined}
         tabIndex={0}
-        style={{
-          width: "100%",
-          maxHeight: text ? "72vh" : "min(58vh, 600px)",
-          margin: "0",
-          padding: codeLanguage ? text ? "38px 18px 18px" : "42px 20px 20px" : text ? "18px" : "20px",
-          overflow: "auto",
-          boxSizing: "border-box",
-          border: "1px solid rgba(255,255,255,0.12)",
-          borderRadius: "inherit",
-          background: "rgba(255,255,255,0.055)",
-          color: "rgba(255,255,255,0.92)",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-          fontSize: text ? "0.84em" : "clamp(13px, 1.8vw, 18px)",
-          lineHeight: "1.55",
-          textAlign: "left",
-          whiteSpace: "pre",
-        }}
+        className="reader-code-block"
       >
         {codeLanguage
           ? <SyntaxHighlightedCode code={figure.code} language={codeLanguage} />
@@ -81,20 +58,8 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
       disabled={loading || failed}
       aria-hidden={loading ? "true" : undefined}
       onClick={() => text ? setTextRevealed((value) => !value) : handlers.toggleFigureBrightness?.(figureIndex)}
-      style={{
-        appearance: "none",
-        border: "0",
-        padding: "0",
-        background: figure.backgroundColor || "#fff",
-        color: "inherit",
-        position: "relative",
-        display: "block",
-        width: "min(100%, 720px)",
-        margin: "0 auto",
-        overflow: "hidden",
-        borderRadius: text ? "10px" : "12px",
-        touchAction: "manipulation",
-      }}
+      className="reader-image-surface"
+      style={{ background: figure.backgroundColor || "#fff" }}
     >
       <img
         src={figure.src}
@@ -111,24 +76,11 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
         ref={(element) => {
           if (element) handlers.figureImage?.(element, figureIndex, token);
         }}
-        style={{
-          display: "block",
-          width: text ? "auto" : "100%",
-          height: "auto",
-          maxWidth: "100%",
-          maxHeight: text ? "72vh" : "min(54vh, 560px)",
-          objectFit: "contain",
-        }}
       />
       <div
         data-reader-image-veil="true"
-        style={{
-          position: "absolute",
-          inset: "0",
-          background: "rgba(0,0,0,0.46)",
-          opacity: revealed ? "0" : "1",
-          pointerEvents: "none",
-        }}
+        className="reader-image-veil"
+        style={{ opacity: revealed ? "0" : "1" }}
       />
     </button>
   ) : null;
@@ -147,9 +99,6 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
         const target = event.target as HTMLButtonElement | null;
         if (target?.getAttribute?.("data-reader-image-surface") === "true" && target.disabled) handlers.toggleFigureBrightness?.(figureIndex);
       }}
-      style={text
-        ? { margin: "2em 0" }
-        : { position: "absolute", inset: "52px 0 64px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "12px", margin: "0", padding: "20px 8px 8px", boxSizing: "border-box" }}
     >
       {codeSurface || imageSurface}
       <div
@@ -157,7 +106,8 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
         role="status"
         aria-live="polite"
         hidden={!loadingVisible && !showFailureStatus && !(failed && kind === "mermaid")}
-        style={{ display: loadingVisible || showFailureStatus || (failed && kind === "mermaid") ? "flex" : "none", alignItems: "center", gap: "8px", color: "rgba(255,255,255,0.72)", fontSize: "14px", lineHeight: "1.4" }}
+        className="reader-figure-status"
+        style={{ display: loadingVisible || showFailureStatus || (failed && kind === "mermaid") ? "flex" : "none" }}
       >
         {failed && kind === "mermaid" ? "Mermaid図を表示できなかったため、元のコードを表示しています" : showFailureStatus ? "画像を読み込めませんでした" : loading ? (
           <>
@@ -165,9 +115,9 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
             <span
               data-reader-figure-indicator="true"
               aria-hidden="true"
-              style={{ width: "28px", height: "2px", borderRadius: "999px", background: "rgba(255,255,255,0.28)", display: "inline-block", overflow: "hidden" }}
+              className="reader-figure-indicator"
             >
-              <span style={{ display: "block", width: "100%", height: "100%", background: "rgba(255,255,255,0.84)" }} />
+              <span />
             </span>
           </>
         ) : null}
@@ -176,7 +126,7 @@ export function Figure({ figureView, handlers, text }: { figureView: ReaderFigur
         <div
           data-reader-figure-description="true"
           hidden={!loadingVisible && !showFailureStatus}
-          style={{ color: "rgba(255,255,255,0.72)", fontSize: "14px", lineHeight: "1.45", textAlign: "center" }}
+          className="reader-figure-description"
         >
           {figureDescription(figure)}
         </div>

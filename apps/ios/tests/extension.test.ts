@@ -250,6 +250,8 @@ test("Safari package includes the locked React runtime notices", () => {
   assert.equal(session.includes("require("), false);
   assert.match(session, /ReaderView/u);
   assert.match(session, /createRoot/u);
+  assert.match(session, /reader-icon-button-play/u);
+  assert.equal(fs.existsSync(path.join(root, "ReaderExtension", "Resources", "generated", "viewer.css")), false);
   const notice = fs.readFileSync(path.join(root, "ReaderExtension", "Resources", "generated", "reader-session-dependencies.txt"), "utf8");
   for (const packageName of ["react@19.2.8", "react-dom@19.2.8", "scheduler@0.27.0", "esbuild@0.28.2"]) {
     assert.match(notice, new RegExp(`${packageName.replace(/[.]/gu, "\\.")}\\nDeclared license: MIT`, "u"));
@@ -913,15 +915,15 @@ test("Safari reader acknowledges the tap at the page edge before 200ms", async (
   ), null);
   const progressTrack = findElement(
     launchFeedbackDuringExtraction,
-    (element) => element.className === "launch-progress-track",
+    (element) => element.className.includes("launch-progress-track"),
   );
   const launchLoader = findElement(
     launchFeedbackDuringExtraction,
-    (element) => element.className === "launch-loader",
+    (element) => element.className.includes("launch-loader"),
   );
   const progressIndicator = findElement(
     progressTrack,
-    (element) => element.className === "launch-progress-indicator",
+    (element) => element.className.includes("launch-progress-indicator"),
   );
   assert.ok(progressTrack);
   assert.ok(progressIndicator);
@@ -953,12 +955,12 @@ test("Safari reader shows only the thin progress bar from 200ms", async () => {
   const launchFeedbackDuringExtraction = harness.launchFeedbackDuringExtraction();
   const progressIndicator = findElement(
     launchFeedbackDuringExtraction,
-    (element) => element.className === "launch-progress-indicator",
+    (element) => element.className.includes("launch-progress-indicator"),
   );
   assert.ok(progressIndicator);
   assert.equal(findElement(
     launchFeedbackDuringExtraction,
-    (element) => element.className === "launch-loader",
+    (element) => element.className.includes("launch-loader"),
   ).style.display, "block");
   assert.equal(progressIndicator.animations.length, 1);
   assert.equal(progressIndicator.animations[0].options.iterations, Infinity);
@@ -1973,7 +1975,7 @@ test("Safari reader keeps only the thin progress bar during a long preparation",
   const opening = context.MobileViewer.open();
   await Promise.resolve();
   fireTimerWithDelay(timers, 200);
-  assert.ok(findElement(documentElement, (element) => element.className === "launch-progress-track"));
+  assert.ok(findElement(documentElement, (element) => element.className.includes("launch-progress-track")));
   assert.equal(findElement(documentElement, (element) => element.textContent === "文章を準備しています"), null);
   assert.equal(findElement(documentElement, (element) => element.textContent === "中止"), null);
   resolveExtraction(harness.activeContent());

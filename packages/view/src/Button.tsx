@@ -1,22 +1,16 @@
 import type { ReactElement } from "react";
 import { ReaderIcon } from "./ReaderIcon";
-import { buttonStyle, type ButtonExtras } from "./styles";
 
-export function Button({ label, onClick, extra = {} }: { label: string; onClick: () => void; extra?: ButtonExtras }): ReactElement {
-  const modeButton = extra["data-reader-mode-button"];
-  const ariaLabel = extra["aria-label"] ?? (label === "続きを読む" ? label : label === "閉じる" ? "readerを閉じる" : undefined);
-  const styleExtra = { ...extra };
-  const key = styleExtra.key;
-  delete styleExtra.key;
-  delete styleExtra["data-reader-mode-button"];
-  delete styleExtra["aria-label"];
+type ButtonVariant = "default" | "close" | "mode";
+
+export function Button({ label, onClick, variant = "default", className, ariaLabel }: { label: string; onClick: () => void; variant?: ButtonVariant; className?: string; ariaLabel?: string }): ReactElement {
+  const accessibleLabel = ariaLabel ?? (label === "続きを読む" ? label : label === "閉じる" ? "readerを閉じる" : undefined);
   return (
     <button
-      key={key}
       type="button"
-      aria-label={ariaLabel === undefined ? undefined : String(ariaLabel)}
-      data-reader-mode-button={modeButton === undefined ? undefined : String(modeButton)}
-      style={{ ...buttonStyle, ...styleExtra }}
+      aria-label={accessibleLabel}
+      data-reader-mode-button={variant === "mode" ? "true" : undefined}
+      className={["reader-button", variant === "default" ? "" : `reader-button-${variant}`, className || ""].filter(Boolean).join(" ")}
       onClick={onClick}
     >
       {label === "閉じる" ? (

@@ -1,16 +1,14 @@
-import { useCallback, useLayoutEffect, useRef, type CSSProperties, type ReactElement, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useRef, type ReactElement, type ReactNode } from "react";
 import type { ReaderViewHandlers } from "./types";
 
 export function ReaderTextScroller({
   tagName,
   className,
-  style,
   handlers,
   children,
 }: {
   tagName: "main" | "div";
   className: string;
-  style: CSSProperties;
   handlers: ReaderViewHandlers;
   children: ReactNode;
 }): ReactElement {
@@ -33,7 +31,7 @@ export function ReaderTextScroller({
   }, []);
   const Tag = tagName;
   return (
-    <Tag className={className} data-reader-text-scroller="true" ref={ref} onScroll={onScroll} style={style}>
+    <Tag className={className} data-reader-text-scroller="true" ref={ref} onScroll={onScroll}>
       {children}
     </Tag>
   );

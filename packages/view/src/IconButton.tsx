@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactElement } from "react";
+import type { ReactElement } from "react";
 import { ReaderIcon, type ReaderIconName } from "./ReaderIcon";
 
 function iconName(label: string): ReaderIconName {
@@ -7,7 +7,7 @@ function iconName(label: string): ReaderIconName {
   return "play";
 }
 
-export function IconButton({ label, onClick, extra = {}, pressed, iconSize = 34 }: { label: string; onClick: () => void; extra?: CSSProperties; pressed?: boolean; iconSize?: number }): ReactElement {
+export function IconButton({ label, onClick, variant, pressed, iconSize = 34 }: { label: string; onClick: () => void; variant?: "previous" | "play"; pressed?: boolean; iconSize?: number }): ReactElement {
   return (
     <button
       type="button"
@@ -16,22 +16,7 @@ export function IconButton({ label, onClick, extra = {}, pressed, iconSize = 34 
       aria-label={label}
       title={label}
       aria-pressed={pressed}
-      style={{
-        width: "44px",
-        height: "44px",
-        padding: "0",
-        border: "0",
-        background: "transparent",
-        color: "rgba(255,255,255,0.72)",
-        font: "inherit",
-        cursor: "pointer",
-        display: "grid",
-        placeItems: "center",
-        borderRadius: "18px",
-        transition: "background 160ms ease, color 160ms ease, transform 100ms ease",
-        WebkitTapHighlightColor: "transparent",
-        ...extra,
-      }}
+      className={`reader-icon-button${variant ? ` reader-icon-button-${variant}` : ""}`}
       onClick={onClick}
     >
       <ReaderIcon name={iconName(label)} size={iconSize} />

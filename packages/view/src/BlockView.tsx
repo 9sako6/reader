@@ -46,14 +46,6 @@ function inlineCodeChildren(block: ReaderViewBlock, relativeStart: number, relat
       <code
         key={`${range.start}-${range.end}`}
         data-reader-inline-code="true"
-        style={{
-          padding: "0.12em 0.34em",
-          borderRadius: "0.32em",
-          background: "rgba(255,255,255,0.09)",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-          fontSize: "0.88em",
-          whiteSpace: "nowrap",
-        }}
       >
         {block.text.slice(range.start - block.start, range.end - block.start)}
       </code>,

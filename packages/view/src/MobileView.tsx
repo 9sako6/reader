@@ -61,7 +61,7 @@ export function MobileView({ model, handlers }: { model: ReaderViewModel; handle
             {model.rewindFeedback ? <RewindFeedback key={`rewind-${model.rewindFeedback.id}`} feedback={model.rewindFeedback} reducedMotion={model.reducedMotion === true} animate={handlers.rewindAnimation} onDone={handlers.rewindFeedbackDone} /> : null}
           </>
         ) : (
-          <ReaderTextScroller tagName="div" className="text-view" handlers={handlers} style={{}}>
+          <ReaderTextScroller tagName="div" className="text-view" handlers={handlers}>
             <article className="article">
               {model.title ? <h1 className="article-title">{model.title}</h1> : null}
               {orderedTextChildren(model, handlers)}

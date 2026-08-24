@@ -25,6 +25,8 @@ test("Chrome build contains the shared pipeline and only the desktop viewer", ()
   assert.equal(session.includes("require("), false);
   assert.match(session, /ReaderView/u);
   assert.match(session, /createRoot/u);
+  assert.match(session, /reader-icon-button-play/u);
+  assert.equal(fs.existsSync(path.join(output, "viewer.css")), false);
   const noticePath = path.join(output, "LICENSES", "reader-session-dependencies.txt");
   assert.equal(fs.existsSync(noticePath), true);
   const notice = fs.readFileSync(noticePath, "utf8");

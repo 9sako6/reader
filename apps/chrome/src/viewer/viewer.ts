@@ -1,3 +1,5 @@
+import viewerStyles from "./viewer.css";
+
 (() => {
   type PlaybackState = "idle" | "paused" | "playing";
   type FigureViewState =
@@ -798,168 +800,7 @@
     });
 
     const style = document.createElement("style");
-    style.textContent = `
-      :host {
-        all: initial !important;
-        position: fixed !important;
-        inset: 0 !important;
-        z-index: 2147483647 !important;
-        display: block !important;
-        pointer-events: none !important;
-        color-scheme: dark !important;
-        contain: layout style paint;
-      }
-
-      *, *::before, *::after { box-sizing: border-box; }
-      button, input, select, textarea { font: inherit; }
-      button { appearance: none; -webkit-appearance: none; }
-      img { max-width: 100%; filter: none; }
-      svg { max-width: 100%; }
-
-      dialog.reader-dialog {
-        all: initial;
-        display: block;
-        position: fixed;
-        inset: 0;
-        width: 100vw;
-        height: 100dvh;
-        max-width: none;
-        max-height: none;
-        margin: 0;
-        padding: 0;
-        border: 0;
-        box-sizing: border-box;
-        background: #090909;
-        color: #fff;
-        color-scheme: dark;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif;
-        line-height: normal;
-        writing-mode: horizontal-tb;
-        pointer-events: auto;
-        overflow: hidden;
-        outline: none;
-      }
-
-      dialog.reader-dialog::backdrop { background: transparent; }
-      nav::-webkit-scrollbar { display: none; }
-      [data-reader-text-scroller] { overscroll-behavior: contain; }
-      nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-offset: -2px; }
-      [data-reader-icon-button]:hover,
-      [data-reader-topbar] button:hover,
-      [data-reader-mode-button]:hover { background-color: rgba(9,9,9,0.90) !important; color: rgba(255,255,255,0.94) !important; }
-      [data-reader-icon-button]:active,
-      [data-reader-topbar] button:active,
-      [data-reader-mode-button]:active { transform: scale(0.96); }
-      [data-reader-icon-button]:focus-visible,
-      [data-reader-topbar] button:focus-visible,
-      [data-reader-mode-button]:focus-visible { outline: 2px solid rgba(138,190,255,0.92); outline-offset: 3px; }
-      @media (prefers-reduced-motion: reduce) {
-        [data-reader-icon-button],
-        [data-reader-topbar] button,
-        [data-reader-mode-button] { transition: none !important; }
-      }
-      @media (max-width: 1080px) {
-        [data-reader-stage] { width: calc(100% - 32px) !important; height: calc(100% - 32px) !important; grid-template-columns: minmax(0, 1fr) !important; column-gap: 0 !important; }
-        [data-reader-minimap] { display: none !important; }
-      }
-      @media (max-width: 720px) {
-        [data-reader-stage] { width: 100% !important; height: 100% !important; }
-        [data-reader-text-shell] { width: 100% !important; height: 100% !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
-        [data-reader-text-scroller] { padding: 64px 20px 96px !important; }
-      }
-      @media (prefers-contrast: more) {
-        :host {
-          --reader-contrast-text: #ffffff;
-          --reader-contrast-background: #000000;
-        }
-
-        [data-reader-topbar] button,
-        [data-reader-stage] button { color: var(--reader-contrast-text) !important; }
-
-        [data-reader-topbar] button {
-          background: var(--reader-contrast-background) !important;
-          border: 1px solid var(--reader-contrast-text) !important;
-        }
-
-        [data-reader-stage] [data-reader-mode-button],
-        [data-reader-stage] [data-reader-mode-button]:hover,
-        [data-reader-stage] [data-reader-mode-button]:active {
-          background: var(--reader-contrast-text) !important;
-          color: var(--reader-contrast-background) !important;
-        }
-
-        [data-reader-stage] [aria-label="1文戻る"],
-        [data-reader-stage] [aria-label="再生"],
-        [data-reader-stage] [aria-label="一時停止"],
-        [data-reader-stage] [aria-label="続きを読む"] {
-          background: var(--reader-contrast-background) !important;
-          border: 1px solid var(--reader-contrast-text) !important;
-          color: var(--reader-contrast-text) !important;
-        }
-
-        [data-reader-stage] [aria-label="続きを読む"],
-        [data-reader-minimap] button[aria-current="location"] {
-          background: var(--reader-contrast-text) !important;
-          color: var(--reader-contrast-background) !important;
-        }
-
-        [data-reader-stage] [data-reader-context-previous],
-        [data-reader-stage] [data-reader-context-next],
-        [data-reader-progress],
-        [data-reader-text-shell] .article {
-          color: var(--reader-contrast-text) !important;
-          opacity: 1 !important;
-        }
-
-        [data-reader-minimap] {
-          background: var(--reader-contrast-background) !important;
-          border-color: var(--reader-contrast-text) !important;
-          box-shadow: none !important;
-          color: var(--reader-contrast-text) !important;
-        }
-
-        [data-reader-minimap] button {
-          background: transparent !important;
-          border: 1px solid transparent !important;
-          color: var(--reader-contrast-text) !important;
-        }
-
-        [data-reader-minimap] button[aria-current="location"] {
-          border-color: var(--reader-contrast-text) !important;
-        }
-
-        [data-reader-figure-status],
-        [data-reader-figure-description],
-        figcaption,
-        [data-reader-loading-label],
-        [data-reader-error] {
-          color: var(--reader-contrast-text) !important;
-        }
-
-        [data-reader-figure-indicator],
-        [data-reader-loading-bar],
-        [data-reader-loading-indicator] {
-          background: var(--reader-contrast-text) !important;
-        }
-
-        [data-reader-loading] button,
-        [data-reader-error] button {
-          background: var(--reader-contrast-background) !important;
-          border: 1px solid var(--reader-contrast-text) !important;
-          color: var(--reader-contrast-text) !important;
-        }
-
-        [data-reader-topbar] button:focus-visible,
-        [data-reader-stage] button:focus-visible,
-        [data-reader-minimap] button:focus-visible,
-        [data-reader-loading] button:focus-visible,
-        [data-reader-error] button:focus-visible,
-        [data-reader-image-surface]:focus-visible {
-          outline: 2px solid var(--reader-contrast-text) !important;
-          outline-offset: 2px !important;
-        }
-      }
-    `;
+    style.textContent = viewerStyles;
     rootStyle = style;
 
     try {
@@ -975,6 +816,7 @@
     root = dialog;
     try {
       mountReactViewer(dialog);
+      (readerShadow || host).append(style);
     } catch (error) {
       host.remove();
       root = null;

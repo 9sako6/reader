@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const Engine = require("../../../.build/packages/engine/src/engine.js");
 const Extractor = require("../../../.build/packages/extractor/src/extractor.js");
 const ReaderViewBundle = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "view", "view.js"), "utf8");
+const ReaderViewStyles = fs.readFileSync(path.join(__dirname, "..", "..", "..", "packages", "view", "src", "view.css"), "utf8");
 
 class FakeElement {
   [key: string]: any;
@@ -304,6 +305,10 @@ function findElements(root, predicate) {
   return matches;
 }
 
+function isRsvpDisplay(element) {
+  return element.attributes["data-reader-unit"] === "true";
+}
+
 function loadReaderView(context, document) {
   document.nodeType = 9;
   document.defaultView = context;
@@ -350,6 +355,12 @@ function loadReaderView(context, document) {
   context.addEventListener ||= (...args) => document.addEventListener(...args);
   context.removeEventListener ||= (...args) => document.removeEventListener(...args);
   context.dispatchEvent ||= (...args) => document.dispatchEvent(...args);
+  context.require ||= (specifier) => {
+    if (specifier === "./viewer.css") {
+      return fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.css"), "utf8");
+    }
+    throw new Error(`unexpected viewer dependency: ${specifier}`);
+  };
   vm.runInNewContext(ReaderViewBundle, context);
 }
 
@@ -1228,7 +1239,7 @@ const chromeLateTimerScenarios = [
       const overlay = harness.document.getElementById("__rsvp-reader-root");
       const display = findElement(
         overlay,
-        (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+        isRsvpDisplay,
       );
       display.clientWidth = 300;
       harness.resizeDisplay();
@@ -1426,20 +1437,20 @@ test("reader shows the article outline beside the focal point", () => {
 
   const overlay = document.getElementById("__rsvp-reader-root");
   const minimap = findElement(overlay, (element) => element.tagName === "ASIDE");
-  const stage = findElement(overlay, (element) => element.style.display === "grid");
+  const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
   const activeMarker = findElement(minimap, (element) => element.attributes["aria-current"] === "location");
   const outline = findElement(minimap, (element) => element.attributes["aria-label"] === "記事の構成");
   const display = findElement(
     overlay,
-    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+    isRsvpDisplay,
   );
   const previousContext = findElement(
     overlay,
-    (element) => element.attributes["aria-hidden"] === "true" && element.style.bottom === "calc(50% + 82px)",
+    (element) => element.attributes["data-reader-context-previous"] === "true",
   );
   const nextContext = findElement(
     overlay,
-    (element) => element.attributes["aria-hidden"] === "true" && element.style.top === "calc(50% + 82px)",
+    (element) => element.attributes["data-reader-context-next"] === "true",
   );
 
   assert.equal(stage.style.gridTemplateColumns, "280px minmax(0, 1fr)");
@@ -1449,21 +1460,16 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(stage.animations[0].options.easing, "cubic-bezier(0.22, 1, 0.36, 1)");
   assert.equal(stage.style.columnGap, "32px");
   assert.equal(stage.children[0], minimap);
-  assert.equal(minimap.style.position, "relative");
   assert.equal(minimap.attributes["data-reader-minimap"], "true");
-  assert.equal(minimap.style.width, "100%");
   assert.equal(outline.children.length, 2);
   assert.equal(outline.children[0].textContent, "記事タイトル");
   assert.equal(outline.children[1].textContent, "次の節");
-  assert.equal(outline.style.scrollbarWidth, "none");
+  assert.match(outline.attributes.class, /reader-minimap-list/u);
   assert.ok(activeMarker);
-  assert.equal(activeMarker.style.boxShadow, "none");
-  assert.equal(display.style.fontSize, "clamp(36px, 4.5vw, 64px)");
-  assert.equal(display.style.justifyContent, "center");
+  assert.match(activeMarker.attributes.class, /reader-minimap-item/u);
+  assert.match(display.attributes.class, /reader-unit/u);
   assert.equal(previousContext.textContent, "");
   assert.equal(nextContext.textContent, "次の節です。");
-  assert.equal(nextContext.style.opacity, "0.26");
-  assert.equal(nextContext.style.WebkitLineClamp, "2");
   assert.equal(nextContext.animations.length, 0);
 });
 
@@ -1478,18 +1484,18 @@ test("reader splits RSVP units when the available width shrinks without changing
   });
   const display = findElement(
     document.getElementById("__rsvp-reader-root"),
-    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+    isRsvpDisplay,
   );
 
-  const initialFontSize = display.style.fontSize;
+  const initialClassName = display.attributes.class;
   display.clientWidth = 300;
   harness.resizeDisplay();
-  assert.equal(display.style.fontSize, initialFontSize);
-  assert.equal(display.style.fontSize, "clamp(36px, 4.5vw, 64px)");
+  assert.equal(display.attributes.class, initialClassName);
+  assert.match(ReaderViewStyles, /\.reader-unit \{[^}]*font-size: clamp\(36px, 4\.5vw, 64px\)/su);
   assert.ok([
     ...new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(display.textContent),
   ].length <= 4);
-  assert.equal(display.style.justifyContent, "center");
+  assert.match(display.attributes.class, /reader-unit/u);
 });
 
 test("reader renders controls with their literal dimensions", () => {
@@ -1509,26 +1515,15 @@ test("reader renders controls with their literal dimensions", () => {
   const modeButton = findElementByText(overlay, "文章で読む");
   const transport = playPauseButton.parent;
   assert.equal(transport.attributes["data-reader-control-dock"], "true");
-  assert.equal(transport.style.gridTemplateColumns, "1fr 64px 1fr");
-  assert.equal(transport.style.width, "min(100% - 32px, 260px)");
-  assert.equal(transport.style.border, "0");
-  assert.equal(transport.style.background, "transparent");
-  assert.equal(transport.style.boxShadow, "none");
-  assert.equal(playPauseButton.style.width, "64px");
-  assert.equal(playPauseButton.style.color, "rgba(245,245,247,0.82)");
-  assert.equal(playPauseButton.style.background, "rgba(9,9,9,0.72)");
-  assert.equal(backButton.style.width, "60px");
-  assert.equal(backButton.style.background, "rgba(9,9,9,0.72)");
+  assert.match(ReaderViewStyles, /\[data-reader-control-dock\] \{[^}]*width: min\(100% - 32px, 260px\)[^}]*grid-template-columns: 1fr 64px 1fr/su);
+  assert.match(playPauseButton.attributes.class, /reader-icon-button-play/u);
+  assert.match(backButton.attributes.class, /reader-icon-button-previous/u);
   assert.equal(backButton.children[0].tagName, "SVG");
   assert.equal(playPauseButton.children[0].tagName, "SVG");
-  assert.equal(closeButton.style.width, "52px");
-  assert.equal(closeButton.style.border, "0");
-  assert.equal(closeButton.style.background, "rgba(9,9,9,0.72)");
+  assert.match(closeButton.attributes.class, /reader-button-close/u);
   assert.equal(closeButton.children[0].tagName, "SVG");
-  assert.equal(modeButton.style.minWidth, "132px");
-  assert.equal(modeButton.style.border, "0");
-  assert.equal(modeButton.style.background, "rgba(9,9,9,0.72)");
-  assert.equal(modeButton.parent.style.bottom, "2px");
+  assert.match(modeButton.attributes.class, /reader-button-mode/u);
+  assert.match(modeButton.parent.attributes.class, /reader-mode-position-rsvp/u);
 });
 
 test("reader marks the dialog and RSVP unit for assistive technology", () => {
@@ -1544,7 +1539,7 @@ test("reader marks the dialog and RSVP unit for assistive technology", () => {
   const overlay = document.getElementById("__rsvp-reader-root");
   const dialog = findElement(overlay, (element) => element.attributes.role === "dialog");
   const unit = findElement(overlay, (element) => element.attributes["data-reader-unit"] === "true");
-  const previous = findElement(overlay, (element) => element.style.bottom === "calc(50% + 82px)");
+  const previous = findElement(overlay, (element) => element.attributes["data-reader-context-previous"] === "true");
   assert.equal(dialog.attributes["aria-modal"], "true");
   assert.equal(dialog.attributes["aria-label"], "reader");
   assert.equal(unit.attributes["aria-live"], "off");
@@ -2039,15 +2034,15 @@ test("reader keyboard controls pause and move between sentence contexts", () => 
   const overlay = document.getElementById("__rsvp-reader-root");
   const display = findElement(
     overlay,
-    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+    isRsvpDisplay,
   );
   const previousContext = findElement(
     overlay,
-    (element) => element.attributes["aria-hidden"] === "true" && element.style.bottom === "calc(50% + 82px)",
+    (element) => element.attributes["data-reader-context-previous"] === "true",
   );
   const nextContext = findElement(
     overlay,
-    (element) => element.attributes["aria-hidden"] === "true" && element.style.top === "calc(50% + 82px)",
+    (element) => element.attributes["data-reader-context-next"] === "true",
   );
   const playPauseButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
   const backButton = findElement(overlay, (element) => element.attributes["aria-label"] === "1文戻る");
@@ -2063,7 +2058,7 @@ test("reader keyboard controls pause and move between sentence contexts", () => 
   });
   assert.equal(prevented, true);
   assert.equal(playPauseButton.attributes["aria-label"], "再生");
-  assert.equal(playPauseButton.style.width, "64px");
+  assert.match(playPauseButton.attributes.class, /reader-icon-button-play/u);
   backButton.dispatchEvent({ type: "click" });
   assert.equal(playPauseButton.attributes["aria-label"], "再生");
   assert.equal(timers.size, 0);
@@ -2124,7 +2119,7 @@ test("reader follows page headings and switches to text mode", () => {
   );
   const pageDisplay = findElement(
     pageOverlay,
-    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+    isRsvpDisplay,
   );
   assert.equal(pageOutline.children[0].textContent, "ページタイトル");
   assert.equal(pageOutline.children[1].style.paddingLeft, "19px");
@@ -2155,7 +2150,7 @@ test("reader follows page headings and switches to text mode", () => {
   );
   const rsvpModeButton = findElementByText(textShell, "RSVPで読む");
   assert.ok(textScroller);
-  assert.equal(rsvpModeButton.parent.style.bottom, "10px");
+  assert.match(rsvpModeButton.parent.attributes.class, /reader-mode-position-text/u);
   assert.ok(findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる"));
 });
 
@@ -2311,7 +2306,7 @@ test("reader ignores a clipped figure even when its center is readable", () => {
   const figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   const display = findElement(
     overlay,
-    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+    isRsvpDisplay,
   );
   assert.equal(figurePanel, null);
   assert.equal(display.dataset.readerPositionKind, "text");
@@ -2350,7 +2345,7 @@ test("reader disables loading and stage animations for reduced motion", () => {
   });
   const reducedStage = findElement(
     document.getElementById("__rsvp-reader-root"),
-    (element) => element.style.display === "grid",
+    (element) => element.attributes["data-reader-stage"] === "true",
   );
   assert.equal(reducedStage.animations.length, 0);
 });
@@ -2454,7 +2449,7 @@ test("reader varies timing for punctuation and phrase length", () => {
   const overlay = document.getElementById("__rsvp-reader-root");
   const display = findElement(
     overlay,
-    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+    isRsvpDisplay,
   );
   assert.equal(display.textContent, "短い、");
   const [firstTimerId, firstTimer] = [...timers.entries()][0];
@@ -2810,7 +2805,7 @@ test("reader pauses on an article image and exposes its context", () => {
   const image = findElement(figurePanel, (element) => element.tagName === "IMG");
   const display = findElement(
     overlay,
-    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+    isRsvpDisplay,
   );
   const resumeButton = findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む");
   const progress = findElements(
@@ -2973,8 +2968,7 @@ test("reader keeps a long inline code expression atomic in RSVP and marks it in 
   assert.equal(codeUnit.textContent, code);
   assert.equal(sessionState().playback, "playing");
   const scrollableCode = findElement(codeUnit, (element) => element.attributes["data-reader-inline-code"] === "true");
-  assert.equal(scrollableCode.style.overflowX, "auto");
-  assert.equal(scrollableCode.style.whiteSpace, "nowrap");
+  assert.match(ReaderViewStyles, /\[data-reader-inline-code\] \{[^}]*overflow-x: auto[^}]*white-space: nowrap/su);
 
   findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
   const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
@@ -3450,7 +3444,7 @@ test("reader returns from an image to the previous sentence and stays paused", a
   const overlay = document.getElementById("__rsvp-reader-root");
   const display = findElement(
     overlay,
-    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+    isRsvpDisplay,
   );
   const [firstTimerId, firstTimer] = [...timers.entries()][0];
   timers.delete(firstTimerId);
@@ -3686,7 +3680,7 @@ test("reader removes closed content, ignores a saved timer, and reopens fresh co
   const secondOverlay = document.getElementById("__rsvp-reader-root");
   const secondDisplay = findElement(
     secondOverlay,
-    (element) => element.style.whiteSpace === "nowrap" && element.style.justifyContent === "center",
+    isRsvpDisplay,
   );
   assert.match(secondDisplay.textContent, /新しい本文/u);
   assert.equal(findElementContainingText(secondOverlay, "最初の本文"), null);

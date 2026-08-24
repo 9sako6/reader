@@ -26,23 +26,6 @@ declare global {
 
   var MobileViewer: ReaderMobileViewer;
 
-  interface ReaderLazyRuntimeApi {
-    createLazyRuntimeController(loadRuntime: () => Promise<void>): LazyRuntimeController;
-    createExtensionRuntimeLoader(
-      assets: readonly string[],
-      getRuntimeURL: (resourceName: string) => string,
-      importRuntime: (runtimeURL: string) => Promise<unknown>,
-    ): () => Promise<void>;
-  }
-
-  interface LazyRuntimeController {
-    open(): Promise<boolean>;
-    close(): void;
-    navigate(): void;
-  }
-
-  var ReaderLazyRuntime: ReaderLazyRuntimeApi;
-
   var browser: {
     runtime?: { getURL?: (path: string) => string };
   } | undefined;

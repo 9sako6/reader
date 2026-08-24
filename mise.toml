@@ -118,7 +118,7 @@ cp node_modules/defuddle/dist/index.js apps/ios/ReaderExtension/Resources/genera
 cp .build/browser-runtime/safari.js apps/ios/ReaderExtension/Resources/generated/runtime.js
 cp .build/session-wasm/reader_session.js apps/ios/ReaderExtension/Resources/generated/session-wasm.js
 cp .build/session-wasm/reader_session_bg.wasm apps/ios/ReaderExtension/Resources/generated/reader_session_bg.wasm
-node scripts/build-safari-bootstrap.mjs
+cp .build/browser-runtime/safari-bootstrap.js apps/ios/ReaderExtension/Resources/generated/bootstrap.js
 cp node_modules/defuddle/LICENSE apps/ios/ReaderExtension/Resources/generated/defuddle-LICENSE.txt
 cp LICENSES/lucide.txt apps/ios/ReaderExtension/Resources/generated/lucide-LICENSE.txt
 cp .build/session-licenses/reader-session-dependencies.txt apps/ios/ReaderExtension/Resources/generated/reader-session-dependencies.txt

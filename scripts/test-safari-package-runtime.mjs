@@ -92,7 +92,8 @@ async function verifyPackage() {
   ];
   const generatedBootstrap = await readFile(join(generatedRoot, "bootstrap.js"), "utf8");
   assert.equal(generatedBootstrap.includes("require("), false);
-  assert.match(generatedBootstrap, /import\(runtimeURL\)/);
+  assert.match(generatedBootstrap, /=>import\(/);
+  assert.match(generatedBootstrap, /reader-bootstrap-progress/u);
   const generatedSession = await readFile(join(generatedRoot, "runtime.js"), "utf8");
   assert.equal(generatedSession.includes("require("), false);
   assert.match(generatedSession, /ReaderView/u);
