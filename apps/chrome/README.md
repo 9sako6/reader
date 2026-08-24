@@ -14,9 +14,10 @@ mise run build:chrome
 
 - `manifest.json`: Chrome拡張の権限、Service Worker、配布バージョン
 - `src/service-worker.ts`: コンテキストメニュー、拡張アイコン、ページ本文抽出の起点
+- `src/runtime.ts`: ReaderSession facade、React View、Engine、Extractor、Desktop Viewerを単一bundleへまとめるentry point
 - `src/viewer/viewer.ts`: Desktop Viewerの表示と操作
 
-`dist/`にはEngine、Extractor、共通操作アイコン、Defuddle、Desktop Viewerが入ります。
+`dist/`にはesbuildでまとめたbrowser runtime、ReaderSessionのWASM、Defuddle、ライセンス情報が入ります。
 
 ## リリース
 

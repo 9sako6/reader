@@ -76,11 +76,8 @@ async function verifyPackage() {
   assert.deepEqual(manifest.web_accessible_resources, [{
     resources: [
       "defuddle.js",
-      "session-wasm-module.js",
       "runtime.js",
-      "engine.js",
-      "extractor.js",
-      "viewer.js",
+      "session-wasm.js",
       "reader_session_bg.wasm",
     ],
     matches: ["<all_urls>"],
@@ -160,11 +157,10 @@ async function verifySafariRuntime() {
     const done = arguments[arguments.length - 1];
     const dependencyDeadline = Date.now() + 10000;
     function openWhenRuntimeIsReady() {
-      if (typeof globalThis.wasm_bindgen !== "function"
-        || typeof globalThis.MobileViewer?.open !== "function"
+      if (typeof globalThis.MobileViewer?.open !== "function"
         || typeof globalThis.ReaderSession?.create !== "function") {
         if (Date.now() >= dependencyDeadline) {
-          done({ error: "generated runtime dependencies did not become ready", wasmBindgen: typeof globalThis.wasm_bindgen, mobileViewer: typeof globalThis.MobileViewer, readerSession: typeof globalThis.ReaderSession });
+          done({ error: "generated runtime dependencies did not become ready", mobileViewer: typeof globalThis.MobileViewer, readerSession: typeof globalThis.ReaderSession });
           return;
         }
         setTimeout(openWhenRuntimeIsReady, 16);
@@ -340,7 +336,7 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
       bootstrapHost: true,
       entryStyle: { opacity: "0.82", transitionDuration: "0.16s, 0.16s", touchAction: "manipulation" },
     });
-    for (const asset of ["defuddle.js", "session-wasm-module.js", "runtime.js", "engine.js", "extractor.js", "viewer.js", "reader_session_bg.wasm"]) {
+    for (const asset of ["defuddle.js", "runtime.js", "session-wasm.js", "reader_session_bg.wasm"]) {
       assert.equal(assetRequests.get(asset) || 0, 0, `${asset} must not load before tap`);
     }
     await page.evaluate(() => window.dispatchEvent(new Event("scroll")));
@@ -365,7 +361,7 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
     });
     assert.equal(result.initialized, true);
     assert.notEqual(result.unitText, "");
-    for (const asset of ["defuddle.js", "session-wasm-module.js", "runtime.js", "engine.js", "extractor.js", "viewer.js"]) {
+    for (const asset of ["defuddle.js", "runtime.js", "session-wasm.js", "reader_session_bg.wasm"]) {
       assert.equal(assetRequests.get(asset), 1, `${asset} should load once`);
     }
   } finally {
@@ -410,7 +406,7 @@ async function verifyGeneratedLazyRuntimeSingleFlightInWebKit() {
     assert.equal(result.initialized, true, JSON.stringify(result));
     assert.equal(result.hostCount, 1);
     assert.notEqual(result.unitText, "");
-    for (const asset of ["defuddle.js", "session-wasm-module.js", "runtime.js", "engine.js", "extractor.js", "viewer.js"]) {
+    for (const asset of ["defuddle.js", "runtime.js", "session-wasm.js", "reader_session_bg.wasm"]) {
       assert.equal(assetRequests.get(asset), 1, `${asset} must be imported once for repeated taps`);
     }
   } finally {
@@ -536,10 +532,10 @@ async function verifyGeneratedLazyRuntimeRetryInWebKit() {
     });
     assert.equal(result.initialized, true, JSON.stringify({ ...result, requestedAssets: Object.fromEntries(requestedAssets), pageErrors }));
     assert.notEqual(result.unitText, "");
-    for (const asset of ["defuddle.js", "session-wasm-module.js", "runtime.js", "engine.js", "extractor.js"]) {
+    for (const asset of ["defuddle.js", "runtime.js"]) {
       assert.equal(requestedAssets.get(asset), 2, `${asset} should reload after the intermediate failure`);
     }
-    for (const asset of ["viewer.js"]) {
+    for (const asset of ["session-wasm.js", "reader_session_bg.wasm"]) {
       assert.equal(requestedAssets.get(asset), 1, `${asset} should load once after retry`);
     }
   } finally {

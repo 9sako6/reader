@@ -5,14 +5,7 @@
   }
 
   const HOST_ID = "__reader-bootstrap";
-  const ASSETS = [
-    "defuddle.js",
-    "session-wasm-module.js",
-    "runtime.js",
-    "engine.js",
-    "extractor.js",
-    "viewer.js",
-  ];
+  const ASSETS = ["defuddle.js", "runtime.js"];
   const extensionRuntime = globalThis.browser?.runtime ?? globalThis.chrome?.runtime;
   const getRuntimeURL = extensionRuntime?.getURL?.bind(extensionRuntime);
   if (!getRuntimeURL || !globalThis.ReaderLazyRuntime) return;

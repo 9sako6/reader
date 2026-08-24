@@ -74,17 +74,18 @@ try {
   });
   assert.equal(typeof tabId, "number");
 
-  const wasmResponsePromise = page.waitForResponse(
-    (response) => response.url().endsWith("reader_session_bg.wasm"),
-    { timeout: 30_000 },
-  );
-  await worker.evaluate(async (activeTabId) => {
-    if (typeof globalThis.startPreparation !== "function") {
-      throw new Error("production service worker preparation entry is unavailable");
-    }
-    await globalThis.startPreparation(activeTabId, { kind: "page" });
-  }, tabId);
-  const wasmResponse = await wasmResponsePromise;
+  const [wasmResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) => response.url().endsWith("reader_session_bg.wasm"),
+      { timeout: 30_000 },
+    ),
+    worker.evaluate(async (activeTabId) => {
+      if (typeof globalThis.startPreparation !== "function") {
+        throw new Error("production service worker preparation entry is unavailable");
+      }
+      await globalThis.startPreparation(activeTabId, { kind: "page" });
+    }, tabId),
+  ]);
   assert.equal(wasmResponse.status(), 200);
   assert.equal(wasmResponse.headers()["content-type"], "application/wasm");
 

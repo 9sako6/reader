@@ -20,7 +20,7 @@ const baselineCommit = process.env.READER_PERFORMANCE_BASE_COMMIT || null;
 const candidateCommit = process.env.READER_PERFORMANCE_CANDIDATE_COMMIT || null;
 const generatedPath = "/apps/ios/ReaderExtension/Resources/generated";
 const baselineGeneratedRoot = baselineRoot ? resolve(baselineRoot, "apps/ios/ReaderExtension/Resources/generated") : null;
-const runtimeScripts = (root) => ["session-wasm-module.js", "runtime.js", "defuddle.js", "engine.js", "extractor.js", "viewer.js"]
+const runtimeScripts = (root) => ["defuddle.js", "runtime.js"]
   .map((name) => resolve(root, name));
 const scripts = runtimeScripts(generatedRoot);
 const baselineScripts = baselineGeneratedRoot ? runtimeScripts(baselineGeneratedRoot) : null;
@@ -30,19 +30,13 @@ const bundleAssets = {
     "apps/chrome/dist/session-wasm.js",
     "apps/chrome/dist/reader_session_bg.wasm",
     "apps/chrome/dist/vendor/defuddle/defuddle.js",
-    "apps/chrome/dist/engine.js",
-    "apps/chrome/dist/extractor.js",
-    "apps/chrome/dist/viewer.js",
   ],
   safari: [
     "apps/ios/ReaderExtension/Resources/generated/bootstrap.js",
-    "apps/ios/ReaderExtension/Resources/generated/session-wasm-module.js",
+    "apps/ios/ReaderExtension/Resources/generated/session-wasm.js",
     "apps/ios/ReaderExtension/Resources/generated/runtime.js",
     "apps/ios/ReaderExtension/Resources/generated/reader_session_bg.wasm",
     "apps/ios/ReaderExtension/Resources/generated/defuddle.js",
-    "apps/ios/ReaderExtension/Resources/generated/engine.js",
-    "apps/ios/ReaderExtension/Resources/generated/extractor.js",
-    "apps/ios/ReaderExtension/Resources/generated/viewer.js",
   ],
 };
 const nodeCounts = [1000, 10_000, 50_000, 100_000];
@@ -349,7 +343,7 @@ async function setupPerformancePage(browser, fixture, variant = "candidate") {
   for (const script of variantScripts) {
     await page.addScriptTag({
       path: script,
-      type: script.endsWith("session-wasm-module.js") ? "module" : "text/javascript",
+      type: script.endsWith("runtime.js") ? "module" : "text/javascript",
     });
   }
   await page.evaluate(({ nodeCount, extraction }) => {

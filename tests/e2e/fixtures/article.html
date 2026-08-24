@@ -171,13 +171,9 @@
         globalThis.chrome = chromeGlobal;
         for (const source of [
           "/apps/chrome/dist/vendor/defuddle/defuddle.js",
-          "/apps/chrome/dist/session-wasm.js",
           "/apps/chrome/dist/runtime.js",
-          "/apps/chrome/dist/engine.js",
-          "/apps/chrome/dist/extractor.js",
-          "/apps/chrome/dist/viewer.js",
         ]) {
-          await loadScript(source);
+          await loadScript(source, source.endsWith("runtime.js") ? "module" : "text/javascript");
           loadedScripts.push(source);
         }
         const open = (customTextOrOptions) => {
@@ -268,14 +264,10 @@
         };
         for (const source of [
           "/apps/ios/ReaderExtension/Resources/generated/defuddle.js",
-          "/apps/ios/ReaderExtension/Resources/generated/session-wasm-module.js",
           "/apps/ios/ReaderExtension/Resources/generated/runtime.js",
-          "/apps/ios/ReaderExtension/Resources/generated/engine.js",
-          "/apps/ios/ReaderExtension/Resources/generated/extractor.js",
-          "/apps/ios/ReaderExtension/Resources/generated/viewer.js",
           "/apps/ios/ReaderExtension/Resources/generated/bootstrap.js",
         ]) {
-          await loadScript(source, source.endsWith("session-wasm-module.js") ? "module" : "text/javascript");
+          await loadScript(source, source.endsWith("runtime.js") ? "module" : "text/javascript");
           loadedScripts.push(source);
         }
         const extractFromPage = globalThis.Extractor.fromPage;

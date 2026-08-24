@@ -11,12 +11,12 @@ test("Chrome build contains the shared pipeline and only the desktop viewer", ()
   assert.equal(manifest.background.service_worker, "service-worker.js");
   assert.equal(manifest.host_permissions, undefined);
   assert.deepEqual(manifest.web_accessible_resources, [{
-    resources: ["reader_session_bg.wasm"],
+    resources: ["runtime.js", "session-wasm.js", "reader_session_bg.wasm"],
     matches: ["<all_urls>"],
   }]);
-  assert.equal(fs.existsSync(path.join(output, "engine.js")), true);
-  assert.equal(fs.existsSync(path.join(output, "extractor.js")), true);
-  assert.equal(fs.existsSync(path.join(output, "viewer.js")), true);
+  assert.equal(fs.existsSync(path.join(output, "engine.js")), false);
+  assert.equal(fs.existsSync(path.join(output, "extractor.js")), false);
+  assert.equal(fs.existsSync(path.join(output, "viewer.js")), false);
   assert.equal(fs.existsSync(path.join(output, "service-worker.js")), true);
   assert.equal(fs.existsSync(path.join(output, "runtime.js")), true);
   assert.equal(fs.existsSync(path.join(output, "session-wasm.js")), true);

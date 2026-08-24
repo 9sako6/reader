@@ -86,7 +86,7 @@ createServer(async (request, response) => {
   try {
     const metadata = await stat(filePath);
     if (!metadata.isFile()) throw new Error("not a file");
-    if (requestUrl.searchParams.has("slow-extraction") && pathname.endsWith("/generated/extractor.js")) {
+    if (requestUrl.searchParams.has("slow-extraction") && pathname.endsWith("/generated/runtime.js")) {
       const source = await readFile(filePath, "utf8");
       const delay = Number(requestUrl.searchParams.get("slow-extraction")) || 900;
       const delayedExtractor = `${source}\nconst readerOriginalFromPageAsync = globalThis.Extractor?.fromPageAsync;\nif (readerOriginalFromPageAsync) globalThis.Extractor.fromPageAsync = async (...args) => { await new Promise((resolveDelay) => setTimeout(resolveDelay, ${delay})); return readerOriginalFromPageAsync(...args); };\n`;

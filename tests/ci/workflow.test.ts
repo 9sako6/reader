@@ -80,7 +80,7 @@ test("Node test task explicitly excludes only generated-artifact Vitest files", 
     "packages/session/browser/tests/session.real.test.ts",
   ];
 
-  assert.match(nodeTask, /depends = \["compile", "build:view"\]/u);
+  assert.match(nodeTask, /depends = \["compile", "build:browser-runtime"\]/u);
   assert.match(nodeTask, /pnpm exec vitest run/u);
   const excludes = [...nodeTask.matchAll(/--exclude\s+([^\s"]+)/gu)].map((match) => match[1]);
   assert.deepEqual(excludes, artifactTests);

@@ -1,13 +1,16 @@
 export {};
 
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
 
 const assert = require("node:assert/strict");
 
 test("browser facade drives the generated Rust WASM session through intent commands", async () => {
-  const glue = readFileSync(".build/session-wasm/reader_session.js", "utf8");
   const bytes = readFileSync(".build/session-wasm/reader_session_bg.wasm");
-  const wasmBindgen = new Function(`${glue}; return wasm_bindgen;`)();
+  const glueURL = pathToFileURL(resolve(".build/session-wasm/reader_session.js"));
+  glueURL.searchParams.set("test", String(Date.now()));
+  const wasmBindgen = await import(glueURL.href);
   wasmBindgen.initSync({ module: bytes });
   const modulePath = require.resolve("../../../../.build/packages/session/browser/session.js");
   delete require.cache[modulePath];

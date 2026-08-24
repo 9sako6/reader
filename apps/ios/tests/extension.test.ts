@@ -221,11 +221,8 @@ test("Safari extension loads reader resources in dependency order", () => {
   assert.deepEqual(manifest.web_accessible_resources, [{
     resources: [
       "defuddle.js",
-      "session-wasm-module.js",
       "runtime.js",
-      "engine.js",
-      "extractor.js",
-      "viewer.js",
+      "session-wasm.js",
       "reader_session_bg.wasm",
     ],
     matches: ["<all_urls>"],
@@ -236,13 +233,13 @@ test("Safari extension loads reader resources in dependency order", () => {
 test("Xcode project embeds every manifest script in the extension", () => {
   const project = fs.readFileSync(path.join(root, "reader.xcodeproj", "project.pbxproj"), "utf8");
   assert.match(project, /defuddle\.js in Resources/);
-  assert.match(project, /session-wasm-module\.js in Resources/);
+  assert.match(project, /session-wasm\.js in Resources/);
   assert.match(project, /runtime\.js in Resources/);
   assert.match(project, /reader_session_bg\.wasm in Resources/);
   assert.match(project, /reader-session-dependencies\.txt in Resources/);
-  assert.match(project, /engine\.js in Resources/);
-  assert.match(project, /extractor\.js in Resources/);
-  assert.match(project, /viewer\.js in Resources/);
+  assert.equal(project.includes("engine.js in Resources"), false);
+  assert.equal(project.includes("extractor.js in Resources"), false);
+  assert.equal(project.includes("viewer.js in Resources"), false);
   assert.match(project, /bootstrap\.js in Resources/);
   assert.match(project, /reader-extension\.appex in Embed Foundation Extensions/);
   assert.equal(project.includes("RELEASE_CHECKLIST.md"), false);
@@ -519,7 +516,11 @@ function createSafariReaderHarness(
     path.join(root, "ReaderExtension", "Resources", "generated", "runtime.js"),
     "utf8",
   );
+  const testEngine = context.Engine;
+  const testExtractor = context.Extractor;
   vm.runInNewContext(sessionSource, context);
+  context.Engine = testEngine;
+  context.Extractor = testExtractor;
   assert.equal(typeof context.ReaderView?.mount, "function");
   const originalReactMount = context.ReaderView.mount;
   context.ReaderView.mount = (host) => {
@@ -545,11 +546,6 @@ function createSafariReaderHarness(
     };
   }
   context.ReaderSession = session;
-  const source = fs.readFileSync(
-    path.join(root, "ReaderExtension", "Resources", "generated", "viewer.js"),
-    "utf8",
-  );
-  vm.runInNewContext(source, context);
   context.MobileViewer.install();
 
   return {

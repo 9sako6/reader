@@ -17,7 +17,7 @@
             if (params.has("boundary")) query.set("delay", "600");
             if (params.has("slow-extraction")) query.set("slow-extraction", "900");
             if (params.has("retry")) {
-              query.set("fail-once", "extractor.js");
+              query.set("fail-once", "runtime.js");
               query.set("token", params.get("runtime") || "retry");
             }
             const suffix = query.toString() ? `?${query}` : "";

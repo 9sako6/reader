@@ -10,11 +10,7 @@ const assets = {
   },
   "session-wasm.js": {
     chrome: "apps/chrome/dist/session-wasm.js",
-    safari: null,
-  },
-  "session-wasm-module.js": {
-    chrome: null,
-    safari: "apps/ios/ReaderExtension/Resources/generated/session-wasm-module.js",
+    safari: "apps/ios/ReaderExtension/Resources/generated/session-wasm.js",
   },
   "reader_session_bg.wasm": {
     chrome: "apps/chrome/dist/reader_session_bg.wasm",
@@ -23,18 +19,6 @@ const assets = {
   "defuddle.js": {
     chrome: "apps/chrome/dist/vendor/defuddle/defuddle.js",
     safari: "apps/ios/ReaderExtension/Resources/generated/defuddle.js",
-  },
-  "engine.js": {
-    chrome: "apps/chrome/dist/engine.js",
-    safari: "apps/ios/ReaderExtension/Resources/generated/engine.js",
-  },
-  "extractor.js": {
-    chrome: "apps/chrome/dist/extractor.js",
-    safari: "apps/ios/ReaderExtension/Resources/generated/extractor.js",
-  },
-  "viewer.js": {
-    chrome: "apps/chrome/dist/viewer.js",
-    safari: "apps/ios/ReaderExtension/Resources/generated/viewer.js",
   },
   "bootstrap.js": {
     chrome: null,

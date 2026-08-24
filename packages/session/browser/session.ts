@@ -3,11 +3,15 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.ReaderSession = api;
 })(globalThis, function createReaderSessionApi(): ReaderSessionApi {
-  type WasmSessionExports = {
-    reader_session_create(): number;
-    reader_session_observable(handle: number): string;
-    reader_session_dispatch(handle: number, commandJson: string): string;
-    reader_session_destroy(handle: number): void;
+  interface WasmSession {
+    observable(): string;
+    dispatch(commandJson: string): string;
+    free(): void;
+  }
+
+  type WasmSessionModule = {
+    default(input?: { module_or_path?: string | ArrayBuffer | Uint8Array }): Promise<unknown>;
+    ReaderSession: new () => WasmSession;
   };
 
   type RawCommand = ReaderSessionCommand | { type: "tick"; generation: number };
@@ -15,38 +19,40 @@
     | { type: "cancelTimer" }
     | { type: "scheduleTick"; generation: number; delayMs: number };
 
-  let runtime: WasmSessionExports | null = null;
-  let runtimePromise: Promise<WasmSessionExports> | null = null;
+  let runtime: WasmSessionModule | null = null;
+  let runtimePromise: Promise<WasmSessionModule> | null = null;
+  let runtimeAttempt = 0;
 
-  function extensionWasmUrl(): string | undefined {
+  function extensionRuntime(): { getURL(path: string): string } | undefined {
     const scope = globalThis as typeof globalThis & {
       chrome?: { runtime?: { getURL?: (path: string) => string } };
       browser?: { runtime?: { getURL?: (path: string) => string } };
     };
-    return (scope.chrome?.runtime ?? scope.browser?.runtime)?.getURL?.("reader_session_bg.wasm");
+    const candidate = scope.chrome?.runtime ?? scope.browser?.runtime;
+    return typeof candidate?.getURL === "function"
+      ? { getURL: candidate.getURL.bind(candidate) }
+      : undefined;
   }
 
-  function loadRuntime(): Promise<WasmSessionExports> {
+  function loadRuntime(): Promise<WasmSessionModule> {
     if (runtime) return Promise.resolve(runtime);
     if (runtimePromise) return runtimePromise;
     runtimePromise = (async () => {
       const scope = globalThis as typeof globalThis & {
-        wasm_bindgen?: (moduleOrPath?: string | ArrayBuffer | Uint8Array) => Promise<WasmSessionExports>;
-        ReaderSessionWasm?: WasmSessionExports;
+        ReaderSessionWasm?: WasmSessionModule;
       };
       if (scope.ReaderSessionWasm) return scope.ReaderSessionWasm;
-      const wasmBindgen = (typeof wasm_bindgen === "function" ? wasm_bindgen : scope.wasm_bindgen) as
-        | ((moduleOrPath?: string | ArrayBuffer | Uint8Array) => Promise<WasmSessionExports>)
-        | undefined;
-      if (!wasmBindgen) throw new Error("ReaderSession WASM glue is not loaded");
-      const url = extensionWasmUrl();
-      if (!url) await wasmBindgen();
-      else {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`ReaderSession WASM fetch failed: ${response.status}`);
-        await wasmBindgen(new Uint8Array(await response.arrayBuffer()).buffer);
-      }
-      return wasmBindgen as unknown as WasmSessionExports;
+      const extension = extensionRuntime();
+      if (!extension) throw new Error("ReaderSession extension runtime is unavailable");
+      runtimeAttempt += 1;
+      const moduleURL = new URL(extension.getURL("session-wasm.js"), globalThis.location?.href);
+      moduleURL.searchParams.set("readerAttempt", String(runtimeAttempt));
+      const loaded = await import(moduleURL.href) as WasmSessionModule;
+      const response = await fetch(extension.getURL("reader_session_bg.wasm"));
+      if (!response.ok) throw new Error(`ReaderSession WASM fetch failed: ${response.status}`);
+      const module = new Uint8Array(await response.arrayBuffer()).buffer;
+      await loaded.default({ module_or_path: module });
+      return loaded;
     })().then((loaded) => {
       runtime = loaded;
       return loaded;
@@ -145,7 +151,7 @@
   }
 
   function create(onStateChange: (state: ReaderSessionState) => void = () => {}): ReaderSessionHandle {
-    let id: number | null = null;
+    let session: WasmSession | null = null;
     let state: ReaderSessionState | null = null;
     let destroyed = false;
     let timer: number | null = null;
@@ -157,8 +163,8 @@
     }
 
     function dispatchNow(command: RawCommand): void {
-      if (destroyed || id === null || !runtime) return;
-      const transition = decodeTransition(runtime.reader_session_dispatch(id, JSON.stringify(command)));
+      if (destroyed || !session) return;
+      const transition = decodeTransition(session.dispatch(JSON.stringify(command)));
       state = transition.state;
       for (const effect of transition.effects) {
         clearTimer();
@@ -175,10 +181,14 @@
 
     const ready = loadRuntime().then((loaded) => {
       if (destroyed) return;
-      id = loaded.reader_session_create();
-      state = decodeState(JSON.parse(loaded.reader_session_observable(id)));
+      session = new loaded.ReaderSession();
+      state = decodeState(JSON.parse(session.observable()));
       onStateChange(state);
       for (const command of pending.splice(0)) dispatchNow(command);
+    }).catch((error: unknown) => {
+      runtime = null;
+      runtimePromise = null;
+      throw error;
     });
 
     return {
@@ -188,7 +198,7 @@
       },
       dispatch(command: ReaderSessionCommand): void {
         if (destroyed) return;
-        if (id === null) pending.push(command);
+        if (!session) pending.push(command);
         else dispatchNow(command);
       },
       destroy(): void {
@@ -196,8 +206,8 @@
         destroyed = true;
         pending.length = 0;
         clearTimer();
-        if (id !== null && runtime) runtime.reader_session_destroy(id);
-        id = null;
+        session?.free();
+        session = null;
         state = null;
       },
     };
@@ -205,3 +215,5 @@
 
   return { create };
 });
+
+export {};

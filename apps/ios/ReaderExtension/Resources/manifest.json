@@ -15,11 +15,8 @@
     {
       "resources": [
         "defuddle.js",
-        "session-wasm-module.js",
         "runtime.js",
-        "engine.js",
-        "extractor.js",
-        "viewer.js",
+        "session-wasm.js",
         "reader_session_bg.wasm"
       ],
       "matches": ["<all_urls>"]

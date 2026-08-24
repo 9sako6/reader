@@ -27,7 +27,6 @@ declare global {
 
   var ReaderSession: ReaderSessionApi;
   var ReaderSessionWasm: unknown;
-  var wasm_bindgen: ((moduleOrPath?: string) => Promise<unknown>) | undefined;
 }
 
 export {};

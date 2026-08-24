@@ -693,6 +693,7 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
     scrollY: { get: () => currentScrollY },
   });
   context.globalThis = context;
+  context.exports = {};
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   loadReaderView(context, document);
   let reactMountCount = 0;
@@ -2424,6 +2425,7 @@ function createTimingReaderHarness(engine = Engine) {
     },
   };
   context.globalThis = context;
+  context.exports = {};
   loadReaderView(context, document);
   vm.runInNewContext(source, context);
 
@@ -2746,6 +2748,7 @@ function createFigureReaderHarness() {
     },
   };
   context.globalThis = context;
+  context.exports = {};
   const source = fs.readFileSync(path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "viewer", "viewer.js"), "utf8");
   loadReaderView(context, document);
   vm.runInNewContext(source, context);

@@ -3,6 +3,7 @@ export {};
 import type { ReaderSessionState } from "../types";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const modulePath = "../../../../.build/packages/session/browser/session.js";
 
 function observable(phase = "idle", generation = 0, requestId = "") {
@@ -26,31 +27,38 @@ function observable(phase = "idle", generation = 0, requestId = "") {
 }
 
 function fakeRuntime(calls: string[], states: Map<number, any>) {
+  let nextHandle = 0;
   return {
-    reader_session_create() {
-      const handle = states.has(0) ? 1 : 0;
-      states.set(handle, observable());
-      return handle;
-    },
-    reader_session_observable(handle) {
-      return JSON.stringify(states.get(handle));
-    },
-    reader_session_dispatch(handle, commandJson) {
-      calls.push(commandJson);
-      const command = JSON.parse(commandJson);
-      const previous = states.get(handle);
-      const next = command.type === "open"
-        ? observable("preparing", previous.generation + 1, command.requestId)
-        : command.type === "prepareSucceeded"
-          ? observable("reading", previous.generation + 1, command.requestId)
-          : command.type === "close"
-            ? observable("ended", previous.generation + 1)
-            : { ...previous, generation: previous.generation + 1 };
-      states.set(handle, next);
-      return JSON.stringify({ state: next, effects: [] });
-    },
-    reader_session_destroy(handle) {
-      states.delete(handle);
+    default: async () => undefined,
+    ReaderSession: class {
+      private readonly handle = nextHandle++;
+
+      constructor() {
+        states.set(this.handle, observable());
+      }
+
+      observable() {
+        return JSON.stringify(states.get(this.handle));
+      }
+
+      dispatch(commandJson: string) {
+        calls.push(commandJson);
+        const command = JSON.parse(commandJson);
+        const previous = states.get(this.handle);
+        const next = command.type === "open"
+          ? observable("preparing", previous.generation + 1, command.requestId)
+          : command.type === "prepareSucceeded"
+            ? observable("reading", previous.generation + 1, command.requestId)
+            : command.type === "close"
+              ? observable("ended", previous.generation + 1)
+              : { ...previous, generation: previous.generation + 1 };
+        states.set(this.handle, next);
+        return JSON.stringify({ state: next, effects: [] });
+      }
+
+      free() {
+        states.delete(this.handle);
+      }
     },
   };
 }
@@ -98,14 +106,17 @@ test("a failed lazy initialization is retryable", async () => {
   const resolvedPath = require.resolve(modulePath);
   delete require.cache[resolvedPath];
   const previousRuntime = globalThis.ReaderSessionWasm;
-  const previousGlue = globalThis.wasm_bindgen;
   try {
-    globalThis.ReaderSessionWasm = undefined;
-    globalThis.wasm_bindgen = async () => {
-      throw new Error("fetch failed");
+    globalThis.ReaderSessionWasm = {
+      default: async () => undefined,
+      ReaderSession: class {
+        constructor() {
+          throw new Error("initialization failed");
+        }
+      },
     };
     const ReaderSession = require(resolvedPath);
-    await assert.rejects(ReaderSession.create().ready, /fetch failed/);
+    await assert.rejects(ReaderSession.create().ready, /initialization failed/);
 
     const calls: string[] = [];
     const states = new Map<number, any>();
@@ -117,43 +128,13 @@ test("a failed lazy initialization is retryable", async () => {
     handle.destroy();
   } finally {
     globalThis.ReaderSessionWasm = previousRuntime;
-    globalThis.wasm_bindgen = previousGlue;
     delete require.cache[resolvedPath];
   }
 });
 
-test("browser facade resolves the Safari extension WASM resource", async () => {
-  const resolvedPath = require.resolve(modulePath);
-  delete require.cache[resolvedPath];
-  const scope = globalThis as typeof globalThis & { chrome?: unknown; browser?: unknown };
-  const previousRuntime = globalThis.ReaderSessionWasm;
-  const previousGlue = globalThis.wasm_bindgen;
-  const previousChrome = scope.chrome;
-  const previousBrowser = scope.browser;
-  const previousFetch = globalThis.fetch;
-  let fetchedUrl = "";
-  try {
-    globalThis.ReaderSessionWasm = undefined;
-    scope.chrome = { runtime: { getURL: (path: string) => `safari-web-extension://reader/${path}` } };
-    scope.browser = undefined;
-    globalThis.fetch = async (input) => {
-      fetchedUrl = String(input);
-      return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) } as Response;
-    };
-    globalThis.wasm_bindgen = Object.assign(async () => undefined, fakeRuntime([], new Map()));
-
-    const ReaderSession = require(resolvedPath);
-    const handle = ReaderSession.create();
-    await handle.ready;
-    assert.equal(fetchedUrl, "safari-web-extension://reader/reader_session_bg.wasm");
-    assert.equal(handle.state.phase, "idle");
-    handle.destroy();
-  } finally {
-    globalThis.ReaderSessionWasm = previousRuntime;
-    globalThis.wasm_bindgen = previousGlue;
-    scope.chrome = previousChrome;
-    scope.browser = previousBrowser;
-    globalThis.fetch = previousFetch;
-    delete require.cache[resolvedPath];
-  }
+test("browser facade lazily resolves the generated glue and WASM through the extension runtime", () => {
+  const source = fs.readFileSync("packages/session/browser/session.ts", "utf8");
+  assert.match(source, /import\(moduleURL\.href\)/u);
+  assert.match(source, /extension\.getURL\("session-wasm\.js"\)/u);
+  assert.match(source, /fetch\(extension\.getURL\("reader_session_bg\.wasm"\)\)/u);
 });

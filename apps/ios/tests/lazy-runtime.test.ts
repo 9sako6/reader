@@ -35,10 +35,10 @@ test("lazy runtime loads once for concurrent opens", async () => {
   assert.equal(loadCount, 1);
 });
 
-test("extension runtime loader imports each heavy asset in order", async () => {
+test("extension runtime loader imports the extractor dependency before the shared runtime", async () => {
   const importedURLs: string[] = [];
   const loadRuntime = createExtensionRuntimeLoader(
-    ["defuddle.js", "session-wasm-module.js", "runtime.js"],
+    ["defuddle.js", "runtime.js"],
     (asset) => `safari-extension://reader/${asset}`,
     async (runtimeURL) => {
       importedURLs.push(runtimeURL);
@@ -48,7 +48,6 @@ test("extension runtime loader imports each heavy asset in order", async () => {
   await loadRuntime();
   assert.deepEqual(importedURLs, [
     "safari-extension://reader/defuddle.js?readerAttempt=1",
-    "safari-extension://reader/session-wasm-module.js?readerAttempt=1",
     "safari-extension://reader/runtime.js?readerAttempt=1",
   ]);
 });

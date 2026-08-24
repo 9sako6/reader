@@ -23,4 +23,4 @@ fi
 cargo build --locked --package reader-session --target "$wasm_target" --release
 rm -rf "$wasm_output"
 install -d "$wasm_output"
-wasm-bindgen "$wasm_binary" --target no-modules --no-typescript --out-dir "$wasm_output"
+wasm-bindgen "$wasm_binary" --target web --no-typescript --out-dir "$wasm_output"

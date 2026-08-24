@@ -44,6 +44,9 @@ function createServiceWorkerHarness() {
   };
   const chrome = {
     runtime: {
+      getURL(path) {
+        return `chrome-extension://reader/${path}`;
+      },
       onInstalled: {
         addListener(listener) {
           harness.listeners.installed = listener;
@@ -79,6 +82,7 @@ function createServiceWorkerHarness() {
             harness.rejectExtraction = (error) => harness.rejectExtractionFor(requestId, error);
           });
         }
+        if (options.func?.toString().includes("__readerRuntimePromise")) return [];
         if (options.func) harness.abortedRequestIds.push(options.args?.[0]);
         return [];
       },
@@ -103,7 +107,7 @@ function createServiceWorkerHarness() {
     },
   };
   const source = fs.readFileSync(
-    path.join(__dirname, "..", "..", "..", ".build", "apps", "chrome", "src", "service-worker.js"),
+    path.join(__dirname, "..", "..", "..", ".build", "browser-runtime", "service-worker.js"),
     "utf8",
   );
 
@@ -134,13 +138,9 @@ test("toolbar action loads the reader and starts extracted page content", async 
 
   const actionPromise = harness.listeners.actionClicked({ id: 7 });
   await harness.extractionStarted;
-  assert.deepEqual(Array.from(harness.scriptCalls[0].files), [
-    "session-wasm.js",
-    "runtime.js",
-    "engine.js",
-    "extractor.js",
-    "viewer.js",
-  ]);
+  assert.equal(harness.scriptCalls[0].world, "ISOLATED");
+  assert.deepEqual(Array.from(harness.scriptCalls[0].args), ["chrome-extension://reader/runtime.js"]);
+  assert.match(harness.scriptCalls[0].func.toString(), /import\(/u);
   assert.equal(harness.messages[0].tabId, 7);
   assert.equal(harness.messages[0].message.type, "SHOW_RSVP_LOADING");
   assert.equal(typeof harness.finishExtraction, "function");
@@ -150,7 +150,7 @@ test("toolbar action loads the reader and starts extracted page content", async 
 
   assert.deepEqual(Array.from(harness.scriptCalls[1].files), ["vendor/defuddle/defuddle.js"]);
   const injectedFiles = harness.scriptCalls.flatMap((call) => call.files || []);
-  assert.equal(injectedFiles.filter((file) => file === "extractor.js").length, 1);
+  assert.equal(injectedFiles.filter((file) => file === "vendor/defuddle/defuddle.js").length, 1);
   assert.equal(harness.messages[1].tabId, 7);
   assert.equal(harness.messages[1].message.type, "START_RSVP");
   assert.equal(harness.messages[1].message.text, "記事本文");
@@ -159,7 +159,8 @@ test("toolbar action loads the reader and starts extracted page content", async 
   const extractionCall = harness.scriptCalls.find((call) => call.func?.toString().includes("fromPageAsync"));
   assert.equal(extractionCall.world, "ISOLATED");
   assert.deepEqual(Array.from(extractionCall.args), [harness.messages[0].message.requestId]);
-  assert.match(extractionCall.func.toString(), /signal: controller\.signal/u);
+  assert.match(extractionCall.func.toString(), /AbortController/u);
+  assert.match(extractionCall.func.toString(), /signal:\w+\.signal/u);
 });
 
 test("selection action starts the selected text without page extraction", async () => {
@@ -176,13 +177,7 @@ test("selection action starts the selected text without page extraction", async 
   assert.equal(harness.messages[1].message.type, "START_RSVP");
   assert.equal(harness.messages[1].message.text, "選択した本文");
   assert.equal(harness.scriptCalls.length, 1);
-  assert.deepEqual(Array.from(harness.scriptCalls[0].files), [
-    "session-wasm.js",
-    "runtime.js",
-    "engine.js",
-    "extractor.js",
-    "viewer.js",
-  ]);
+  assert.deepEqual(Array.from(harness.scriptCalls[0].args), ["chrome-extension://reader/runtime.js"]);
 });
 
 test("toolbar action reports an extraction error for an empty page", async () => {

@@ -134,10 +134,31 @@ function beginPreparation(tabId: number, operation: PreparationOperation): strin
   return requestId;
 }
 
+function loadReaderRuntime(runtimeURL: string): Promise<void> {
+  const scope = globalThis as typeof globalThis & {
+    __readerRuntimeAttempt?: number;
+    __readerRuntimePromise?: Promise<void>;
+  };
+  if (scope.__readerRuntimePromise) return scope.__readerRuntimePromise;
+  const attempt = (scope.__readerRuntimeAttempt ?? 0) + 1;
+  scope.__readerRuntimeAttempt = attempt;
+  const url = new URL(runtimeURL);
+  url.searchParams.set("readerAttempt", String(attempt));
+  scope.__readerRuntimePromise = import(url.href)
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      scope.__readerRuntimePromise = undefined;
+      throw error;
+    });
+  return scope.__readerRuntimePromise;
+}
+
 async function openReader(tabId: number, requestId: string): Promise<void> {
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["session-wasm.js", "runtime.js", "engine.js", "extractor.js", "viewer.js"],
+    world: "ISOLATED",
+    func: loadReaderRuntime,
+    args: [chrome.runtime.getURL("runtime.js")],
   });
   if (!isActiveRequest(tabId, requestId)) return;
   await chrome.tabs.sendMessage(tabId, {

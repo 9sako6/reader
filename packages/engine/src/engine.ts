@@ -477,3 +477,5 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     displayDuration,
   };
 });
+
+export {};
