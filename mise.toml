@@ -89,7 +89,7 @@ cp .build/session-licenses/reader-session-dependencies.txt apps/chrome/dist/LICE
 description = "Package the Chrome extension"
 depends = ["build:chrome"]
 run = '''
-version="$(jq -er '.version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' apps/chrome/manifest.json)"
+version="$(jq -er '.version | select(test("^[0-9]{4}\\.([1-9]|1[0-2])\\.(0|[1-9][0-9]*)$"))' apps/chrome/manifest.json)"
 archive_name="reader-chrome-${version}.zip"
 archive_path="$PWD/artifacts/chrome/$archive_name"
 rm -rf artifacts/chrome
@@ -98,11 +98,27 @@ install -d artifacts/chrome
 (cd artifacts/chrome && shasum -a 256 "$archive_name" > SHA256SUMS)
 '''
 
+[tasks."bump:chrome"]
+description = "Set the next monthly Chrome CalVer"
+run = '''
+git fetch origin --tags
+version="$(bash scripts/next-chrome-version.sh)"
+node -e '
+const fs = require("node:fs");
+const manifestPath = "apps/chrome/manifest.json";
+const manifest = fs.readFileSync(manifestPath, "utf8");
+const versionFields = manifest.match(/^\s*"version":\s*"[^"]+",?$/gm) || [];
+if (versionFields.length !== 1) throw new Error("expected one Chrome manifest version");
+fs.writeFileSync(manifestPath, manifest.replace(/^(\s*"version":\s*")[^"]+(".*)$/m, `$1${process.argv[1]}$2`));
+' "$version"
+printf 'Chrome version: %s\n' "$version"
+'''
+
 [tasks."verify:chrome-release"]
 description = "Verify the Chrome release tag and package"
 depends = ["package:chrome"]
 run = '''
-version="$(jq -er '.version' apps/chrome/manifest.json)"
+version="$(jq -er '.version | select(test("^[0-9]{4}\\.([1-9]|1[0-2])\\.(0|[1-9][0-9]*)$"))' apps/chrome/manifest.json)"
 expected_tag="chrome-v${version}"
 release_tag="${RELEASE_TAG:-$expected_tag}"
 test "$release_tag" = "$expected_tag"
@@ -195,19 +211,24 @@ run = "node scripts/test-safari-package-runtime.mjs"
 [tasks."release:chrome"]
 description = "Release the current Chrome version"
 run = '''
-mise run check
-mise run test
-mise run verify:chrome-release
-version="$(jq -er '.version' apps/chrome/manifest.json)"
-tag="chrome-v${version}"
 test "$(git branch --show-current)" = "main"
 test -z "$(git status --porcelain)"
 git fetch origin main --tags
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+version="$(jq -er '.version' apps/chrome/manifest.json)"
+next_version="$(bash scripts/next-chrome-version.sh)"
+if [[ "$version" != "$next_version" ]]; then
+  printf 'Chrome version must be %s, got %s\n' "$next_version" "$version" >&2
+  exit 1
+fi
+tag="chrome-v${version}"
 if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
   echo "$tag already exists" >&2
   exit 1
 fi
+mise run check
+mise run test
+mise run verify:chrome-release
 git tag -a "$tag" -m "reader Chrome ${version}"
 git push origin "$tag"
 '''

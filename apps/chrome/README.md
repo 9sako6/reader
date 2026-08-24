@@ -23,7 +23,15 @@ mise run build:chrome
 
 ## リリース
 
-Chrome版のバージョンは`manifest.json`で管理します。mainへ変更を反映したあと、次のタスクが型検査、テスト、zip生成、タグ作成、タグのpushを順に行います。
+Chrome版は日本時間を基準にした`YYYY.M.RELEASE`形式のCalVerを使います。`RELEASE`は月内のリリース連番で、最初は`0`、以降は`1`ずつ増やします。
+
+次のバージョンを`manifest.json`へ反映し、変更理由を含むコミットとしてmainへ反映します。
+
+```sh
+mise run bump:chrome
+```
+
+mainへの反映後、次のタスクがバージョン、型検査、テスト、zip生成を検証し、タグを作成してpushします。
 
 ```sh
 mise run release:chrome

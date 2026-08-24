@@ -24,12 +24,12 @@ test("Chrome release notes list commit titles between Chrome tags without pull r
   git(repository, "config", "user.name", "Release test");
   git(repository, "config", "user.email", "release-test@example.com");
   commit(repository, "以前の変更");
-  git(repository, "tag", "chrome-v0.0.1");
+  git(repository, "tag", "chrome-v0.0.10");
   commit(repository, "画像を本文位置に表示する");
   commit(repository, "暗幕で夜間の眩しさを抑える");
-  git(repository, "tag", "chrome-v0.0.2");
+  git(repository, "tag", "chrome-v2026.8.0");
 
-  const notes = execFileSync("bash", [script, "chrome-v0.0.2"], {
+  const notes = execFileSync("bash", [script, "chrome-v2026.8.0"], {
     cwd: repository,
     encoding: "utf8",
   });
@@ -39,6 +39,6 @@ test("Chrome release notes list commit titles between Chrome tags without pull r
   assert.ok(notes.indexOf("画像を本文位置に表示する") < notes.indexOf("暗幕で夜間の眩しさを抑える"));
 
   const outputPath = path.join(repository, "release-notes.md");
-  execFileSync("bash", [script, "chrome-v0.0.2", outputPath], { cwd: repository });
+  execFileSync("bash", [script, "chrome-v2026.8.0", outputPath], { cwd: repository });
   assert.equal(fs.readFileSync(outputPath, "utf8"), notes);
 });
