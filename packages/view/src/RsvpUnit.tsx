@@ -7,13 +7,13 @@ type RsvpUnitProps = {
 function fitTextToContainer(textElement: HTMLSpanElement): void {
   const container = textElement.parentElement;
   const view = textElement.ownerDocument.defaultView;
-  if (!container || !view) return;
+  if (!container || !view || typeof view.getComputedStyle !== "function") return;
 
-  container.style.removeProperty("font-size");
+  container.style.fontSize = "";
   const availableWidth = container.clientWidth;
   const naturalWidth = textElement.getBoundingClientRect().width;
   const baseFontSize = Number.parseFloat(view.getComputedStyle(container).fontSize);
-  if (availableWidth <= 0 || naturalWidth <= availableWidth || !Number.isFinite(baseFontSize)) return;
+  if (!Number.isFinite(availableWidth) || availableWidth <= 0 || naturalWidth <= availableWidth || !Number.isFinite(baseFontSize)) return;
 
   container.style.fontSize = `${baseFontSize * availableWidth / naturalWidth}px`;
 }

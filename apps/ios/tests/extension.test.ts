@@ -855,13 +855,6 @@ const safariLateTimerScenarios = [
     },
   },
   {
-    name: "resize",
-    operate(harness) {
-      harness.context.innerWidth = 180;
-      harness.context.dispatchEvent({ type: "resize" });
-    },
-  },
-  {
     name: "close",
     operate(harness) {
       harness.context.MobileViewer.close();
@@ -897,6 +890,30 @@ for (const scenario of safariLateTimerScenarios) {
     assert.deepEqual(harness.sessionState(), stateAfterOperation);
   });
 }
+
+test("Safari reader preserves the current RSVP phrase when the viewport width changes", async () => {
+  const harness = createSafariReaderHarness();
+  const text = "意味のまとまりです。次です。";
+  harness.setActiveContent({
+    text,
+    readingContext: {
+      ...harness.activeContent().readingContext,
+      blocks: [{ text, kind: "paragraph", level: null, start: 0, end: text.length }],
+      figures: [],
+    },
+  });
+  await harness.context.MobileViewer.open();
+  const unit = findElement(
+    harness.documentElement,
+    (element) => element.className.startsWith("rsvp-unit"),
+  );
+  assert.equal(unit.textContent, "意味のまとまりです。");
+
+  harness.context.innerWidth = 180;
+  harness.context.dispatchEvent({ type: "resize" });
+
+  assert.equal(unit.textContent, "意味のまとまりです。");
+});
 
 test("Safari reader acknowledges the tap at the page edge before 200ms", async () => {
   const harness = createSafariReaderHarness();
@@ -1372,7 +1389,6 @@ test("Safari reader pauses after returning from an image to the previous sentenc
   fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
-  fireNextTimer(timers);
   const firstFigure = findElement(
     documentElement,
     (element) => element.attributes["aria-label"] === "本文画像",
@@ -1391,7 +1407,6 @@ test("Safari reader pauses after returning from an image to the previous sentenc
   assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.ok(timers.size > 0);
 
-  fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
@@ -1461,7 +1476,6 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   const { context, documentElement, timers, createdElements } = createSafariReaderHarness();
   await context.MobileViewer.open();
   const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
-  fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
@@ -1904,7 +1918,6 @@ test("Safari reader destroys figure state when closed", async () => {
   const harness = createSafariReaderHarness();
   const { context, documentElement, timers } = harness;
   await context.MobileViewer.open();
-  fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
