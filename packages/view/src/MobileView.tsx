@@ -5,6 +5,7 @@ import { LoadingView } from "./LoadingView";
 import { ReaderIcon } from "./ReaderIcon";
 import { ReaderTextScroller } from "./ReaderTextScroller";
 import { RewindFeedback } from "./RewindFeedback";
+import { RsvpUnit } from "./RsvpUnit";
 import { orderedTextChildren } from "./TextContent";
 import type { ReaderViewHandlers, ReaderViewModel } from "./types";
 
@@ -51,9 +52,7 @@ export function MobileView({ model, handlers }: { model: ReaderViewModel; handle
                 {model.figure
                   ? <Figure figureView={model.figure} handlers={handlers} text={false} />
                   : <div className={`rsvp-unit ${model.unit?.kind || "body"}`} data-reader-unit="true" data-reader-position-kind="text" data-source-start={model.unit ? String(model.unit.start) : "0"} data-source-end={model.unit ? String(model.unit.end) : "0"} aria-live="off" aria-atomic="false">
-                    {model.unit?.kind === "code"
-                      ? <code data-reader-inline-code="true" tabIndex={0}>{model.unit.text}</code>
-                      : model.unit?.text || ""}
+                    <RsvpUnit unit={model.unit} />
                   </div>}
                 <MobileContext position="next" text={model.next} reducedMotion={model.reducedMotion === true} />
               </div>

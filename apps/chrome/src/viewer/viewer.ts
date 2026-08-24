@@ -17,7 +17,6 @@ import viewerStyles from "./viewer.css";
   globalThis.__rsvpReaderInstalled = true;
 
   const ROOT_ID = "__rsvp-reader-root";
-  const DISPLAY_FONT_SIZE = "clamp(36px, 4.5vw, 64px)";
   const LOADER_REVEAL_DELAY_MS = 200;
   const SLOW_PREPARATION_DELAY_MS = 400;
   const LOADING_COVER_TRANSITION_MS = 220;
@@ -26,10 +25,8 @@ import viewerStyles from "./viewer.css";
     globalThis.performance?.mark?.(name);
   }
 
-  let baseUnits: ReaderUnit[] = [];
   let units: ReaderUnit[] = [];
   let segmentationLocale = "ja";
-  let currentGraphemeLimit = 12;
   let rootHost: HTMLDivElement | null = null;
   let readerShadow: ShadowRoot | null = null;
   let root: HTMLDialogElement | HTMLDivElement | null = null;
@@ -459,7 +456,7 @@ import viewerStyles from "./viewer.css";
     const codeBoundaries = codeRanges.flatMap((range) => [range.start, range.end]);
     segmentationLocale = readingContext.language;
     viewBlocks = buildViewBlocks(blocks.length > 0 ? blocks : fallbackBlocks(sourceText), segmentationLocale);
-    baseUnits = globalThis.Engine.preserveCodeRanges(
+    units = globalThis.Engine.preserveCodeRanges(
       globalThis.Engine.segmentText(content.text, segmentationLocale, [...figureBoundaries, ...codeBoundaries]),
       content.text,
       codeRanges,
@@ -476,13 +473,11 @@ import viewerStyles from "./viewer.css";
         && unit.start >= figure.sourceOffset
         && unit.end <= figure.sourceEnd
       )));
-    if (baseUnits.length === 0) {
+    if (units.length === 0) {
       showError(requestId, "content_not_found");
       return;
     }
 
-    units = baseUnits;
-    currentGraphemeLimit = 12;
     flowItems = globalThis.Engine.buildReadingFlow(units, figures);
     currentPosition = flowItems[0]
       ? globalThis.Engine.positionForFlowItem(flowItems[0], units)
@@ -490,7 +485,6 @@ import viewerStyles from "./viewer.css";
     activePreparation = { kind: "ready", requestId };
     loadingCoverVisible = false;
     createOverlay();
-    rebuildUnitsForViewport();
     renderReactView(reactViewModel());
     dispatchSession({
       type: "prepareSucceeded",
@@ -750,7 +744,7 @@ import viewerStyles from "./viewer.css";
     focusAfterPaint(root);
     if (typeof globalThis.ResizeObserver === "function" && root && !displayResizeObserver) {
       displayResizeObserver = new globalThis.ResizeObserver(() => {
-        if (rebuildUnitsForViewport()) renderSessionState();
+        renderSessionState();
       });
       displayResizeObserver.observe(root);
     }
@@ -1303,41 +1297,6 @@ import viewerStyles from "./viewer.css";
     } as DOMRect;
   }
 
-  function computedFixedFontSize(): number {
-    const computedStyle = display ? globalThis.getComputedStyle?.(display) : null;
-    const value = Number.parseFloat(computedStyle?.fontSize || "");
-    return Number.isFinite(value) && value > 0 ? value : 64;
-  }
-
-  function maxGraphemesForViewport(): number {
-    const displayAreaWidth = display?.clientWidth || globalThis.innerWidth || 0;
-    const availableWidth = Math.max(160, displayAreaWidth - 32);
-    const fontSize = computedFixedFontSize();
-    const graphemeWidth = /^(?:ja|zh|ko)(?:-|$)/iu.test(segmentationLocale)
-      ? fontSize
-      : fontSize * 0.58;
-    return Math.min(12, Math.max(3, Math.floor(availableWidth / graphemeWidth)));
-  }
-
-  function rebuildUnitsForViewport(): boolean {
-    if (baseUnits.length === 0) return false;
-    const nextLimit = maxGraphemesForViewport();
-    if (nextLimit === currentGraphemeLimit && units.length > 0) return false;
-
-    const position = currentPosition;
-    currentGraphemeLimit = nextLimit;
-    units = globalThis.Engine.splitLongUnits(baseUnits, segmentationLocale, currentGraphemeLimit);
-    flowItems = globalThis.Engine.buildReadingFlow(units, figures);
-    if (!applyingSession) {
-      dispatchSession({
-        type: "rebuildUnits",
-        units: sessionPreparation().units,
-        position,
-      });
-    }
-    return true;
-  }
-
   function activeHeadingAt(offset: number): number {
     return globalThis.Engine.findActiveHeadingIndex(
       sectionTransitions,
@@ -1673,10 +1632,8 @@ import viewerStyles from "./viewer.css";
           articleTitle = "";
           blocks = [];
           viewBlocks = [];
-          baseUnits = [];
           currentPosition = { kind: "text", sourceOffset: 0 };
           segmentationLocale = "ja";
-          currentGraphemeLimit = 12;
           launchFocus = null;
           restoreSourcePage();
           sourceScrollPosition = preserveSourceScroll ? restoreScroll : null;

@@ -20,7 +20,6 @@ import viewerStyles from "./viewer.css";
   const LOADER_REVEAL_DELAY_MS = 200;
   const TEXT_VIEW_READABLE_TOP_PX = 72;
   const TEXT_VIEW_READABLE_BOTTOM_PX = 96;
-  const RSVP_FONT_SIZE = 40;
   const PERFORMANCE_PHASE_TO_METRIC: Record<ReaderExtractionPhase, keyof ReaderExtractionMetrics> = {
     dominant_article: "dominantArticleMs",
     defuddle_parse: "defuddleMs",
@@ -1003,7 +1002,7 @@ import viewerStyles from "./viewer.css";
         && unit.start >= figure.sourceOffset
         && unit.end <= figure.sourceEnd
       )));
-    units = global.Engine.splitLongUnits(segmented, locale, maxGraphemesForViewport());
+    units = segmented;
     rebuildFlowItems();
     if (!applyingSession) {
       dispatchSession({
@@ -1019,18 +1018,8 @@ import viewerStyles from "./viewer.css";
     flowItems = global.Engine.buildReadingFlow(units, articleFigures);
   }
 
-  function maxGraphemesForViewport() {
-    const availableWidth = Math.max(160, global.innerWidth - 48);
-    const locale = content?.readingContext?.language || "ja";
-    const graphemeWidth = /^(?:ja|zh|ko)(?:-|$)/iu.test(locale)
-      ? RSVP_FONT_SIZE * 0.9
-      : RSVP_FONT_SIZE * 0.58;
-    return Math.min(12, Math.max(3, Math.floor(availableWidth / graphemeWidth)));
-  }
-
   function handleViewportChange() {
     if (!overlay || !content) return;
-    rebuildUnits();
     renderSessionState();
   }
 

@@ -1223,29 +1223,6 @@ const chromeLateTimerScenarios = [
     },
   },
   {
-    name: "resize",
-    createHarness: () => createOutlineReaderHarness(),
-    start(harness) {
-      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-resize" });
-      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-resize" });
-    },
-    capture(harness) {
-      const entry = [...harness.timers.entries()][0];
-      assert.ok(entry);
-      harness.timers.delete(entry[0]);
-      return entry[1].callback;
-    },
-    operate(harness) {
-      const overlay = harness.document.getElementById("__rsvp-reader-root");
-      const display = findElement(
-        overlay,
-        isRsvpDisplay,
-      );
-      display.clientWidth = 300;
-      harness.resizeDisplay();
-    },
-  },
-  {
     name: "close",
     createHarness: () => createOutlineReaderHarness(),
     start(harness) {
@@ -1473,7 +1450,7 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(nextContext.animations.length, 0);
 });
 
-test("reader splits RSVP units when the available width shrinks without changing font size", () => {
+test("reader preserves the current RSVP phrase when the available width changes", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resize-request" });
@@ -1488,13 +1465,13 @@ test("reader splits RSVP units when the available width shrinks without changing
   );
 
   const initialClassName = display.attributes.class;
+  const initialText = display.textContent;
   display.clientWidth = 300;
   harness.resizeDisplay();
   assert.equal(display.attributes.class, initialClassName);
+  assert.equal(display.textContent, initialText);
   assert.match(ReaderViewStyles, /\.reader-unit \{[^}]*font-size: clamp\(36px, 4\.5vw, 64px\)/su);
-  assert.ok([
-    ...new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(display.textContent),
-  ].length <= 4);
+  assert.match(ReaderViewStyles, /\[data-reader-unit-text\] \{[^}]*width: max-content[^}]*white-space: nowrap/su);
   assert.match(display.attributes.class, /reader-unit/u);
 });
 

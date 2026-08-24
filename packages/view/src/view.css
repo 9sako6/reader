@@ -88,7 +88,7 @@
 [data-reader-unit-background] { position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none; }
 [data-reader-unit-kind="quote"] [data-reader-unit-background] { background: rgba(255,255,255,0.055); }
 [data-reader-unit-kind="aside"] [data-reader-unit-background] { background: rgba(255,255,255,0.035); }
-[data-reader-unit-text] { position: relative; z-index: 1; display: block; }
+[data-reader-unit-text] { position: relative; z-index: 1; display: inline-block; flex: none; width: max-content; max-width: none; white-space: nowrap; }
 [data-reader-inline-code] { display: block; max-width: 100%; padding: 0.35em 0.5em; overflow-x: auto; border-radius: 10px; background: rgba(255,255,255,0.08); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: clamp(18px, 3vw, 36px); font-weight: 500; white-space: nowrap; }
 .text-sentence [data-reader-inline-code] { display: inline; padding: 0.12em 0.34em; border-radius: 0.32em; font-size: 0.88em; }
 [data-reader-controlbar] { position: absolute; z-index: 4; left: 0; right: 0; bottom: 0; height: 146px; pointer-events: none; }

@@ -157,12 +157,6 @@ async function loadingBarRevealSnapshot(page: Page): Promise<{
   }).ReaderE2E.loadingBarRevealEvents.at(-1) || null);
 }
 
-const RSVP_WIDTHS = [320, 375, 390, 430, 768];
-const RSVP_SHORT_TEXT = "短い。";
-const RSVP_NEAR_LIMIT_TEXT = "上限付近。";
-const RSVP_LONG_URL = "https://example.com/path/to/a/very/long/resource?token=abcdefghijklmnopqrstuvwxyz0123456789";
-const RSVP_WIDTH_SOURCE = `${RSVP_SHORT_TEXT}${RSVP_NEAR_LIMIT_TEXT}${RSVP_LONG_URL}。`;
-
 test("Chrome RSVP controls and outline distinguish active, inactive, and keyboard focus in more contrast", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ contrast: "no-preference" });
@@ -458,66 +452,53 @@ test("Chrome keeps high contrast colors while reduced motion disables loading an
   expect(await indicator.evaluate((element) => element.getAnimations().length)).toBe(0);
 });
 
-for (const viewportWidth of RSVP_WIDTHS) {
-  test(`Chrome viewer caps RSVP units at ${viewportWidth}px without changing font size`, async ({ page }) => {
-    await page.setViewportSize({ width: viewportWidth, height: 800 });
-    await loadViewer(page, "chrome");
-    await openChrome(page, { text: RSVP_WIDTH_SOURCE, paused: true });
+test("Chrome RSVP keeps a semantic phrase intact and shrinks it to the available width", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { text: "意味のまとまりです。次です。", paused: true });
 
-    const dialog = page.getByRole("dialog", { name: "reader" });
-    await expect(dialog).toBeVisible();
-    const display = dialog.locator("[data-reader-unit]");
-    await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  const display = dialog.locator('[data-reader-unit="true"]');
+  const text = display.locator('[data-reader-unit-text="true"]');
+  await expect(display).toHaveText("意味のまとまりです。");
+  await expect(display).toHaveAttribute("data-source-start", "0");
+  await expect(display).toHaveAttribute("data-source-end", "10");
 
-    const inspectDisplay = () => display.evaluate((element) => {
-      const style = getComputedStyle(element);
-      const rectangle = element.getBoundingClientRect();
-      return {
-        text: element.textContent || "",
-        sourceStart: Number(element.getAttribute("data-source-start")),
-        sourceEnd: Number(element.getAttribute("data-source-end")),
-        widthOverflow: element.scrollWidth - element.clientWidth,
-        fontSize: style.fontSize,
-        centerY: rectangle.top + rectangle.height / 2,
-      };
-    });
-
-    const snapshots = [];
-    await expect(display).toHaveText(RSVP_SHORT_TEXT);
-    await expect.poll(async () => (await inspectDisplay()).sourceStart).toBe(0);
-    snapshots.push(await inspectDisplay());
-
-    await dialog.getByRole("button", { name: "再生" }).click();
-    await expect.poll(async () => (await inspectDisplay()).sourceStart).toBe(RSVP_SHORT_TEXT.length);
-    await dialog.getByRole("button", { name: "一時停止" }).click();
-    snapshots.push(await inspectDisplay());
-
-    await dialog.getByRole("button", { name: "再生" }).click();
-    await expect.poll(async () => (await inspectDisplay()).sourceStart).toBe(
-      RSVP_SHORT_TEXT.length + RSVP_NEAR_LIMIT_TEXT.length,
-    );
-    await dialog.getByRole("button", { name: "一時停止" }).click();
-    snapshots.push(await inspectDisplay());
-
-    expect(snapshots[0]?.text).toBe(RSVP_SHORT_TEXT);
-    expect(snapshots[1]?.text).toBe(RSVP_NEAR_LIMIT_TEXT);
-    expect(snapshots[2]?.text.startsWith("https:")).toBe(true);
-    expect(snapshots.every(({ widthOverflow }) => widthOverflow <= 0)).toBe(true);
-    expect(snapshots.map(({ fontSize }) => fontSize)).toEqual(
-      snapshots.map(() => snapshots[0]?.fontSize),
-    );
-    const centerYs = snapshots.map(({ centerY }) => centerY);
-    expect(Math.max(...centerYs) - Math.min(...centerYs)).toBeLessThanOrEqual(1);
-
-    const sourceStartBeforeResize = (await inspectDisplay()).sourceStart;
-    await page.setViewportSize({ width: viewportWidth === 768 ? 320 : 768, height: 800 });
-    await expect.poll(async () => (await inspectDisplay()).sourceStart).toBe(sourceStartBeforeResize);
-    const resizedDisplay = await inspectDisplay();
-    expect(RSVP_WIDTH_SOURCE.slice(resizedDisplay.sourceStart, resizedDisplay.sourceEnd)).toBe(resizedDisplay.text);
-    expect(resizedDisplay.widthOverflow).toBeLessThanOrEqual(0);
-    expect(resizedDisplay.fontSize).toBe(snapshots[0]?.fontSize);
+  const narrowGeometry = await display.evaluate((element) => {
+    const textElement = element.querySelector<HTMLElement>('[data-reader-unit-text="true"]');
+    return {
+      fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
+      availableWidth: element.clientWidth,
+      textWidth: textElement?.getBoundingClientRect().width || 0,
+    };
   });
-}
+  expect(narrowGeometry.fontSize).toBeLessThan(36);
+  expect(narrowGeometry.textWidth).toBeLessThanOrEqual(narrowGeometry.availableWidth + 1);
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(display).toHaveText("意味のまとまりです。");
+  await expect.poll(() => display.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThan(narrowGeometry.fontSize);
+  const wideGeometry = await text.evaluate((element) => ({
+    textWidth: element.getBoundingClientRect().width,
+    availableWidth: element.parentElement?.clientWidth || 0,
+  }));
+  expect(wideGeometry.textWidth).toBeLessThanOrEqual(wideGeometry.availableWidth + 1);
+});
+
+test("Chrome RSVP leaves a short phrase at the base font size", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { text: "短い。次です。", paused: true });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  const display = dialog.locator('[data-reader-unit="true"]');
+  await expect(display).toHaveText("短い。");
+  await expect(display).toHaveCSS("font-size", "36px");
+});
 
 test("mobile viewer keeps ordinary English words intact at phone width", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1497,22 +1478,26 @@ test("Chrome viewer preserves the sentence after an image after 50 mode round tr
 });
 
 test("mobile viewer keeps RSVP text readable without overflow", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 320, height: 844 });
   await loadViewer(page, "mobile");
-  await page.getByRole("button", { name: "readerで読む" }).click();
+  await openMobile(page, { text: "意味のまとまりです。次です。" });
   const dialog = page.getByRole("dialog", { name: "reader" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "一時停止" }).click();
+  const display = dialog.locator('[data-reader-unit="true"]');
+  await expect(display).toHaveText("意味のまとまりです。");
 
-  const geometry = await dialog.locator("[data-reader-unit]").evaluate((element) => {
-    const style = getComputedStyle(element);
+  const geometry = await display.evaluate((element) => {
+    const textElement = element.querySelector<HTMLElement>('[data-reader-unit-text="true"]');
     return {
-      widthOverflow: element.scrollWidth - element.clientWidth,
-      fontSize: Number.parseFloat(style.fontSize),
+      availableWidth: element.clientWidth,
+      textWidth: textElement?.getBoundingClientRect().width || 0,
+      fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
     };
   });
 
-  expect(geometry.widthOverflow).toBeLessThanOrEqual(1);
+  expect(geometry.textWidth).toBeLessThanOrEqual(geometry.availableWidth + 1);
+  expect(geometry.fontSize).toBeLessThan(40);
   expect(geometry.fontSize).toBeGreaterThanOrEqual(20);
 });
 
