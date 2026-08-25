@@ -39,6 +39,8 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: mise run verify:chrome-release
       - name: Generate release notes
+        env:
+          CHROME_RELEASE_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
         run: bash scripts/generate-chrome-release-notes.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/chrome-release-notes.md"
       - name: Publish release
         env:

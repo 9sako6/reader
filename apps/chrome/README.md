@@ -37,4 +37,4 @@ mainへの反映後、次のタスクがバージョン、型検査、テスト�
 mise run release:chrome
 ```
 
-`chrome-v<version>`タグを受け取ったGitHub Actionsが、zipとSHA-256チェックサムをGitHub Releaseへ添付します。Release本文には導入手順と、前回のChromeタグから今回のタグまでのコミット題名が時系列で入ります。Pull Requestの作成はリリースノート掲載の条件ではありません。
+`chrome-v<version>`タグを受け取ったGitHub Actionsが、zipとSHA-256チェックサムをGitHub Releaseへ添付します。Release本文には導入手順と、前回のChromeタグから今回のタグまでのコミット題名、短いコミットハッシュ、コミットへのリンクが時系列で入ります。Pull Requestの作成はリリースノート掲載の条件ではありません。
