@@ -109,6 +109,72 @@ test("Chrome reader stays above hostile page CSS and top-layer UI while its cont
   await expect(page.locator('[data-reader-owned="true"]')).toHaveCount(0);
 });
 
+test("Chrome text reader allows selecting and copying a paragraph on a page that disables selection", async ({ page }) => {
+  await loadChromeViewer(page);
+  await page.evaluate(() => {
+    const scope = globalThis as typeof globalThis & { copiedReaderText: string };
+    scope.copiedReaderText = "";
+    document.addEventListener("copy", () => {
+      scope.copiedReaderText = getSelection()?.toString() || "";
+    });
+    const style = document.createElement("style");
+    style.textContent = "* { user-select: none !important; -webkit-user-select: none !important; }";
+    document.head.append(style);
+
+    const host = document.createElement("div");
+    host.setAttribute("data-reader-selection-test", "true");
+    Object.assign(host.style, { position: "fixed", inset: "0", background: "#090909" });
+    const mountPoint = document.createElement("div");
+    Object.assign(mountPoint.style, { position: "absolute", inset: "0" });
+    host.attachShadow({ mode: "open" }).append(mountPoint);
+    document.body.append(host);
+
+    const view = globalThis.ReaderView;
+    if (!view) throw new Error("reader view was not loaded");
+    view.mount(mountPoint).render({
+      kind: "text",
+      language: "ja",
+      title: "",
+      blocks: [{
+        text: "最初の短い文です。次の文は注視位置が動かないことを確かめます。画像の直前にある文です。",
+        kind: "paragraph",
+        level: null,
+        start: 0,
+        end: 43,
+        sentenceSpans: [{ start: 0, end: 43, sentenceIndex: 0 }],
+      }],
+      figures: [],
+      position: { kind: "text", sourceOffset: 0 },
+      progress: 0,
+    }, {
+      close() {},
+      cancel() {},
+      retry() {},
+      switchToText() {},
+      switchToRsvp() {},
+      previousSentence() {},
+      togglePlayback() {},
+      resumeFigure() {},
+      figureLoad() {},
+      figureError() {},
+      textScroll() {},
+      textPosition() {},
+    });
+  });
+
+  const reader = page.locator('[data-reader-selection-test="true"]');
+  const paragraph = reader.locator("p.paragraph");
+  await expect(paragraph).toHaveText("最初の短い文です。次の文は注視位置が動かないことを確かめます。画像の直前にある文です。");
+
+  await paragraph.click({ clickCount: 3 });
+  await expect.poll(() => page.evaluate(() => getSelection()?.toString() || "")).toContain("最初の短い文です。");
+  await page.keyboard.press("ControlOrMeta+C");
+
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & { copiedReaderText: string }
+  ).copiedReaderText)).toContain("最初の短い文です。");
+});
+
 test("Chrome reader preserves a page-owned root id and does not duplicate its host after reopening", async ({ page }) => {
   await loadChromeViewer(page);
   await page.evaluate(() => {
