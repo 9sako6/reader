@@ -1,4 +1,13 @@
 import viewerStyles from "./viewer.css";
+import {
+  createRsvpTextMeasurer,
+  prepareReaderDocument,
+  presentReader,
+  reflowReaderDocument,
+  sessionPreparation as prepareSession,
+  type PreparedReaderDocument,
+  type ReaderPresentationUiState,
+} from "../../../../../packages/presentation/src/presentation";
 
 (function installMobileViewer(root: typeof globalThis, factory: (global: typeof globalThis) => ReaderMobileViewer) {
   if (root.MobileViewer) return;
@@ -10,7 +19,6 @@ import viewerStyles from "./viewer.css";
     | { kind: "loading"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "failed"; token: number; figureIndex: number };
-  type ReactReaderBlock = Extract<ReaderScreen, { kind: "text" }>["blocks"][number];
   interface LaunchProgress {
     startedAt: number;
     revealTimer: number | null;
@@ -35,11 +43,7 @@ import viewerStyles from "./viewer.css";
   let sourceScrollY = 0;
   let sourceOverflow: string | null = null;
   let sourceBodyOverflow: string | null = null;
-  let content: ReaderContent | null = null;
-  let viewBlocks: ReactReaderBlock[] = [];
-  let units: ReaderUnit[] = [];
-  let flowItems: ReaderFlowItem[] = [];
-  let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
+  let preparedDocument: PreparedReaderDocument | null = null;
   let figureViewState: FigureViewState = { kind: "idle" };
   let figureLoadToken = 0;
   let figureLoadRevealTimerId: number | null = null;
@@ -53,13 +57,10 @@ import viewerStyles from "./viewer.css";
   let inertedElements: Array<{ element: HTMLElement; wasInert: boolean }> = [];
   let backgroundInert = false;
   let launchProgress: LaunchProgress | null = null;
-  let sessionGeneration = 0;
-  let preparationGeneration = 0;
+  let uiGeneration = 0;
   let preparationController: AbortController | null = null;
-  let activePreparation: PreparationState = { kind: "idle" };
   let sessionState: ReaderSessionState | null = null;
   let sessionHandle: ReaderSessionHandle | null = null;
-  let sessionInitFailure = false;
   let applyingSession = false;
   let retainedPageUrl: string | null = null;
   let sessionDismissed = false;
@@ -80,6 +81,8 @@ import viewerStyles from "./viewer.css";
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
   let performanceUnitMarked = false;
+  const measureRsvpText = createRsvpTextMeasurer(global.document);
+  let rsvpFrameWidth = 0;
   let performanceReactInitStarted = false;
   let performanceReactInitMarked = false;
 
@@ -95,15 +98,29 @@ import viewerStyles from "./viewer.css";
     return readingSessionState()?.flowIndex ?? 0;
   }
 
-  function sessionUnitIndex(): number {
-    const state = readingSessionState();
-    if (typeof state?.unitIndex === "number") return state.unitIndex;
-    const item = flowItems[sessionFlowIndex()];
-    return item?.kind === "unit" ? item.unitIndex : 0;
-  }
-
   function sessionIsPlaying(): boolean {
     return readingSessionState()?.playback === "playing";
+  }
+
+  function sessionPosition(): ReaderPosition {
+    const state = readingSessionState();
+    if (state) return state.position;
+    const first = preparedDocument?.flow[0];
+    return first && preparedDocument
+      ? global.Engine.positionForFlowItem(first, preparedDocument.frames)
+      : { kind: "text", sourceOffset: 0 };
+  }
+
+  function isPreparingRequest(requestId: string): boolean {
+    return sessionState?.phase === "preparing" && sessionState.requestId === requestId;
+  }
+
+  function currentRsvpFrameLayout() {
+    const viewportWidth = global.innerWidth || global.document.documentElement.clientWidth || 320;
+    return {
+      maxWidth: Math.max(1, viewportWidth - 40),
+      measureText: measureRsvpText,
+    };
   }
 
   function markPerformance(name: string): void {
@@ -195,44 +212,30 @@ import viewerStyles from "./viewer.css";
   }
 
   function reactScreen(): ReaderScreen {
-    if (activePreparation.kind === "preparing") {
-      return { kind: "loading", slow: false, revealed: launchProgress?.revealed === true, reducedMotion: prefersReducedMotion() };
-    }
-    if (activePreparation.kind === "failed") {
-      return { kind: "error", message: preparationFailureLabel(activePreparation.reason) };
-    }
-    const state = readingSessionState();
-    if (state?.mode === "text") {
-      return { kind: "text", language: content?.readingContext.language || "ja", blocks: viewBlocks, figures: content?.readingContext.figures || [], headings: content?.readingContext.headings || [], activeHeadingIndex: activeHeadingAt(currentPosition.sourceOffset), position: currentPosition, progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, title: content?.readingContext.title || global.document.title || "" };
-    }
-    const item = state ? flowItems[state.flowIndex] : flowItems[0];
-    const unitIndex = state?.unitIndex ?? (item?.kind === "unit" ? item.unitIndex : 0);
-    const rsvpScreen = { controlsVisible, reducedMotion: prefersReducedMotion(), progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, loadingCover: false, rewindFeedback, headings: content?.readingContext.headings || [], activeHeadingIndex: activeHeadingAt(currentPosition.sourceOffset) };
-    if (item?.kind === "figure") {
-      const figure = content?.readingContext.figures?.[item.figureIndex];
-      if (!figure || figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) throw new Error("reader_figure_state_unavailable");
-      const figureView = figureViewState.kind === "loading"
-        ? { figure, figureIndex: item.figureIndex, status: "loading" as const, token: figureViewState.token, loadingVisible: figureLoadRevealTimerId === null, brightness: figureViewState.brightness }
-        : figureViewState.kind === "ready"
-          ? { figure, figureIndex: item.figureIndex, status: "ready" as const, brightness: figureViewState.brightness }
-          : { figure, figureIndex: item.figureIndex, status: "failed" as const };
-      return { kind: "rsvp-figure", figure: figureView, ...rsvpScreen };
-    }
-    const unit = item?.kind === "unit" ? units[unitIndex] : undefined;
-    if (!unit) throw new Error("reader_unit_unavailable");
-    const context = global.Engine.surroundingSentences(units, unitIndex);
-    return { kind: "rsvp-unit", previous: context.previous, next: context.next, unit, playback: state?.playback === "playing" ? "playing" : "paused", ...rsvpScreen };
+    const figure = figureViewState.kind === "loading"
+      ? { ...figureViewState, loadingVisible: figureLoadRevealTimerId === null }
+      : figureViewState;
+    const ui: ReaderPresentationUiState = {
+      loadingSlow: false,
+      loadingRevealed: launchProgress?.revealed === true,
+      loadingCover: false,
+      controlsVisible,
+      reducedMotion: prefersReducedMotion(),
+      rewindFeedback,
+      figure,
+    };
+    return presentReader(preparedDocument, sessionState, ui);
   }
 
   function renderReactView(): void {
     if (!reactViewMount) return;
     const state = readingSessionState();
-    const item = state ? flowItems[state.flowIndex] : flowItems[0];
+    const item = state ? preparedDocument?.flow[state.flowIndex] : preparedDocument?.flow[0];
     if (item?.kind === "figure") {
       if (figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) {
         invalidateFigureLoad();
         const token = figureLoadToken;
-        const figure = content?.readingContext.figures?.[item.figureIndex];
+        const figure = preparedDocument?.figures[item.figureIndex];
         if (figure?.kind === "code" || (figure?.kind === "mermaid" && !figure.src)) {
           figureViewState = { kind: "ready", token, figureIndex: item.figureIndex, brightness: "revealed" };
         } else {
@@ -250,7 +253,7 @@ import viewerStyles from "./viewer.css";
     reactViewMount.render(screen, {
       close,
       cancel: () => {
-        if (activePreparation.kind === "preparing") cancelOpening(Number(activePreparation.requestId));
+        if (sessionState?.phase === "preparing") cancelOpening(Number(sessionState.requestId));
         else close();
       },
       retry,
@@ -280,7 +283,7 @@ import viewerStyles from "./viewer.css";
           reactTextMarkers = [];
           return;
         }
-        if (!content) return;
+        if (!preparedDocument) return;
         reactTextScroller = element;
         reactTextMarkers = Array.from(element.querySelectorAll<HTMLElement>("[data-reader-position-kind=\"text\"], [data-reader-position-kind=\"figure\"]"));
         reactTextRestoreScrollTop = element.scrollTop;
@@ -370,7 +373,7 @@ import viewerStyles from "./viewer.css";
   }
 
   function isCurrentSession(generation: number): boolean {
-    return generation === sessionGeneration && generation === preparationGeneration;
+    return generation === uiGeneration;
   }
 
   function destroyLaunchProgress(progress: LaunchProgress): void {
@@ -381,7 +384,7 @@ import viewerStyles from "./viewer.css";
   async function open() {
     if (overlay || opening || !handle || !shadow) return;
     markPerformance("reader:tap");
-    if (sessionDismissed && retainedPageUrl === global.location.href && activePreparation.kind === "ready" && readingSessionState()) {
+    if (sessionDismissed && retainedPageUrl === global.location.href && preparedDocument && readingSessionState()) {
       reopenRetainedSession();
       return;
     }
@@ -391,11 +394,8 @@ import viewerStyles from "./viewer.css";
     performanceRenderMarked = false;
     performanceControlsMarked = false;
     performanceUnitMarked = false;
-    sessionInitFailure = false;
-    const generation = ++sessionGeneration;
-    preparationGeneration = generation;
+    const generation = ++uiGeneration;
     opening = true;
-    activePreparation = { kind: "preparing", requestId: String(generation), startedAt: Date.now() };
     attachSessionLifecycle();
     beginReaderSession(String(generation));
     renderReactView();
@@ -458,20 +458,17 @@ import viewerStyles from "./viewer.css";
         destroyLaunchProgress(progress);
         return;
       }
-      content = extractedContent;
-      if (!content?.text) throw new Error("content_not_found");
-      const locale = content.readingContext?.language || "ja";
-      const sourceBlocks = content.readingContext?.blocks?.length ? content.readingContext.blocks : fallbackBlocks(content.text);
-      viewBlocks = sourceBlocks.map((block) => ({
-        ...block,
-        sentenceSpans: global.Engine.splitSentenceSpans(block.text, locale),
-      }));
-      rebuildUnits();
+      if (!extractedContent?.text) throw new Error("content_not_found");
+      const layout = currentRsvpFrameLayout();
+      preparedDocument = prepareReaderDocument(
+        extractedContent,
+        global.Engine,
+        layout,
+        global.document.title || "",
+      );
+      rsvpFrameWidth = layout.maxWidth;
       markPerformance("reader:segmentation-end");
-      if (units.length === 0) throw new Error("units_not_found");
-      currentPosition = flowItems[0]
-        ? global.Engine.positionForFlowItem(flowItems[0], units)
-        : { kind: "text", sourceOffset: 0 };
+      if (preparedDocument.frames.length === 0) throw new Error("units_not_found");
     } catch (error) {
       if (!isCurrentSession(generation)) {
         destroyLaunchProgress(progress);
@@ -516,26 +513,20 @@ import viewerStyles from "./viewer.css";
     if (!isCurrentSession(generation)) return;
     if (preparationError) {
       const reason = classifyPreparationFailure(preparationError);
-      activePreparation = { kind: "failed", requestId: String(generation), reason };
-      showError(reason);
-    } else if (sessionInitFailure) {
-      activePreparation = { kind: "failed", requestId: String(generation), reason: "session_unavailable" };
-      showError("session_unavailable");
+      showError(String(generation), reason);
+    } else if (sessionState?.phase === "error") {
+      renderReactView();
     } else {
-      activePreparation = { kind: "ready", requestId: String(generation) };
       retainedPageUrl = global.location.href;
       dispatchSession({
         type: "prepareSucceeded",
         requestId: String(generation),
-        flow: sessionPreparation(),
+        flow: prepareSession(preparedDocument!),
       });
       if (!isCurrentSession(generation)) return;
       renderReader();
     }
-    global.requestAnimationFrame(() => {
-      if (!isCurrentSession(generation)) return;
-      findCloseButton()?.focus();
-    });
+    focusCloseButtonAfterPaint(generation);
     if (isCurrentSession(generation)) opening = false;
   }
 
@@ -570,26 +561,15 @@ import viewerStyles from "./viewer.css";
   function cancelOpening(generation: number): void {
     if (!isCurrentSession(generation)) return;
     preparationController?.abort();
-    dispatchSession({ type: "cancel", requestId: String(generation) });
-    activePreparation = { kind: "cancelled", requestId: String(generation) };
+    if (isPreparingRequest(String(generation))) {
+      dispatchSession({ type: "cancel", requestId: String(generation) });
+    }
     close();
   }
 
-  function showError(reason: PreparationFailure) {
-    if (reason !== "session_unavailable" && activePreparation.kind !== "idle") {
-      dispatchSession({
-        type: "prepareFailed",
-        requestId: activePreparation.requestId,
-        reason,
-      });
-    }
+  function showError(requestId: string, reason: PreparationFailure) {
+    if (isPreparingRequest(requestId)) dispatchSession({ type: "prepareFailed", requestId, reason });
     renderReactView();
-  }
-
-  function preparationFailureLabel(reason: PreparationFailure): string {
-    if (reason === "content_not_found") return "文章を読み取れませんでした";
-    if (reason === "unsupported_page") return "このページはまだ開けません";
-    return "文章を準備できませんでした";
   }
 
   function retry() {
@@ -609,38 +589,8 @@ import viewerStyles from "./viewer.css";
     return typeof global.ReaderSession?.create === "function";
   }
 
-  function sessionPreparation(): ReaderSessionPreparation {
-    const sourceText = content?.text || "";
-    const sourceFigures = content?.readingContext?.figures || [];
-    return {
-      textLength: sourceText.length,
-      units: units.map((unit, index) => {
-        const nextUnit = units[index + 1];
-        return {
-          sentenceIndex: unit.sentenceIndex,
-          kind: unit.kind,
-          start: unit.start,
-          end: unit.end,
-          durationMs: global.Engine.displayDuration(
-            unit,
-            nextUnit,
-            crossesSectionBoundary(unit, nextUnit),
-          ),
-        };
-      }),
-      figures: sourceFigures.map((figure) => ({
-        sourceOffset: figure.sourceOffset,
-        sourceEnd: figure.sourceEnd,
-      })),
-      flow: flowItems,
-    };
-  }
-
   function beginReaderSession(requestId: string): void {
-    if (!readerSessionAvailable()) {
-      sessionInitFailure = true;
-      return;
-    }
+    if (!readerSessionAvailable()) throw new Error("reader_session_unavailable");
     if (sessionHandle) {
       if (!applyingSession) sessionHandle.dispatch({ type: "close" });
       sessionHandle.destroy();
@@ -649,16 +599,17 @@ import viewerStyles from "./viewer.css";
     markPerformance("reader:wasm-init-start");
     const handle = global.ReaderSession.create((state) => {
       if (sessionHandle !== handle) return;
+      const becameReading = sessionState?.phase !== "reading" && state.phase === "reading";
       const wasFigure = sessionState?.phase === "reading" && sessionState.currentKind === "figure";
       sessionState = state;
-      syncReaderSessionState();
       if (!wasFigure && state.phase === "reading" && state.currentKind === "figure") controlsVisible = true;
       applyingSession = true;
       try {
-        if (content && units.length > 0) renderSessionState();
+        renderSessionState();
       } finally {
         applyingSession = false;
       }
+      if (becameReading) focusCloseButtonAfterPaint(uiGeneration);
     });
     sessionHandle = handle;
     sessionState = null;
@@ -669,15 +620,8 @@ import viewerStyles from "./viewer.css";
       markPerformance("reader:wasm-init-end");
     }).catch(() => {
       if (sessionHandle !== handle) return;
-      sessionInitFailure = true;
-      if (activePreparation.kind === "ready") showError("session_unavailable");
+      renderSessionState();
     });
-  }
-
-  function syncReaderSessionState(): void {
-    const state = sessionState;
-    if (!state) return;
-    if (state.phase === "reading" && state.position) currentPosition = state.position;
   }
 
   function dispatchSession(command: ReaderSessionCommand): void {
@@ -686,21 +630,8 @@ import viewerStyles from "./viewer.css";
   }
 
   function renderSessionState(): void {
-    if (!readingSessionState()) return;
+    if (!reactViewMount) return;
     renderReactView();
-  }
-
-  function fallbackBlocks(text: string): ReaderBlock[] {
-    const blocks: ReaderBlock[] = [];
-    let searchFrom = 0;
-    for (const rawValue of text.split(/\n\s*\n|\n(?=\s*[\p{L}\p{N}「『（(])/u)) {
-      const value = rawValue.trim();
-      if (!value) continue;
-      const start = text.indexOf(value, searchFrom);
-      blocks.push({ text: value, kind: "paragraph", level: null, start, end: start + value.length });
-      searchFrom = start + value.length;
-    }
-    return blocks;
   }
 
   function attachTextFigureLoadCorrection(
@@ -771,7 +702,7 @@ import viewerStyles from "./viewer.css";
   }
 
   function currentTextPositionMarker(positionMarkers: HTMLElement[]): HTMLElement | undefined {
-    const position = currentPosition;
+    const position = sessionPosition();
     if (position.kind === "figure") {
       return positionMarkers.find((marker) => (
         marker.dataset.readerPositionKind === "figure"
@@ -792,8 +723,9 @@ import viewerStyles from "./viewer.css";
     positionMarkers: HTMLElement[],
     preferVisualTop = false,
     syncSession = true,
-  ): void {
-    if (!content) return;
+  ): ReaderPosition | null {
+    if (!preparedDocument) return null;
+    const currentPosition = sessionPosition();
     const scrollerRect = scroller.getBoundingClientRect();
     const visibleTop = scrollerRect.top;
     const visibleBottom = scrollerRect.bottom;
@@ -853,22 +785,29 @@ import viewerStyles from "./viewer.css";
         : preferVisualTop
           ? firstReadable || (anchoredVisible ? anchoredMarker : firstVisible)
           : firstVisible;
-    if (selected) {
-      const sourceOffset = Number(selected.dataset.sourceStart);
-      currentPosition = selected.dataset.readerPositionKind === "figure"
-        ? {
-          kind: "figure",
-          sourceOffset,
-          figureIndex: Number(selected.dataset.figureIndex),
-        }
-        : { kind: "text", sourceOffset };
-      if (syncSession && !applyingSession) {
-        dispatchSession({
-          type: sessionMode() === "text" ? "switchToText" : "switchToRsvp",
-          position: currentPosition,
-        });
+    if (!selected) return null;
+    const lastTextMarker = [...positionMarkers].reverse().find((marker) => (
+      marker.dataset.readerPositionKind === "text"
+    ));
+    const sourceOffset = atBottom
+      && scroller.scrollTop > 0
+      && selected === lastTextMarker
+      ? preparedDocument.text.length
+      : Number(selected.dataset.sourceStart);
+    const position: ReaderPosition = selected.dataset.readerPositionKind === "figure"
+      ? {
+        kind: "figure",
+        sourceOffset,
+        figureIndex: Number(selected.dataset.figureIndex),
       }
+      : { kind: "text", sourceOffset };
+    if (syncSession && !applyingSession) {
+      dispatchSession({
+        type: sessionMode() === "text" ? "switchToText" : "switchToRsvp",
+        position,
+      });
     }
+    return position;
   }
 
   function captureTextPosition(
@@ -876,14 +815,16 @@ import viewerStyles from "./viewer.css";
     positionMarkers: HTMLElement[],
     force = false,
     syncSession = true,
-  ): void {
+  ): ReaderPosition | null {
     const restoredScrollTop = reactTextRestoreScrollTop;
-    if (!force && (restoredScrollTop === null || Math.abs(scroller.scrollTop - restoredScrollTop) < 1)) return;
-    updateTextPosition(scroller, positionMarkers, force, syncSession);
+    if (!force && (restoredScrollTop === null || Math.abs(scroller.scrollTop - restoredScrollTop) < 1)) return null;
+    const position = updateTextPosition(scroller, positionMarkers, force, syncSession);
     reactTextRestoreScrollTop = scroller.scrollTop;
+    return position;
   }
 
   function restoreTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[]): void {
+    const currentPosition = sessionPosition();
     const figureIndex = currentPosition.kind === "figure" ? currentPosition.figureIndex : -1;
     const exactFigure = currentPosition.kind !== "figure"
       ? undefined
@@ -954,20 +895,17 @@ import viewerStyles from "./viewer.css";
     clearPendingLeftTap();
     const modeRestorePending = reactTextRestorePending;
     reactTextRestorePending = nextMode === "text";
-    let capturedPosition = currentPosition;
+    let capturedPosition = sessionPosition();
     if (nextMode === "rsvp" && currentMode === "text") {
       const textScroller = reactTextScroller;
       const textMarkers = reactTextMarkers;
       const scrollChanged = textScroller && (reactTextRestoreScrollTop === null || Math.abs(textScroller.scrollTop - reactTextRestoreScrollTop) >= 1);
       if (!modeRestorePending || scrollChanged) {
         reactTextRestoring = true;
-        if (textScroller) captureTextPosition(textScroller, textMarkers, true, false);
+        if (textScroller) capturedPosition = captureTextPosition(textScroller, textMarkers, true, false) || capturedPosition;
       }
-      capturedPosition = currentPosition;
     } else if (currentMode === "rsvp") {
       reactTextRestoring = true;
-      const currentFlow = flowItems[sessionFlowIndex()];
-      if (currentFlow) currentPosition = global.Engine.positionForFlowItem(currentFlow, units);
     }
     invalidateFigureLoad();
     if (!applyingSession) {
@@ -984,50 +922,30 @@ import viewerStyles from "./viewer.css";
     }
   }
 
-  function rebuildUnits() {
-    if (!content?.text) return;
-    const previousPosition = currentPosition;
-    const locale = content?.readingContext?.language || "ja";
-    const articleFigures = content.readingContext?.figures || [];
-    const codeRanges = (content.readingContext?.blocks || []).flatMap((block) => block.codeRanges || []);
-    const figureBoundaries = articleFigures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
-    const codeBoundaries = codeRanges.flatMap((range) => [range.start, range.end]);
-    const segmented = global.Engine.preserveCodeRanges(
-      global.Engine.segmentText(content.text, locale, [...figureBoundaries, ...codeBoundaries]),
-      content.text,
-      codeRanges,
-    )
-      .map((unit) => {
-        if (unit.kind === "code") return unit;
-        const value = unit.text.trim();
-        const leadingWhitespace = unit.text.length - unit.text.trimStart().length;
-        return { ...unit, text: value, start: unit.start + leadingWhitespace, end: unit.start + leadingWhitespace + value.length };
-      })
-      .filter((unit) => unit.text.trim().length > 0)
-      .filter((unit) => !articleFigures.some((figure) => (
-        figure.sourceEnd > figure.sourceOffset
-        && unit.start >= figure.sourceOffset
-        && unit.end <= figure.sourceEnd
-      )));
-    units = segmented;
-    rebuildFlowItems();
-    if (!applyingSession) {
+  function reflowForViewport() {
+    if (!preparedDocument) return;
+    const layout = currentRsvpFrameLayout();
+    if (Math.abs(layout.maxWidth - rsvpFrameWidth) < 1) {
+      renderSessionState();
+      return;
+    }
+    const position = sessionPosition();
+    preparedDocument = reflowReaderDocument(preparedDocument, global.Engine, layout);
+    rsvpFrameWidth = layout.maxWidth;
+    if (readingSessionState() && !applyingSession) {
       dispatchSession({
         type: "rebuildUnits",
-        units: sessionPreparation().units,
-        position: previousPosition,
+        units: prepareSession(preparedDocument).units,
+        position,
       });
+    } else {
+      renderSessionState();
     }
   }
 
-  function rebuildFlowItems(): void {
-    const articleFigures = content?.readingContext?.figures || [];
-    flowItems = global.Engine.buildReadingFlow(units, articleFigures);
-  }
-
   function handleViewportChange() {
-    if (!overlay || !content) return;
-    renderSessionState();
+    if (!overlay || !preparedDocument) return;
+    reflowForViewport();
   }
 
   function togglePlayback() {
@@ -1073,7 +991,7 @@ import viewerStyles from "./viewer.css";
     lastLeftTapAt = tapAt;
     lastLeftTapX = clientX;
     lastLeftTapY = clientY;
-    const generation = sessionGeneration;
+    const generation = uiGeneration;
     pendingLeftTap = global.setTimeout(() => {
       if (!isCurrentSession(generation)) return;
       pendingLeftTap = null;
@@ -1172,20 +1090,6 @@ import viewerStyles from "./viewer.css";
     showTransportControls();
   }
 
-  function activeHeadingAt(offset: number): number {
-    const readingContext = content?.readingContext;
-    return global.Engine.findActiveHeadingIndex(
-      readingContext?.sectionTransitions || [],
-      offset,
-      readingContext?.initialHeadingIndex ?? -1,
-    );
-  }
-
-  function crossesSectionBoundary(unit: ReaderUnit | undefined, nextUnit: ReaderUnit | undefined): boolean {
-    if (!unit || !nextUnit) return false;
-    return activeHeadingAt(unit.start) !== activeHeadingAt(nextUnit.start);
-  }
-
   function previousSentence() {
     dispatchSession({ type: "previousSentence" });
   }
@@ -1228,6 +1132,15 @@ import viewerStyles from "./viewer.css";
       return null;
     };
     return find(overlay);
+  }
+
+  function focusCloseButtonAfterPaint(generation: number): void {
+    global.requestAnimationFrame(() => {
+      global.requestAnimationFrame(() => {
+        if (!isCurrentSession(generation) || !overlay) return;
+        findCloseButton()?.focus();
+      });
+    });
   }
 
   function handleKeyDown(event: KeyboardEvent): void {
@@ -1336,8 +1249,7 @@ import viewerStyles from "./viewer.css";
 
   function reopenRetainedSession(): void {
     if (!handle || !shadow) return;
-    const generation = ++sessionGeneration;
-    preparationGeneration = generation;
+    const generation = ++uiGeneration;
     opening = true;
     performanceRenderMarked = false;
     performanceControlsMarked = false;
@@ -1362,16 +1274,12 @@ import viewerStyles from "./viewer.css";
     markPerformance("reader:first-feedback");
     if (shouldResume && sessionMode() === "rsvp") dispatchSession({ type: "play" });
     else renderReader();
-    global.requestAnimationFrame(() => {
-      if (!isCurrentSession(generation)) return;
-      findCloseButton()?.focus();
-    });
+    focusCloseButtonAfterPaint(generation);
     if (isCurrentSession(generation)) opening = false;
   }
 
   function dismissReadySession(): void {
-    sessionGeneration += 1;
-    preparationGeneration += 1;
+    uiGeneration += 1;
     detachSessionLifecycle();
     const restoreFocus = launchFocus;
     resumePlaybackOnReopen = sessionIsPlaying();
@@ -1410,8 +1318,7 @@ import viewerStyles from "./viewer.css";
   }
 
   function destroyRetainedSession(): void {
-    sessionGeneration += 1;
-    preparationGeneration += 1;
+    uiGeneration += 1;
     if (sessionHandle && !applyingSession) {
       dispatchSession({ type: "close" });
       sessionHandle.destroy();
@@ -1424,12 +1331,9 @@ import viewerStyles from "./viewer.css";
     clearPendingLeftTap();
     if (rewindFeedbackClearTimer !== null) global.clearTimeout(rewindFeedbackClearTimer);
     rewindFeedbackClearTimer = null;
-    content = null;
-    viewBlocks = [];
-    units = [];
-    flowItems = [];
+    preparedDocument = null;
+    rsvpFrameWidth = 0;
     invalidateFigureLoad();
-    currentPosition = { kind: "text", sourceOffset: 0 };
     opening = false;
     controlsVisible = true;
     lastLeftTapAt = 0;
@@ -1437,11 +1341,9 @@ import viewerStyles from "./viewer.css";
     lastLeftTapY = 0;
     destroyLaunchProgressIfPresent();
     preparationController = null;
-    activePreparation = { kind: "idle" };
     launchFocus = null;
     sessionState = null;
     sessionHandle = null;
-    sessionInitFailure = false;
     applyingSession = false;
     retainedPageUrl = null;
     sessionDismissed = false;
@@ -1473,12 +1375,11 @@ import viewerStyles from "./viewer.css";
   }
 
   function close(): void {
-    if (activePreparation.kind === "ready" && readingSessionState() && content) {
+    if (readingSessionState() && preparedDocument) {
       dismissReadySession();
       return;
     }
-    sessionGeneration += 1;
-    preparationGeneration += 1;
+    uiGeneration += 1;
     detachSessionLifecycle();
     preparationController?.abort();
     const restoreFocus = launchFocus;
@@ -1487,8 +1388,8 @@ import viewerStyles from "./viewer.css";
     try {
       clearPendingLeftTap();
       lastLeftTapAt = 0;
-      if (activePreparation.kind === "preparing") {
-        dispatchSession({ type: "cancel", requestId: activePreparation.requestId });
+      if (sessionState?.phase === "preparing") {
+        dispatchSession({ type: "cancel", requestId: sessionState.requestId });
       }
       if (sessionHandle && !applyingSession) {
         dispatchSession({ type: "close" });

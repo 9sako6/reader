@@ -89,7 +89,7 @@ test("browser facade queues commands, exposes valid phase states, and destroys i
     assert.equal(handle.state.currentKind, "unit");
     assert.equal(JSON.stringify(handle.state).includes("contentPresent"), false);
     assert.ok(JSON.stringify(calls[1]).length > 128);
-    assert.deepEqual(observed.map(({ phase }) => phase), ["idle", "preparing", "reading"]);
+    assert.deepEqual(observed.map(({ phase }) => phase), ["preparing", "reading"]);
 
     handle.dispatch({ type: "close" });
     assert.equal(handle.state.phase, "ended");

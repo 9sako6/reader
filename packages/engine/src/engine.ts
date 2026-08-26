@@ -8,8 +8,6 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
   root.Engine = api;
 })(globalThis, function createEngine(): ReaderEngine {
   const MAX_WORDS_PER_UNIT = 7;
-  const MAX_GRAPHEMES_PER_UNIT = 12;
-  const MAX_LATIN_WORD_GRAPHEMES_PER_UNIT = 24;
   const MIN_WORDS_BEFORE_BOUNDARY = 3;
   const SOFT_BOUNDARY_WORDS = new Set(["を","に","へ","と","から","まで","より","が","は","も","て","で","ので","のに","なら","れば","けど","けれど"]);
   const PHRASE_BOUNDARY_PUNCTUATION = new Set(["、","，",";","；",":","："]);
@@ -140,11 +138,6 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     return merged;
   }
 
-  function splitLongUnits(units: ReaderUnit[], locale = "ja", maxGraphemes = MAX_GRAPHEMES_PER_UNIT): ReaderUnit[] {
-    const limit = Math.max(1, Number.isInteger(maxGraphemes) ? maxGraphemes : MAX_GRAPHEMES_PER_UNIT);
-    return units.flatMap((unit) => unit.kind === "code" ? [{ ...unit }] : splitUnitAtGraphemeLimit(unit, locale, limit));
-  }
-
   function preserveCodeRanges(units: ReaderUnit[], text: string, ranges: EngineCodeRange[]): ReaderUnit[] {
     if (!Array.isArray(units) || !Array.isArray(ranges) || ranges.length === 0) return [...units];
     const safeRanges = ranges
@@ -170,14 +163,14 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     return preserved.sort((left, right) => left.start - right.start || left.end - right.end);
   }
 
-  function splitUnitAtGraphemeLimit(unit: ReaderUnit, locale: string, limit: number): ReaderUnit[] {
+  function splitUnitToWidth(
+    unit: ReaderUnit,
+    locale: string,
+    maxWidth: number,
+    measureText: RsvpFrameOptions["measureText"],
+  ): ReaderUnit[] {
+    if (unit.kind === "code" || measureText(unit.text, unit.kind) <= maxWidth) return [{ ...unit }];
     const graphemes = [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(unit.text)];
-    if (graphemes.length <= limit) return [{ ...unit }];
-
-    const graphemeIndexByOffset = new Map<number, number>([
-      ...graphemes.map((piece, index) => [piece.index, index] as const),
-      [unit.text.length, graphemes.length],
-    ]);
     const wordPieces = [...new Intl.Segmenter(locale, { granularity: "word" }).segment(unit.text)];
     const wordBoundaries = new Set<number>();
     for (const piece of wordPieces) {
@@ -186,83 +179,63 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
       wordBoundaries.add(pieceEnd);
     }
 
+    const boundaries = [...graphemes.map((piece) => piece.index), unit.text.length];
     const partRanges: Array<{ start: number; end: number }> = [];
-    let graphemeStart = 0;
-    while (graphemeStart < graphemes.length) {
-      const candidateGraphemeEnd = Math.min(graphemes.length, graphemeStart + limit);
-      const start = graphemes[graphemeStart]?.index ?? unit.text.length;
-      const candidateEnd = candidateGraphemeEnd === graphemes.length
-        ? unit.text.length
-        : graphemes[candidateGraphemeEnd]?.index ?? unit.text.length;
-      const wordBoundary = [...wordBoundaries]
-        .filter((offset) => offset > start && offset <= candidateEnd && graphemeIndexByOffset.has(offset))
-        .sort((left, right) => right - left)[0];
-      const leadingWordIndex = wordPieces.findIndex((piece) => piece.index === start && piece.isWordLike);
-      const leadingWord = leadingWordIndex >= 0 ? wordPieces[leadingWordIndex] : undefined;
-      const leadingWordEnd = leadingWord ? leadingWord.index + leadingWord.segment.length : 0;
-      const followingPiece = leadingWordIndex >= 0 ? wordPieces[leadingWordIndex + 1] : undefined;
-      const extendedLatinWordEnd = !wordBoundary
-        && limit === MAX_GRAPHEMES_PER_UNIT
-        && leadingWord
-        && leadingWordEnd > candidateEnd
-        && /^[\p{Script=Latin}\p{M}\p{N}_]+$/u.test(leadingWord.segment)
-        && graphemeCount(leadingWord.segment, locale) <= MAX_LATIN_WORD_GRAPHEMES_PER_UNIT
-        ? followingPiece && /^\s+$/u.test(followingPiece.segment)
-          ? followingPiece.index + followingPiece.segment.length
-          : leadingWordEnd
-        : 0;
-      const end = (wordBoundary ?? extendedLatinWordEnd) || candidateEnd;
-      const endGrapheme = graphemeIndexByOffset.get(end) ?? candidateGraphemeEnd;
-      const safeEndGrapheme = endGrapheme > graphemeStart ? endGrapheme : candidateGraphemeEnd;
-      const safeEnd = safeEndGrapheme === graphemes.length
-        ? unit.text.length
-        : graphemes[safeEndGrapheme]?.index ?? candidateEnd;
-
-      partRanges.push({ start: graphemeStart, end: safeEndGrapheme });
-      graphemeStart = safeEndGrapheme;
-    }
-    for (let index = 1; index < partRanges.length; index += 1) {
-      const previous = partRanges[index - 1];
-      const current = partRanges[index];
-      if (!previous || !current) continue;
-      const startsWithClosingPunctuation = LINE_START_CLOSING_PUNCTUATION.has(
-        graphemes[current.start]?.segment || "",
-      );
-      const endsWithOpeningPunctuation = LINE_END_OPENING_PUNCTUATION.has(
-        graphemes[previous.end - 1]?.segment || "",
-      );
-      if ((!startsWithClosingPunctuation && !endsWithOpeningPunctuation) || previous.end - previous.start <= 1) continue;
-
-      previous.end -= 1;
-      current.start -= 1;
-      if (current.end - current.start > limit) {
-        const overflow = { start: current.start + limit, end: current.end };
-        current.end = current.start + limit;
-        partRanges.splice(index + 1, 0, overflow);
+    let startIndex = 0;
+    while (startIndex < graphemes.length) {
+      const start = boundaries[startIndex] ?? unit.text.length;
+      let fittingEndIndex = startIndex + 1;
+      for (let endIndex = startIndex + 1; endIndex <= graphemes.length; endIndex += 1) {
+        const end = boundaries[endIndex] ?? unit.text.length;
+        if (measureText(unit.text.slice(start, end), unit.kind) > maxWidth) break;
+        fittingEndIndex = endIndex;
       }
+      let endIndex = fittingEndIndex;
+      const fittingEnd = boundaries[fittingEndIndex] ?? unit.text.length;
+      const preferredBoundary = [...wordBoundaries]
+        .filter((offset) => offset > start && offset <= fittingEnd)
+        .sort((left, right) => right - left)[0];
+      if (preferredBoundary !== undefined) {
+        const preferredIndex = boundaries.indexOf(preferredBoundary);
+        if (preferredIndex > startIndex) endIndex = preferredIndex;
+      }
+      if (endIndex < graphemes.length && endIndex - startIndex > 1) {
+        const nextGrapheme = graphemes[endIndex]?.segment || "";
+        const lastGrapheme = graphemes[endIndex - 1]?.segment || "";
+        if (LINE_START_CLOSING_PUNCTUATION.has(nextGrapheme) || LINE_END_OPENING_PUNCTUATION.has(lastGrapheme)) {
+          endIndex -= 1;
+        }
+      }
+      partRanges.push({ start: startIndex, end: Math.max(startIndex + 1, endIndex) });
+      startIndex = Math.max(startIndex + 1, endIndex);
     }
-    const parts = partRanges.map(({ start, end }) => ({
+    return partRanges.map(({ start, end }) => ({
       ...unit,
       text: unit.text.slice(
-        start === graphemes.length ? unit.text.length : graphemes[start]?.index ?? unit.text.length,
-        end === graphemes.length ? unit.text.length : graphemes[end]?.index ?? unit.text.length,
+        boundaries[start] ?? unit.text.length,
+        boundaries[end] ?? unit.text.length,
       ),
-      start: unit.start + (start === graphemes.length ? unit.text.length : graphemes[start]?.index ?? unit.text.length),
-      end: unit.start + (end === graphemes.length ? unit.text.length : graphemes[end]?.index ?? unit.text.length),
+      start: unit.start + (boundaries[start] ?? unit.text.length),
+      end: unit.start + (boundaries[end] ?? unit.text.length),
     }));
-    return parts.reduce<ReaderUnit[]>((merged, part) => {
-      const previous = merged.at(-1);
-      if (
-        previous
-        && previous.sentenceIndex === part.sentenceIndex
-        && !/[\p{L}\p{N}]/u.test(part.text)
-        && graphemeCount(`${previous.text}${part.text}`, locale) <= limit
-      ) {
-        previous.text += part.text;
-        previous.end = part.end;
-      } else merged.push(part);
-      return merged;
-    }, []);
+  }
+
+  function splitUnitAtOffsets(unit: ReaderUnit, offsets: number[]): ReaderUnit[] {
+    if (unit.kind === "code") return [{ ...unit }];
+    const boundaries = offsets.filter((offset) => offset > unit.start && offset < unit.end);
+    if (boundaries.length === 0) return [{ ...unit }];
+    const pieces: ReaderUnit[] = [];
+    let start = unit.start;
+    for (const end of [...boundaries, unit.end]) {
+      pieces.push({
+        ...unit,
+        text: unit.text.slice(start - unit.start, end - unit.start),
+        start,
+        end,
+      });
+      start = end;
+    }
+    return pieces;
   }
 
   function segmentText(text: string, locale = "ja", boundaries: number[] = []): ReaderUnit[] {
@@ -293,7 +266,7 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
         ));
       }
     }
-    const segmentedUnits = splitLongUnits(mergeDanglingPunctuation(units), locale);
+    const segmentedUnits = mergeDanglingPunctuation(units);
     const safeBoundaries = [...new Set(boundaries)]
       .filter((boundary) => Number.isInteger(boundary) && boundary > 0 && boundary < text.length)
       .sort((left, right) => left - right);
@@ -313,6 +286,33 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
         start = boundary;
       }
       return pieces;
+    });
+  }
+
+  function buildRsvpFrames(units: ReaderUnit[], options: RsvpFrameOptions): RsvpFrame[] {
+    const locale = options?.locale || "ja";
+    const maxWidth = Number.isFinite(options?.maxWidth) && options.maxWidth > 0
+      ? options.maxWidth
+      : 1;
+    const measureText = typeof options?.measureText === "function"
+      ? options.measureText
+      : () => Number.POSITIVE_INFINITY;
+    const sectionOffsets = [...new Set(options?.sectionOffsets || [])]
+      .filter((offset) => Number.isInteger(offset) && offset >= 0)
+      .sort((left, right) => left - right);
+    const fitted = (Array.isArray(units) ? units : []).flatMap((unit) => (
+      splitUnitAtOffsets(unit, sectionOffsets)
+        .flatMap((piece) => splitUnitToWidth(piece, locale, maxWidth, measureText))
+    ));
+    return fitted.map((unit, index) => {
+      const next = fitted[index + 1];
+      const sectionBreak = Boolean(next) && sectionOffsets.some((offset) => (
+        offset > unit.start && offset <= (next?.start ?? unit.end)
+      ));
+      return {
+        ...unit,
+        durationMs: displayDuration(unit, next, sectionBreak, options?.timingProfile),
+      };
     });
   }
 
@@ -462,12 +462,11 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
   }
 
   return {
-    MAX_GRAPHEMES_PER_UNIT,
     DEFAULT_TIMING_PROFILE,
     segmentText,
     splitSentenceSpans,
-    splitLongUnits,
     preserveCodeRanges,
+    buildRsvpFrames,
     buildReadingFlow,
     positionForFlowItem,
     findActiveHeadingIndex,

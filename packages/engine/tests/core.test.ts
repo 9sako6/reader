@@ -3,14 +3,26 @@ export {};
 const assert = require("node:assert/strict");
 
 const {
-  MAX_GRAPHEMES_PER_UNIT,
+  DEFAULT_TIMING_PROFILE,
   segmentText,
-  splitLongUnits,
+  buildRsvpFrames,
   preserveCodeRanges,
   splitSentenceSpans,
   findActiveHeadingIndex,
   calculateReadingProgress,
 } = require("../../../.build/packages/engine/src/engine.js");
+
+function graphemeCount(text: string, locale = "ja"): number {
+  return [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(text)].length;
+}
+
+function framesFor(text: string, locale = "ja", maxGraphemes = 12) {
+  return buildRsvpFrames(segmentText(text, locale), {
+    locale,
+    maxWidth: maxGraphemes,
+    measureText: (value: string) => graphemeCount(value, locale),
+  });
+}
 
 test("a long inline code expression remains one scrollable RSVP unit", () => {
   const source = "Use extraordinarily_long_identifier.withNamespace() before continuing.";
@@ -18,14 +30,17 @@ test("a long inline code expression remains one scrollable RSVP unit", () => {
   const start = source.indexOf(code);
   const segmented = segmentText(source, "en", [start, start + code.length]);
 
-  const units = splitLongUnits(
+  const units = buildRsvpFrames(
     preserveCodeRanges(segmented, source, [{ text: code, start, end: start + code.length }]),
-    "en",
-    6,
+    {
+      locale: "en",
+      maxWidth: 6,
+      measureText: (value: string) => graphemeCount(value, "en"),
+    },
   );
 
   const codeUnits = units.filter((unit) => unit.kind === "code");
-  assert.deepEqual(codeUnits, [{
+  assert.deepEqual(codeUnits.map(({ durationMs: _durationMs, ...unit }) => unit), [{
     text: "extraordinarily_long_identifier.withNamespace()",
     sentenceIndex: 0,
     kind: "code",
@@ -83,12 +98,16 @@ test("segmentText is deterministic regardless of legacy morphology input", () =>
   ]);
 });
 
-test("every RSVP unit is capped to avoid line wrapping", () => {
-  assert.equal(MAX_GRAPHEMES_PER_UNIT, 12);
+test("final RSVP frames fit the supplied width without changing the semantic units", () => {
+  const text = "非常に長い技術文章のまとまりをそのまま表示して改行が起きないようにする。";
+  assert.deepEqual(segmentText(text).map((unit) => unit.text), [
+    "非常に長い技術文章のまとまり",
+    "をそのまま表示して",
+    "改行が起きないように",
+    "する。",
+  ]);
   assert.deepEqual(
-    segmentText("非常に長い技術文章のまとまりをそのまま表示して改行が起きないようにする。").map(
-      (unit) => unit.text,
-    ),
+    framesFor(text).map((frame: { text: string }) => frame.text),
     [
       "非常に長い技術文章の",
       "まとまり",
@@ -101,31 +120,29 @@ test("every RSVP unit is capped to avoid line wrapping", () => {
 
 test("long units split at word boundaries without breaking katakana words", () => {
   assert.deepEqual(
-    segmentText("ソフトウェアエンジニアリング").map((unit) => unit.text),
+    framesFor("ソフトウェアエンジニアリング").map((unit: { text: string }) => unit.text),
     ["ソフトウェア", "エンジニアリング"],
   );
   assert.deepEqual(
-    segmentText("ソフトウェア開発ライフサイクル").map((unit) => unit.text),
+    framesFor("ソフトウェア開発ライフサイクル").map((unit: { text: string }) => unit.text),
     ["ソフトウェア開発", "ライフサイクル"],
   );
 });
 
-test("English words that fit on the RSVP screen are not split at the Japanese length limit", () => {
+test("English frames prefer word boundaries within the measured width", () => {
   const source = "Quint is a specification language that can be used";
-  const units = segmentText(source, "en");
+  const units = framesFor(source, "en", 24);
 
   assert.deepEqual(units.map((unit) => unit.text), [
-    "Quint is a ",
-    "specification ",
-    "language ",
-    "that can be ",
+    "Quint is a specification",
+    " language that can be ",
     "used",
   ]);
   assert.equal(units.map((unit) => unit.text).join(""), source);
   for (const unit of units) assert.equal(source.slice(unit.start, unit.end), unit.text);
 });
 
-test("splitLongUnits caps unbroken text and preserves grapheme and source offsets", () => {
+test("buildRsvpFrames fits unbroken text and preserves grapheme and source offsets", () => {
   const cases = [
     { name: "English word", source: "Supercalifragilisticexpialidocious" },
     { name: "alphanumeric token", source: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" },
@@ -148,10 +165,11 @@ test("splitLongUnits caps unbroken text and preserves grapheme and source offset
         start: sourceStart,
         end: sourceStart + source.length,
       };
-      const units = splitLongUnits([unit], "ja", limit);
-      const graphemeCount = (text: string) => [
-        ...new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(text),
-      ].length;
+      const units = buildRsvpFrames([unit], {
+        locale: "ja",
+        maxWidth: limit,
+        measureText: (value: string) => graphemeCount(value),
+      });
 
       assert.equal(units.map((item) => item.text).join(""), source, `${name} at ${limit}`);
       assert.ok(
@@ -163,7 +181,7 @@ test("splitLongUnits caps unbroken text and preserves grapheme and source offset
   }
 });
 
-test("splitLongUnits adjusts Japanese punctuation without breaking the grapheme limit", () => {
+test("buildRsvpFrames adjusts Japanese punctuation without exceeding the width", () => {
   const cases = [
     { source: "あいう）えお", expected: ["あい", "う）え", "お"] },
     { source: "abcdef）ghij", expected: ["abc", "de", "f）", "ghi", "j"] },
@@ -173,13 +191,17 @@ test("splitLongUnits adjusts Japanese punctuation without breaking the grapheme 
   for (const { source, expected } of cases) {
     const sourceWithPrefix = `prefix:${source}:suffix`;
     const sourceStart = "prefix:".length;
-    const units = splitLongUnits([{
+    const units = buildRsvpFrames([{
       text: source,
       sentenceIndex: 0,
       kind: "body",
       start: sourceStart,
       end: sourceStart + source.length,
-    }], "ja", 3);
+    }], {
+      locale: "ja",
+      maxWidth: 3,
+      measureText: (value: string) => graphemeCount(value),
+    });
 
     assert.deepEqual(units.map((unit) => unit.text), expected);
     assert.equal(units.map((unit) => unit.text).join(""), source);
@@ -190,8 +212,35 @@ test("splitLongUnits adjusts Japanese punctuation without breaking the grapheme 
   }
 });
 
+test("buildRsvpFrames makes section transitions final frame boundaries before timing", () => {
+  const frames = buildRsvpFrames([{
+    text: "前半後半",
+    sentenceIndex: 0,
+    kind: "body",
+    start: 0,
+    end: 4,
+  }], {
+    maxWidth: 10,
+    measureText: (value: string) => graphemeCount(value),
+    sectionOffsets: [2],
+  });
+
+  assert.deepEqual(frames.map((frame: { text: string; start: number; end: number }) => ({
+    text: frame.text,
+    start: frame.start,
+    end: frame.end,
+  })), [
+    { text: "前半", start: 0, end: 2 },
+    { text: "後半", start: 2, end: 4 },
+  ]);
+  assert.equal(
+    frames[0].durationMs - frames[1].durationMs,
+    DEFAULT_TIMING_PROFILE.sectionPauseMs,
+  );
+});
+
 test("long Japanese corner-bracket quotes are split without losing quote styling", () => {
-  const units = segmentText("「これはとても長い引用なので一度では表示せず注視点を固定したまま分割する」");
+  const units = framesFor("「これはとても長い引用なので一度では表示せず注視点を固定したまま分割する」");
   assert.deepEqual(units.map((unit) => unit.text), [
     "「これはとても長い引用",
     "なので一度では表示せず注",
@@ -306,14 +355,14 @@ test("English sentence spans retain Intl.Segmenter boundaries for decimals and U
 
 test("segmentText treats English periods as sentence boundaries", () => {
   const units = segmentText("First sentence. Second sentence. Third sentence.", "en");
-  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 0, 1, 1, 2, 2]);
-  assert.equal(units[2].text, " Second ");
+  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1, 2]);
+  assert.equal(units[1].text, " Second sentence.");
 });
 
 test("segmentText starts a new sentence after a block boundary", () => {
   const units = segmentText("Transcript\nFirst, a quick intro.", "en");
-  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1, 1]);
-  assert.equal(units[1].text, "First, a ");
+  assert.deepEqual(units.map((unit) => unit.sentenceIndex), [0, 1]);
+  assert.equal(units[1].text, "First, a quick intro.");
 });
 
 test("segmentText never crosses a supplied content boundary", () => {

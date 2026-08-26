@@ -48,16 +48,16 @@ export function DesktopView({ screen, handlers }: { screen: DesktopScreen; handl
               </div>
               <div
                 data-reader-unit="true"
-                data-reader-unit-kind={unitScreen?.unit.kind}
+                data-reader-unit-kind={unitScreen?.frame.kind}
                 data-reader-position-kind={figureScreen ? "figure" : "text"}
-                data-source-start={String(figureScreen?.figure.figure.sourceOffset ?? unitScreen?.unit.start ?? 0)}
-                data-source-end={String(figureScreen?.figure.figure.sourceEnd ?? unitScreen?.unit.end ?? 0)}
+                data-source-start={String(figureScreen?.figure.figure.sourceOffset ?? unitScreen?.frame.start ?? 0)}
+                data-source-end={String(figureScreen?.figure.figure.sourceEnd ?? unitScreen?.frame.end ?? 0)}
                 data-figure-index={figureScreen ? String(figureScreen.figure.figureIndex) : undefined}
                 aria-live="off"
                 aria-atomic="false"
-                className={`reader-unit${figureScreen ? " reader-unit-figure" : unitScreen?.unit.kind === "code" ? " reader-unit-code" : ""}`}
+                className={`reader-unit${figureScreen ? " reader-unit-figure" : unitScreen?.frame.kind === "code" ? " reader-unit-code" : ""}`}
               >
-                {figureScreen ? <Figure figureView={figureScreen.figure} handlers={handlers} text={false} /> : <RsvpUnit unit={unitScreen!.unit} />}
+                {figureScreen ? <Figure figureView={figureScreen.figure} handlers={handlers} text={false} /> : <RsvpUnit frame={unitScreen!.frame} />}
               </div>
               <div data-reader-context-next="true" aria-hidden="true">
                 {unitScreen?.next || ""}

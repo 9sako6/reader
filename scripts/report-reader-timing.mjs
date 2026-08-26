@@ -41,7 +41,13 @@ function activeSectionAt(entry, offset) {
 }
 
 function timingForCorpus(entry) {
-  const units = Engine.segmentText(entry.text, entry.locale);
+  const readerUnits = Engine.segmentText(entry.text, entry.locale);
+  const units = Engine.buildRsvpFrames(readerUnits, {
+    locale: entry.locale,
+    maxWidth: 12,
+    measureText: (text) => graphemeCount(text, entry.locale),
+    sectionOffsets: entry.sectionTransitions.map(({ offset }) => offset),
+  });
   const zeroPauseProfile = {
     ...profile,
     clausePauseMs: 0,

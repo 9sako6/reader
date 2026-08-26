@@ -16,6 +16,18 @@ export interface ReaderUnit {
   end: number;
 }
 
+export interface RsvpFrame extends ReaderUnit {
+  durationMs: number;
+}
+
+export interface RsvpFrameOptions {
+  locale?: string;
+  maxWidth: number;
+  measureText(text: string, kind: ReaderUnitKind): number;
+  sectionOffsets?: number[];
+  timingProfile?: ReaderTimingProfile;
+}
+
 export interface ReaderTimingProfile {
   baseUnitMs: number;
   msPerGrapheme: number;
@@ -36,11 +48,10 @@ export type ReaderFlowItem =
   | { kind: "figure"; sourceOffset: number; figureIndex: number };
 
 export interface ReaderEngine {
-  readonly MAX_GRAPHEMES_PER_UNIT: number;
   readonly DEFAULT_TIMING_PROFILE: Readonly<ReaderTimingProfile>;
   segmentText(text: string, locale?: string, boundaries?: number[]): ReaderUnit[];
-  splitLongUnits(units: ReaderUnit[], locale?: string, maxGraphemes?: number): ReaderUnit[];
   preserveCodeRanges(units: ReaderUnit[], text: string, ranges: ReaderCodeRange[]): ReaderUnit[];
+  buildRsvpFrames(units: ReaderUnit[], options: RsvpFrameOptions): RsvpFrame[];
   splitSentenceSpans(text: string, locale?: string): SentenceSpan[];
   buildReadingFlow(units: ReaderUnit[], figures: ReaderFigure[]): ReaderFlowItem[];
   positionForFlowItem(flowItem: ReaderFlowItem, units: ReaderUnit[]): ReaderPosition;

@@ -269,7 +269,9 @@
             const style = getComputedStyle(bar);
             const rectangle = bar.getBoundingClientRect();
             loadingBarRevealEvents.push({
+              cancelVisible: host.shadowRoot.querySelector('[data-reader-loading-cancel="true"]') !== null,
               height: style.height,
+              labelVisible: host.shadowRoot.querySelector('[data-reader-loading-label="true"]') !== null,
               left: rectangle.left,
               top: rectangle.top,
               width: rectangle.width,

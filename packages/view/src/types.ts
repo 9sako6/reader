@@ -1,4 +1,4 @@
-import type { ReaderPosition, ReaderUnit, SentenceSpan } from "../../engine/src/types";
+import type { ReaderPosition, RsvpFrame, SentenceSpan } from "../../engine/src/types";
 import type { ReaderBlock, ReaderFigure, ReaderHeading } from "../../extractor/src/types";
 
 export type ReaderScreen =
@@ -46,7 +46,7 @@ export type RsvpUnitScreen = RsvpScreen & {
   kind: "rsvp-unit";
   previous: string;
   next: string;
-  unit: ReaderUnit;
+  frame: RsvpFrame;
   playback: "paused" | "playing";
 };
 

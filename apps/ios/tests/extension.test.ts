@@ -891,7 +891,7 @@ for (const scenario of safariLateTimerScenarios) {
   });
 }
 
-test("Safari reader preserves the current RSVP phrase when the viewport width changes", async () => {
+test("Safari reader reframes the current RSVP phrase without changing its source position", async () => {
   const harness = createSafariReaderHarness();
   const text = "意味のまとまりです。次です。";
   harness.setActiveContent({
@@ -907,12 +907,16 @@ test("Safari reader preserves the current RSVP phrase when the viewport width ch
     harness.documentElement,
     (element) => element.className.startsWith("rsvp-unit"),
   );
-  assert.equal(unit.textContent, "意味のまとまりです。");
+  assert.equal(unit.textContent, "意味のまとまり");
+  assert.equal(unit.dataset.sourceStart, "0");
+  assert.equal(unit.dataset.sourceEnd, "7");
 
   harness.context.innerWidth = 180;
   harness.context.dispatchEvent({ type: "resize" });
 
-  assert.equal(unit.textContent, "意味のまとまりです。");
+  assert.equal(unit.textContent, "意味の");
+  assert.equal(unit.dataset.sourceStart, "0");
+  assert.equal(unit.dataset.sourceEnd, "3");
 });
 
 test("Safari reader acknowledges the tap at the page edge before 200ms", async () => {
@@ -1060,7 +1064,6 @@ test("Safari reader completes hidden preparation without starting playback", asy
   assert.deepEqual(harness.sessionCommands().map(({ type }) => type), [
     "open",
     "visibilityHidden",
-    "rebuildUnits",
     "prepareSucceeded",
   ]);
 });
@@ -1076,20 +1079,20 @@ test("Safari reader applies queued mode changes after session initialization", a
 
   await harness.context.MobileViewer.open();
   const { documentElement } = harness;
-  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
-  assert.ok(modeButton);
-  modeButton.dispatchEvent({ type: "click" });
+  assert.equal(findElement(documentElement, (element) => element.textContent === "文章で読む"), null);
   resolveInit();
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
 
+  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  assert.ok(modeButton);
+  modeButton.dispatchEvent({ type: "click" });
   const resolvedModeButton = findElement(documentElement, (element) => element.className === "mode-button");
   assert.equal(resolvedModeButton.textContent, "RSVPで読む");
   assert.ok(findElement(documentElement, (element) => element.className === "text-view"));
   assert.deepEqual(harness.sessionCommands().map(({ type }) => type), [
     "open",
-    "rebuildUnits",
     "prepareSucceeded",
     "switchToText",
   ]);
@@ -1389,6 +1392,7 @@ test("Safari reader pauses after returning from an image to the previous sentenc
   fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
+  fireNextTimer(timers);
   const firstFigure = findElement(
     documentElement,
     (element) => element.attributes["aria-label"] === "本文画像",
@@ -1407,6 +1411,7 @@ test("Safari reader pauses after returning from an image to the previous sentenc
   assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.ok(timers.size > 0);
 
+  fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
@@ -1476,6 +1481,7 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   const { context, documentElement, timers, createdElements } = createSafariReaderHarness();
   await context.MobileViewer.open();
   const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
@@ -1922,6 +1928,7 @@ test("Safari reader destroys figure state when closed", async () => {
   fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
+  fireNextTimer(timers);
 
   assert.ok(findElement(documentElement, (element) => element.className === "rsvp-figure"));
   context.MobileViewer.close();
@@ -1997,5 +2004,5 @@ test("Safari reader keeps only the thin progress bar during a long preparation",
   assert.ok(findElement(documentElement, (element) => element.className === "reader"));
   assert.equal(findElement(documentElement, (element) => element.className === "launch-status"), null);
   assert.equal(findElement(documentElement, (element) => element.className === "launch-cancel"), null);
-  assert.deepEqual(harness.sessionCommands().map(({ type }) => type), ["open", "rebuildUnits", "prepareSucceeded"]);
+  assert.deepEqual(harness.sessionCommands().map(({ type }) => type), ["open", "prepareSucceeded"]);
 });

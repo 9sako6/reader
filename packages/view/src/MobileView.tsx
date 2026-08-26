@@ -52,8 +52,8 @@ export function MobileView({ screen, handlers }: { screen: ReaderScreen; handler
                 <MobileContext position="previous" text={unitScreen?.previous || ""} reducedMotion={screen.reducedMotion} />
                 {figureScreen
                   ? <Figure figureView={figureScreen.figure} handlers={handlers} text={false} />
-                  : <div className={`rsvp-unit ${unitScreen!.unit.kind}`} data-reader-unit="true" data-reader-position-kind="text" data-source-start={String(unitScreen!.unit.start)} data-source-end={String(unitScreen!.unit.end)} aria-live="off" aria-atomic="false">
-                    <RsvpUnit unit={unitScreen!.unit} />
+                  : <div className={`rsvp-unit ${unitScreen!.frame.kind}`} data-reader-unit="true" data-reader-position-kind="text" data-source-start={String(unitScreen!.frame.start)} data-source-end={String(unitScreen!.frame.end)} aria-live="off" aria-atomic="false">
+                    <RsvpUnit frame={unitScreen!.frame} />
                   </div>}
                 <MobileContext position="next" text={unitScreen?.next || ""} reducedMotion={screen.reducedMotion} />
               </div>

@@ -359,6 +359,9 @@ function loadReaderView(context, document) {
     if (specifier === "./viewer.css") {
       return fs.readFileSync(path.join(__dirname, "..", "src", "viewer", "viewer.css"), "utf8");
     }
+    if (specifier === "../../../../packages/presentation/src/presentation") {
+      return require("../../../.build/packages/presentation/src/presentation.js");
+    }
     throw new Error(`unexpected viewer dependency: ${specifier}`);
   };
   vm.runInNewContext(ReaderViewBundle, context);
@@ -1450,7 +1453,7 @@ test("reader shows the article outline beside the focal point", () => {
   assert.equal(nextContext.animations.length, 0);
 });
 
-test("reader preserves the current RSVP phrase when the available width changes", () => {
+test("reader keeps the fixed RSVP font size when the available width changes", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resize-request" });
@@ -1470,8 +1473,9 @@ test("reader preserves the current RSVP phrase when the available width changes"
   harness.resizeDisplay();
   assert.equal(display.attributes.class, initialClassName);
   assert.equal(display.textContent, initialText);
-  assert.match(ReaderViewStyles, /\.reader-unit \{[^}]*font-size: clamp\(36px, 4\.5vw, 64px\)/su);
+  assert.match(ReaderViewStyles, /\.reader-unit \{[^}]*font-size: 40px/su);
   assert.match(ReaderViewStyles, /\[data-reader-unit-text\] \{[^}]*width: max-content[^}]*white-space: nowrap/su);
+  assert.equal(display.style.fontSize, undefined);
   assert.match(display.attributes.class, /reader-unit/u);
 });
 

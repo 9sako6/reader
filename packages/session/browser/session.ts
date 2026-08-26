@@ -155,14 +155,22 @@
     let state: ReaderSessionState | null = null;
     let destroyed = false;
     let timer: number | null = null;
-    const pending: RawCommand[] = [];
+    const pending: Array<{ command: ReaderSessionCommand; observedState: ReaderSessionState | null }> = [];
 
     function clearTimer(): void {
       if (timer !== null) globalThis.clearTimeout(timer);
       timer = null;
     }
 
-    function dispatchNow(command: RawCommand): void {
+    function sameObservedState(left: ReaderSessionState, right: ReaderSessionState): boolean {
+      if (left.phase !== right.phase || left.generation !== right.generation) return false;
+      if (left.phase === "idle" || left.phase === "ended") return true;
+      if (right.phase !== left.phase || left.requestId !== right.requestId) return false;
+      if (left.phase === "preparing") return true;
+      return left.phase === "error" && right.phase === "error" && left.reason === right.reason;
+    }
+
+    function dispatchNow(command: RawCommand, alreadyObserved: ReaderSessionState | null = null): void {
       if (destroyed || !session) return;
       const transition = decodeTransition(session.dispatch(JSON.stringify(command)));
       state = transition.state;
@@ -176,18 +184,44 @@
           dispatchNow({ type: "tick", generation });
         }, effect.delayMs);
       }
+      if (!alreadyObserved || !sameObservedState(alreadyObserved, state)) onStateChange(state);
+    }
+
+    function observePending(command: ReaderSessionCommand): ReaderSessionState | null {
+      const generation = (state?.generation ?? 0) + 1;
+      if (command.type === "open") {
+        state = { phase: "preparing", requestId: command.requestId, generation };
+      } else if (command.type === "cancel" && state?.phase === "preparing" && state.requestId === command.requestId) {
+        state = { phase: "idle", generation };
+      } else if (command.type === "prepareFailed" && state?.phase === "preparing" && state.requestId === command.requestId) {
+        state = { phase: "error", requestId: command.requestId, reason: command.reason, generation };
+      } else if (command.type === "close") {
+        state = { phase: "ended", generation };
+      } else {
+        return null;
+      }
       onStateChange(state);
+      return state;
     }
 
     const ready = loadRuntime().then((loaded) => {
       if (destroyed) return;
       session = new loaded.ReaderSession();
       state = decodeState(JSON.parse(session.observable()));
-      onStateChange(state);
-      for (const command of pending.splice(0)) dispatchNow(command);
+      if (pending.length === 0) onStateChange(state);
+      for (const queued of pending.splice(0)) dispatchNow(queued.command, queued.observedState);
     }).catch((error: unknown) => {
       runtime = null;
       runtimePromise = null;
+      if (!destroyed && state?.phase === "preparing") {
+        state = {
+          phase: "error",
+          requestId: state.requestId,
+          reason: "session_unavailable",
+          generation: state.generation + 1,
+        };
+        onStateChange(state);
+      }
       throw error;
     });
 
@@ -198,7 +232,9 @@
       },
       dispatch(command: ReaderSessionCommand): void {
         if (destroyed) return;
-        if (!session) pending.push(command);
+        if (!session) {
+          pending.push({ command, observedState: observePending(command) });
+        }
         else dispatchNow(command);
       },
       destroy(): void {

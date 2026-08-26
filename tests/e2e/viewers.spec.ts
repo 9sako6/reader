@@ -139,7 +139,9 @@ async function loadingBarWasRevealed(page: Page): Promise<number> {
 }
 
 async function loadingBarRevealSnapshot(page: Page): Promise<{
+  cancelVisible: boolean;
   height: string;
+  labelVisible: boolean;
   left: number;
   top: number;
   width: number;
@@ -148,7 +150,9 @@ async function loadingBarRevealSnapshot(page: Page): Promise<{
 } | null> {
   return page.evaluate(() => (globalThis as typeof globalThis & {
     ReaderE2E: { loadingBarRevealEvents: Array<{
+      cancelVisible: boolean;
       height: string;
+      labelVisible: boolean;
       left: number;
       top: number;
       width: number;
@@ -511,7 +515,7 @@ test("Chrome keeps high contrast colors while reduced motion disables loading an
   expect(await indicator.evaluate((element) => element.getAnimations().length)).toBe(0);
 });
 
-test("Chrome RSVP keeps a semantic phrase intact and shrinks it to the available width", async ({ page }) => {
+test("Chrome RSVP reframes a semantic phrase while keeping the font fixed", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 });
   await loadViewer(page, "chrome");
   await openChrome(page, { text: "意味のまとまりです。次です。", paused: true });
@@ -521,9 +525,8 @@ test("Chrome RSVP keeps a semantic phrase intact and shrinks it to the available
   await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
   const display = dialog.locator('[data-reader-unit="true"]');
   const text = display.locator('[data-reader-unit-text="true"]');
-  await expect(display).toHaveText("意味のまとまりです。");
+  await expect(display).not.toHaveText("意味のまとまりです。");
   await expect(display).toHaveAttribute("data-source-start", "0");
-  await expect(display).toHaveAttribute("data-source-end", "10");
 
   const narrowGeometry = await display.evaluate((element) => {
     const textElement = element.querySelector<HTMLElement>('[data-reader-unit-text="true"]');
@@ -533,12 +536,12 @@ test("Chrome RSVP keeps a semantic phrase intact and shrinks it to the available
       textWidth: textElement?.getBoundingClientRect().width || 0,
     };
   });
-  expect(narrowGeometry.fontSize).toBeLessThan(36);
+  expect(narrowGeometry.fontSize).toBe(40);
   expect(narrowGeometry.textWidth).toBeLessThanOrEqual(narrowGeometry.availableWidth + 1);
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect(display).toHaveText("意味のまとまりです。");
-  await expect.poll(() => display.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThan(narrowGeometry.fontSize);
+  await expect(display).toHaveCSS("font-size", "40px");
   const wideGeometry = await text.evaluate((element) => ({
     textWidth: element.getBoundingClientRect().width,
     availableWidth: element.parentElement?.clientWidth || 0,
@@ -546,7 +549,7 @@ test("Chrome RSVP keeps a semantic phrase intact and shrinks it to the available
   expect(wideGeometry.textWidth).toBeLessThanOrEqual(wideGeometry.availableWidth + 1);
 });
 
-test("Chrome RSVP leaves a short phrase at the base font size", async ({ page }) => {
+test("Chrome RSVP leaves a short phrase at the fixed font size", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 });
   await loadViewer(page, "chrome");
   await openChrome(page, { text: "短い。次です。", paused: true });
@@ -556,7 +559,7 @@ test("Chrome RSVP leaves a short phrase at the base font size", async ({ page })
   await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
   const display = dialog.locator('[data-reader-unit="true"]');
   await expect(display).toHaveText("短い。");
-  await expect(display).toHaveCSS("font-size", "36px");
+  await expect(display).toHaveCSS("font-size", "40px");
 });
 
 test("mobile viewer keeps ordinary English words intact at phone width", async ({ page }) => {
@@ -621,10 +624,11 @@ test("Chrome reader keeps only the thin bar before the slow preparation threshol
   await loadViewer(page, "chrome");
   await openChrome(page, { delay: 399 });
 
-  await expect.poll(() => loadingBarWasRevealed(page)).toBe(1);
-  await expect(page.locator("[data-reader-loading-bar]")).toHaveCount(1);
-  await expect(page.getByText("文章を準備しています")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "中止" })).toHaveCount(0);
+  await expect.poll(() => loadingBarRevealSnapshot(page)).toMatchObject({
+    cancelVisible: false,
+    height: "2px",
+    labelVisible: false,
+  });
 });
 
 test("Chrome reader exposes status and cancel controls after 400ms", async ({ page }) => {
@@ -1536,7 +1540,7 @@ test("Chrome viewer preserves the sentence after an image after 50 mode round tr
   }
 });
 
-test("mobile viewer keeps RSVP text readable without overflow", async ({ page }) => {
+test("mobile viewer reframes RSVP text without changing the fixed font", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await loadViewer(page, "mobile");
   await openMobile(page, { text: "意味のまとまりです。次です。" });
@@ -1544,7 +1548,7 @@ test("mobile viewer keeps RSVP text readable without overflow", async ({ page })
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "一時停止" }).click();
   const display = dialog.locator('[data-reader-unit="true"]');
-  await expect(display).toHaveText("意味のまとまりです。");
+  await expect(display).not.toHaveText("意味のまとまりです。");
 
   const geometry = await display.evaluate((element) => {
     const textElement = element.querySelector<HTMLElement>('[data-reader-unit-text="true"]');
@@ -1556,8 +1560,7 @@ test("mobile viewer keeps RSVP text readable without overflow", async ({ page })
   });
 
   expect(geometry.textWidth).toBeLessThanOrEqual(geometry.availableWidth + 1);
-  expect(geometry.fontSize).toBeLessThan(40);
-  expect(geometry.fontSize).toBeGreaterThanOrEqual(20);
+  expect(geometry.fontSize).toBe(40);
 });
 
 test("mobile viewer exposes touchable controls", async ({ page }) => {

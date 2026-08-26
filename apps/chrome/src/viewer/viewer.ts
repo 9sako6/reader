@@ -1,4 +1,13 @@
 import viewerStyles from "./viewer.css";
+import {
+  createRsvpTextMeasurer,
+  prepareReaderDocument,
+  presentReader,
+  reflowReaderDocument,
+  sessionPreparation as prepareSession,
+  type PreparedReaderDocument,
+  type ReaderPresentationUiState,
+} from "../../../../packages/presentation/src/presentation";
 
 (() => {
   type PlaybackState = "idle" | "paused" | "playing";
@@ -7,7 +16,6 @@ import viewerStyles from "./viewer.css";
     | { kind: "loading"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "failed"; token: number; figureIndex: number };
-  type ReactReaderBlock = Extract<ReaderScreen, { kind: "text" }>["blocks"][number];
   type ReaderMessage =
     | { type: "SHOW_RSVP_LOADING"; requestId: string }
     | { type: "START_RSVP"; requestId: string; text: string; readingContext?: Partial<ReadingContext> | null }
@@ -25,8 +33,7 @@ import viewerStyles from "./viewer.css";
     globalThis.performance?.mark?.(name);
   }
 
-  let units: ReaderUnit[] = [];
-  let segmentationLocale = "ja";
+  let preparedDocument: PreparedReaderDocument | null = null;
   let rootHost: HTMLDivElement | null = null;
   let readerShadow: ShadowRoot | null = null;
   let root: HTMLDialogElement | HTMLDivElement | null = null;
@@ -38,21 +45,10 @@ import viewerStyles from "./viewer.css";
   let loadingSlowVisible = false;
   let loadingCoverVisible = false;
   let display: HTMLDivElement | null = null;
-  let headings: ReaderHeading[] = [];
-  let sectionTransitions: ReaderSectionTransition[] = [];
-  let initialHeadingIndex = -1;
-  let activeRequestId: string | null = null;
   let displayResizeObserver: ResizeObserver | null = null;
-  let figures: ReaderFigure[] = [];
-  let flowItems: ReaderFlowItem[] = [];
   let figureViewState: FigureViewState = { kind: "idle" };
   let figureLoadToken = 0;
   let figureLoadRevealTimerId: number | null = null;
-  let sourceText = "";
-  let articleTitle = "";
-  let blocks: ReaderBlock[] = [];
-  let viewBlocks: ReactReaderBlock[] = [];
-  let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
   let textScroller: HTMLElement | null = null;
   let textPositionMarkers: HTMLElement[] = [];
   let textPositionDirty = false;
@@ -80,7 +76,6 @@ import viewerStyles from "./viewer.css";
   let lastReaderFocusedElement: HTMLElement | null = null;
   let dialogCancelListener: ((event: Event) => void) | null = null;
   let closeInProgress = false;
-  let activePreparation: PreparationState = { kind: "idle" };
   let sessionState: ReaderSessionState | null = null;
   let sessionHandle: ReaderSessionHandle | null = null;
   let applyingSession = false;
@@ -92,6 +87,8 @@ import viewerStyles from "./viewer.css";
   let performanceReactInitStarted = false;
   let performanceReactInitMarked = false;
   let performanceUnitMarked = false;
+  const measureRsvpText = createRsvpTextMeasurer(document);
+  let rsvpFrameWidth = 0;
 
   type ReactReaderScreen = ReaderScreen;
 
@@ -135,7 +132,7 @@ import viewerStyles from "./viewer.css";
     const nextPositionKey = screen.kind === "rsvp-figure"
       ? `figure:${screen.figure.figureIndex}`
       : screen.kind === "rsvp-unit"
-        ? `text:${screen.unit.start}`
+        ? `text:${screen.frame.start}`
         : null;
     reactViewMount.render(screen, {
       close,
@@ -225,60 +222,19 @@ import viewerStyles from "./viewer.css";
   }
 
   function reactScreen(): ReactReaderScreen {
-    if (activePreparation.kind === "preparing") {
-      return { kind: "loading", slow: loadingSlowVisible, revealed: loadingRevealTimerId === null, reducedMotion: prefersReducedMotion() };
-    }
-    if (activePreparation.kind === "failed") {
-      return { kind: "error", message: preparationFailureLabel(activePreparation.reason) };
-    }
-    const state = readingSessionState();
-    if (state?.mode === "text") {
-      const title = articleTitle.trim();
-      return {
-        kind: "text",
-        blocks: viewBlocks,
-        figures,
-        headings,
-        activeHeadingIndex: activeHeadingAt(currentPosition.sourceOffset),
-        language: segmentationLocale,
-        position: currentPosition,
-        progress: readingProgress(currentPosition),
-        title: title && viewBlocks[0]?.text.trim() !== title ? title : "",
-      };
-    }
-    const item = state ? flowItems[state.flowIndex] : flowItems[0];
-    const position = state?.position || currentPosition;
-    const unitIndex = state?.unitIndex ?? (item?.kind === "unit" ? item.unitIndex : 0);
-    const unit = item?.kind === "unit" ? units[unitIndex] : undefined;
-    const rsvpScreen = {
-      reducedMotion: prefersReducedMotion(),
-      progress: readingProgress(position, unit || null),
+    const figure = figureViewState.kind === "loading"
+      ? { ...figureViewState, loadingVisible: figureLoadRevealTimerId === null }
+      : figureViewState;
+    const ui: ReaderPresentationUiState = {
+      loadingSlow: loadingSlowVisible,
+      loadingRevealed: loadingRevealTimerId === null,
       loadingCover: loadingCoverVisible,
       controlsVisible: true,
+      reducedMotion: prefersReducedMotion(),
       rewindFeedback: null,
-      headings,
-      activeHeadingIndex: activeHeadingAt(position.sourceOffset),
+      figure,
     };
-    if (item?.kind === "figure") {
-      const figure = figures[item.figureIndex];
-      if (!figure || figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) throw new Error("reader_figure_state_unavailable");
-      const figureView = figureViewState.kind === "loading"
-        ? { figure, figureIndex: item.figureIndex, status: "loading" as const, token: figureViewState.token, loadingVisible: figureLoadRevealTimerId === null, brightness: figureViewState.brightness }
-        : figureViewState.kind === "ready"
-          ? { figure, figureIndex: item.figureIndex, status: "ready" as const, brightness: figureViewState.brightness }
-          : { figure, figureIndex: item.figureIndex, status: "failed" as const };
-      return { kind: "rsvp-figure", figure: figureView, ...rsvpScreen };
-    }
-    if (!unit) throw new Error("reader_unit_unavailable");
-    const context = globalThis.Engine.surroundingSentences(units, unitIndex);
-    return {
-      kind: "rsvp-unit",
-      previous: context.previous,
-      next: context.next,
-      unit,
-      playback: state?.playback === "playing" ? "playing" : "paused",
-      ...rsvpScreen,
-    };
+    return presentReader(preparedDocument, sessionState, ui);
   }
 
   function settleReactFigure(figureIndex: number, loaded: boolean, token: number): void {
@@ -307,13 +263,6 @@ import viewerStyles from "./viewer.css";
     return readingSessionState()?.flowIndex ?? 0;
   }
 
-  function sessionUnitIndex(): number {
-    const state = readingSessionState();
-    if (typeof state?.unitIndex === "number") return state.unitIndex;
-    const item = flowItems[sessionFlowIndex()];
-    return item?.kind === "unit" ? item.unitIndex : 0;
-  }
-
   function sessionPlaybackState(): PlaybackState {
     const state = readingSessionState();
     if (state) return state.playback;
@@ -324,21 +273,29 @@ import viewerStyles from "./viewer.css";
     return readingSessionState()?.mode ?? "rsvp";
   }
 
-  function progressSourceOffset(position: ReaderPosition, unit: ReaderUnit | null = null): number {
-    if (position.kind === "figure") return position.sourceOffset;
-    const currentUnit = unit || (units.length > 0
-      ? units[globalThis.Engine.findUnitIndex(units, position.sourceOffset)]
-      : undefined);
-    const finalTextUnit = currentUnit
-      && units.at(-1) === currentUnit
-      && !figures.some((figure) => figure.sourceOffset >= currentUnit.end);
-    return finalTextUnit ? sourceText.length : position.sourceOffset;
+  function sessionPosition(): ReaderPosition {
+    const state = readingSessionState();
+    if (state) return state.position;
+    const first = preparedDocument?.flow[0];
+    return first && preparedDocument
+      ? globalThis.Engine.positionForFlowItem(first, preparedDocument.frames)
+      : { kind: "text", sourceOffset: 0 };
   }
 
-  function readingProgress(position: ReaderPosition, unit: ReaderUnit | null = null): number {
-    return sourceText
-      ? globalThis.Engine.calculateReadingProgress(progressSourceOffset(position, unit), sourceText.length)
-      : 0;
+  function isPreparingRequest(requestId: string): boolean {
+    return sessionState?.phase === "preparing" && sessionState.requestId === requestId;
+  }
+
+  function currentRsvpFrameLayout() {
+    const viewportWidth = root?.clientWidth
+      || document.documentElement.clientWidth
+      || globalThis.innerWidth
+      || 320;
+    const horizontalInset = viewportWidth <= 720 ? 32 : viewportWidth <= 1279 ? 64 : 80;
+    return {
+      maxWidth: Math.max(1, Math.min(640, viewportWidth - horizontalInset)),
+      measureText: measureRsvpText,
+    };
   }
 
   function isReaderMessage(value: unknown): value is ReaderMessage {
@@ -395,21 +352,19 @@ import viewerStyles from "./viewer.css";
       ? activeElement as HTMLElement
       : null);
     lockSourcePage();
-    activeRequestId = requestId;
-    activePreparation = { kind: "preparing", requestId, startedAt: Date.now() };
     loadingSlowVisible = false;
     beginReaderSession(requestId);
     loadingStartedAt = Date.now();
     loadingRevealRequestId = requestId;
     loadingRevealTimerId = globalThis.setTimeout(() => {
       loadingRevealTimerId = null;
-      if (requestId !== activeRequestId || requestId !== loadingRevealRequestId || reactRenderedKind === "loading") return;
+      if (!isPreparingRequest(requestId) || requestId !== loadingRevealRequestId || reactRenderedKind === "loading") return;
       loadingRevealRequestId = null;
       createLoadingOverlay();
     }, LOADER_REVEAL_DELAY_MS);
     loadingSlowTimerId = globalThis.setTimeout(() => {
       loadingSlowTimerId = null;
-      if (requestId !== activeRequestId || activePreparation.kind !== "preparing") return;
+      if (!isPreparingRequest(requestId)) return;
       if (!root) createLoadingOverlay();
       showSlowLoading();
     }, SLOW_PREPARATION_DELAY_MS);
@@ -420,7 +375,7 @@ import viewerStyles from "./viewer.css";
     requestId: string,
     suppliedReadingContext: Partial<ReadingContext> | null | undefined,
   ): void {
-    if (requestId !== activeRequestId || activePreparation.kind !== "preparing") return;
+    if (!isPreparingRequest(requestId)) return;
 
     const loadingWasVisible = loadingCoverVisible || (reactRenderedKind === "loading" && reactLoadingRevealed);
     const elapsed = loadingStartedAt === null ? 0 : Date.now() - loadingStartedAt;
@@ -441,86 +396,26 @@ import viewerStyles from "./viewer.css";
       showError(requestId, "content_not_found");
       return;
     }
-    const readingContext = content.readingContext;
-    sourceText = content.text;
-    articleTitle = typeof readingContext.title === "string" ? readingContext.title.trim() : "";
-    blocks = Array.isArray(readingContext.blocks) ? readingContext.blocks : [];
-    headings = readingContext.headings;
-    sectionTransitions = readingContext.sectionTransitions;
-    initialHeadingIndex = readingContext.initialHeadingIndex;
-    figures = Array.isArray(readingContext.figures) ? readingContext.figures : [];
-
-    const codeRanges = blocks.flatMap((block) => block.codeRanges || []);
-    const figureBoundaries = figures.flatMap((figure) => [figure.sourceOffset, figure.sourceEnd]);
-    const codeBoundaries = codeRanges.flatMap((range) => [range.start, range.end]);
-    segmentationLocale = readingContext.language;
-    viewBlocks = buildViewBlocks(blocks.length > 0 ? blocks : fallbackBlocks(sourceText), segmentationLocale);
-    units = globalThis.Engine.preserveCodeRanges(
-      globalThis.Engine.segmentText(content.text, segmentationLocale, [...figureBoundaries, ...codeBoundaries]),
-      content.text,
-      codeRanges,
-    )
-      .map((unit) => {
-        if (unit.kind === "code") return unit;
-        const value = unit.text.trim();
-        const leadingWhitespace = unit.text.length - unit.text.trimStart().length;
-        return { ...unit, text: value, start: unit.start + leadingWhitespace, end: unit.start + leadingWhitespace + value.length };
-      })
-      .filter((unit) => unit.text.trim().length > 0)
-      .filter((unit) => !figures.some((figure) => (
-        figure.sourceEnd > figure.sourceOffset
-        && unit.start >= figure.sourceOffset
-        && unit.end <= figure.sourceEnd
-      )));
-    if (units.length === 0) {
+    const layout = currentRsvpFrameLayout();
+    preparedDocument = prepareReaderDocument(content, globalThis.Engine, layout);
+    rsvpFrameWidth = layout.maxWidth;
+    if (preparedDocument.frames.length === 0) {
       showError(requestId, "content_not_found");
       return;
     }
 
-    flowItems = globalThis.Engine.buildReadingFlow(units, figures);
-    currentPosition = flowItems[0]
-      ? globalThis.Engine.positionForFlowItem(flowItems[0], units)
-      : { kind: "text", sourceOffset: 0 };
-    activePreparation = { kind: "ready", requestId };
     loadingCoverVisible = false;
-    prepareReactFigure(flowItems[0]);
-    createOverlay();
-    renderReactView(reactScreen());
+    prepareReactFigure(preparedDocument.flow[0]);
     dispatchSession({
       type: "prepareSucceeded",
       requestId,
-      flow: sessionPreparation(),
+      flow: prepareSession(preparedDocument),
     });
     focusAfterPaint(root);
   }
 
   function readerSessionAvailable(): boolean {
     return typeof globalThis.ReaderSession?.create === "function";
-  }
-
-  function sessionPreparation(): ReaderSessionPreparation {
-    return {
-      textLength: sourceText.length,
-      units: units.map((unit, index) => {
-        const nextUnit = units[index + 1];
-        return {
-          sentenceIndex: unit.sentenceIndex,
-          kind: unit.kind,
-          start: unit.start,
-          end: unit.end,
-          durationMs: globalThis.Engine.displayDuration(
-            unit,
-            nextUnit,
-            Boolean(nextUnit) && activeHeadingAt(unit.start) !== activeHeadingAt(nextUnit?.start ?? unit.start),
-          ),
-        };
-      }),
-      figures: figures.map((figure) => ({
-        sourceOffset: figure.sourceOffset,
-        sourceEnd: figure.sourceEnd,
-      })),
-      flow: flowItems,
-    };
   }
 
   function beginReaderSession(requestId: string): void {
@@ -538,7 +433,6 @@ import viewerStyles from "./viewer.css";
     const handle = globalThis.ReaderSession.create((state) => {
       if (sessionHandle !== handle) return;
       sessionState = state;
-      syncReaderSessionState();
       applyingSession = true;
       try {
         renderSessionState();
@@ -555,20 +449,13 @@ import viewerStyles from "./viewer.css";
       markPerformance("reader:wasm-init-end");
     }).catch((error: unknown) => {
       console.error("ReaderSession failed", error);
-      if (sessionHandle === handle) showSessionUnavailable(requestId);
+      if (sessionHandle === handle && sessionState?.phase !== "error") showSessionUnavailable(requestId);
     });
   }
 
   function showSessionUnavailable(requestId: string): void {
-    if (requestId !== activeRequestId) return;
-    dispatchSession({ type: "prepareFailed", requestId, reason: "session_unavailable" });
+    if (!isPreparingRequest(requestId)) return;
     showError(requestId, "session_unavailable");
-  }
-
-  function syncReaderSessionState(): void {
-    const state = sessionState;
-    if (!state) return;
-    if (state.phase === "reading" && state.position) currentPosition = state.position;
   }
 
   function dispatchSession(command: ReaderSessionCommand): void {
@@ -577,8 +464,18 @@ import viewerStyles from "./viewer.css";
   }
 
   function renderSessionState(): void {
-    if (!readingSessionState()) return;
-    prepareReactFigure(flowItems[sessionFlowIndex()]);
+    if (readingSessionState()) prepareReactFigure(preparedDocument?.flow[sessionFlowIndex()]);
+    if (!root) {
+      if (readingSessionState()) {
+        createOverlay();
+      } else if (sessionState?.phase === "error") {
+        root = createRoot();
+        renderReactView(reactScreen());
+        attachKeydownListener();
+        focusAfterPaint(findCloseButton());
+      }
+      return;
+    }
     renderReactView(reactScreen());
   }
 
@@ -616,21 +513,17 @@ import viewerStyles from "./viewer.css";
   }
 
   function cancelLoading(): void {
-    const requestId = activeRequestId;
+    const requestId = sessionState?.phase === "preparing" ? sessionState.requestId : null;
     if (!requestId) return;
     sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
     dispatchSession({ type: "cancel", requestId });
-    activePreparation = { kind: "cancelled", requestId };
     close(false);
   }
 
   function showError(requestId: string, reason: PreparationFailure = "extraction_failed"): void {
-    if (requestId !== activeRequestId) return;
-    if (reason !== "session_unavailable") {
-      dispatchSession({ type: "prepareFailed", requestId, reason });
-    }
+    if (!isPreparingRequest(requestId)) return;
+    dispatchSession({ type: "prepareFailed", requestId, reason });
     cancelLoadingReveal();
-    activePreparation = { kind: "failed", requestId, reason };
     loadingCoverVisible = false;
     if (!root) root = createRoot();
     renderReactView(reactScreen());
@@ -639,14 +532,8 @@ import viewerStyles from "./viewer.css";
     return;
   }
 
-  function preparationFailureLabel(reason: PreparationFailure): string {
-    if (reason === "content_not_found") return "文章を読み取れませんでした";
-    if (reason === "unsupported_page") return "このページはまだ開けません";
-    return "文章を準備できませんでした";
-  }
-
   function retryPreparation(): void {
-    const requestId = activeRequestId;
+    const requestId = sessionState?.phase === "error" ? sessionState.requestId : null;
     if (!requestId) return;
     sendPreparationMessage({ type: "RETRY_RSVP", requestId });
   }
@@ -745,9 +632,30 @@ import viewerStyles from "./viewer.css";
     focusAfterPaint(root);
     if (typeof globalThis.ResizeObserver === "function" && root && !displayResizeObserver) {
       displayResizeObserver = new globalThis.ResizeObserver(() => {
-        renderSessionState();
+        reflowForViewport();
       });
       displayResizeObserver.observe(root);
+    }
+  }
+
+  function reflowForViewport(): void {
+    if (!preparedDocument) return;
+    const layout = currentRsvpFrameLayout();
+    if (Math.abs(layout.maxWidth - rsvpFrameWidth) < 1) {
+      renderSessionState();
+      return;
+    }
+    const position = sessionPosition();
+    preparedDocument = reflowReaderDocument(preparedDocument, globalThis.Engine, layout);
+    rsvpFrameWidth = layout.maxWidth;
+    if (readingSessionState() && !applyingSession) {
+      dispatchSession({
+        type: "rebuildUnits",
+        units: prepareSession(preparedDocument).units,
+        position,
+      });
+    } else {
+      renderSessionState();
     }
   }
 
@@ -1014,11 +922,11 @@ import viewerStyles from "./viewer.css";
   }
 
   function showTextView() {
-    if (!root || !sourceText) return;
+    if (!root || !preparedDocument) return;
     textRestoring = true;
     textRestorePending = true;
     if (!applyingSession) {
-      dispatchSession({ type: "switchToText", position: currentPosition });
+      dispatchSession({ type: "switchToText", position: sessionPosition() });
     }
     renderReactView(reactScreen());
     attachKeydownListener();
@@ -1027,17 +935,16 @@ import viewerStyles from "./viewer.css";
   }
 
   function showRsvpView() {
-    if (!root || units.length === 0) return;
+    if (!root || !preparedDocument || preparedDocument.frames.length === 0) return;
     const modeRestorePending = textRestorePending;
     textRestorePending = false;
-    let capturedPosition = currentPosition;
+    let capturedPosition = sessionPosition();
     if (sessionMode() === "text" && textScroller) {
       const scrollChanged = textRestoreScrollTop === null || Math.abs(textScroller.scrollTop - textRestoreScrollTop) >= 1;
       if (!modeRestorePending || scrollChanged) {
         textRestoring = true;
-        updateTextPosition(textScroller, textPositionMarkers, true, false);
+        capturedPosition = updateTextPosition(textScroller, textPositionMarkers, true, false) || capturedPosition;
       }
-      capturedPosition = currentPosition;
     }
     dispatchSession({ type: "switchToRsvp", position: capturedPosition });
     renderReactView(reactScreen());
@@ -1045,26 +952,6 @@ import viewerStyles from "./viewer.css";
     attachKeydownListener();
     focusAfterPaint(findModeButton());
     return;
-  }
-
-  function fallbackBlocks(text: string): ReaderBlock[] {
-    const result: ReaderBlock[] = [];
-    let searchFrom = 0;
-    for (const rawValue of text.split(/\n\s*\n|\n(?=\s*[\p{L}\p{N}「『（(])/u)) {
-      const value = rawValue.trim();
-      if (!value) continue;
-      const start = text.indexOf(value, searchFrom);
-      result.push({ text: value, kind: "paragraph", level: null, start, end: start + value.length });
-      searchFrom = start + value.length;
-    }
-    return result;
-  }
-
-  function buildViewBlocks(sourceBlocks: ReaderBlock[], locale: string): ReactReaderBlock[] {
-    return sourceBlocks.map((block) => ({
-      ...block,
-      sentenceSpans: globalThis.Engine.splitSentenceSpans(block.text, locale),
-    }));
   }
 
   function attachReactTextFigureLoadCorrections(scroller: HTMLElement): void {
@@ -1127,7 +1014,7 @@ import viewerStyles from "./viewer.css";
   }
 
   function currentTextPositionMarker(positionMarkers: HTMLElement[]): HTMLElement | undefined {
-    const position = currentPosition;
+    const position = sessionPosition();
     if (position.kind === "figure") {
       return positionMarkers.find((marker) => (
         marker.dataset.readerPositionKind === "figure"
@@ -1136,10 +1023,10 @@ import viewerStyles from "./viewer.css";
     }
     return positionMarkers.find((marker) => (
       marker.dataset.readerPositionKind === "text"
-      && Number(marker.dataset.sourceStart) <= currentPosition.sourceOffset
-      && Number(marker.dataset.sourceEnd) > currentPosition.sourceOffset
+      && Number(marker.dataset.sourceStart) <= position.sourceOffset
+      && Number(marker.dataset.sourceEnd) > position.sourceOffset
     )) || [...positionMarkers].reverse().find((marker) => (
-      Number(marker.dataset.sourceStart) <= currentPosition.sourceOffset
+      Number(marker.dataset.sourceStart) <= position.sourceOffset
     ));
   }
 
@@ -1148,7 +1035,8 @@ import viewerStyles from "./viewer.css";
     positionMarkers: HTMLElement[],
     preferReadableTop = false,
     syncSession = true,
-  ): void {
+  ): ReaderPosition | null {
+    const currentPosition = sessionPosition();
     const scrollerRect = elementRect(scroller, 0, scroller.clientHeight || 500);
     const visibleTop = scrollerRect.top;
     const visibleBottom = scrollerRect.bottom;
@@ -1208,10 +1096,17 @@ import viewerStyles from "./viewer.css";
         : preferReadableTop
           ? firstReadable || (anchoredVisible ? anchoredMarker : firstVisible)
         : firstVisible;
-    if (!selected) return;
-    const sourceOffset = Number(selected.dataset.sourceStart);
-    if (!Number.isFinite(sourceOffset)) return;
-    currentPosition = selected.dataset.readerPositionKind === "figure"
+    if (!selected) return null;
+    const lastTextMarker = [...positionMarkers].reverse().find((marker) => (
+      marker.dataset.readerPositionKind === "text"
+    ));
+    const sourceOffset = atBottom
+      && scroller.scrollTop > 0
+      && selected === lastTextMarker
+      ? preparedDocument?.text.length ?? Number(selected.dataset.sourceStart)
+      : Number(selected.dataset.sourceStart);
+    if (!Number.isFinite(sourceOffset)) return null;
+    const position: ReaderPosition = selected.dataset.readerPositionKind === "figure"
       ? {
         kind: "figure",
         sourceOffset,
@@ -1221,12 +1116,14 @@ import viewerStyles from "./viewer.css";
     if (syncSession && !applyingSession) {
       dispatchSession({
         type: sessionMode() === "text" ? "switchToText" : "switchToRsvp",
-        position: currentPosition,
+        position,
       });
     }
+    return position;
   }
 
   function restoreTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[]): void {
+    const currentPosition = sessionPosition();
     const figureIndex = currentPosition.kind === "figure" ? currentPosition.figureIndex : -1;
     const target = currentPosition.kind === "figure"
       ? positionMarkers.find((marker) => (
@@ -1298,20 +1195,12 @@ import viewerStyles from "./viewer.css";
     } as DOMRect;
   }
 
-  function activeHeadingAt(offset: number): number {
-    return globalThis.Engine.findActiveHeadingIndex(
-      sectionTransitions,
-      offset,
-      initialHeadingIndex,
-    );
-  }
-
   function prepareReactFigure(item: ReaderFlowItem | undefined): void {
     if (!item || item.kind !== "figure") {
       invalidateFigureLoad();
       return;
     }
-    const figure = figures[item.figureIndex];
+    const figure = preparedDocument?.figures[item.figureIndex];
     if (!figure) return;
     if (figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) {
       invalidateFigureLoad();
@@ -1366,8 +1255,8 @@ import viewerStyles from "./viewer.css";
   }
 
   function jumpToHeading(headingIndex: number): void {
-    if (units.length === 0) return;
-    const transition = sectionTransitions.find((entry) => entry.headingIndex === headingIndex);
+    if (!preparedDocument || preparedDocument.frames.length === 0) return;
+    const transition = preparedDocument.sectionTransitions.find((entry) => entry.headingIndex === headingIndex);
     const targetOffset = transition?.offset ?? 0;
     if (sessionMode() === "text") {
       textRestoring = true;
@@ -1573,9 +1462,9 @@ import viewerStyles from "./viewer.css";
     if (closeInProgress) return;
     closeInProgress = true;
     detachSessionLifecycle();
-    const requestId = activeRequestId;
+    const requestId = sessionState && "requestId" in sessionState ? sessionState.requestId : null;
     try {
-      if (activePreparation.kind === "preparing" && requestId && !applyingSession) {
+      if (sessionState?.phase === "preparing" && requestId && !applyingSession) {
         dispatchSession({ type: "cancel", requestId });
       }
       if (sessionHandle && !applyingSession) {
@@ -1586,7 +1475,6 @@ import viewerStyles from "./viewer.css";
       sessionState = null;
       if (notifyServiceWorker && requestId) {
         sendPreparationMessage({ type: "CANCEL_RSVP", requestId });
-        if (activePreparation.kind !== "idle") activePreparation = { kind: "cancelled", requestId };
       }
       const restoreFocus = launchFocus;
       const restoreScroll = sourceScrollPosition;
@@ -1596,21 +1484,9 @@ import viewerStyles from "./viewer.css";
         try {
           restoreBackgroundInert();
         } finally {
-          activeRequestId = null;
-          activePreparation = { kind: "idle" };
           loadingStartedAt = null;
-          units = [];
-          headings = [];
-          sectionTransitions = [];
-          initialHeadingIndex = -1;
-          figures = [];
-          flowItems = [];
-          sourceText = "";
-          articleTitle = "";
-          blocks = [];
-          viewBlocks = [];
-          currentPosition = { kind: "text", sourceOffset: 0 };
-          segmentationLocale = "ja";
+          preparedDocument = null;
+          rsvpFrameWidth = 0;
           launchFocus = null;
           restoreSourcePage();
           sourceScrollPosition = preserveSourceScroll ? restoreScroll : null;
