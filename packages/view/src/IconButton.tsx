@@ -14,6 +14,7 @@ export function IconButton({ label, onClick, variant, pressed, iconSize = 34 }: 
       data-reader-icon-button="true"
       data-reader-icon-name={iconName(label)}
       aria-label={label}
+      aria-keyshortcuts={label === "1文戻る" ? "ArrowLeft" : "Space"}
       title={label}
       aria-pressed={pressed}
       className={`reader-icon-button${variant ? ` reader-icon-button-${variant}` : ""}`}

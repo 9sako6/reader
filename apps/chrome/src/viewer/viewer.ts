@@ -1386,7 +1386,8 @@ import viewerStyles from "./viewer.css";
       trapFocus(event);
       return;
     }
-    if (isEditableTarget(event) || isButtonTarget(event)) return;
+    if (sessionMode() !== "rsvp" || isEditableTarget(event)) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (event.code === "Space" || event.key === " ") {
       event.preventDefault();
       togglePlayPause();
@@ -1481,14 +1482,6 @@ import viewerStyles from "./viewer.css";
       if (candidate.isContentEditable === true || tagName === "input" || tagName === "textarea" || tagName === "select") return true;
     }
     return false;
-  }
-
-  function isButtonTarget(event: KeyboardEvent): boolean {
-    return eventPath(event).some((target) => (
-      typeof target === "object"
-      && target !== null
-      && (target as HTMLElement).tagName?.toLowerCase() === "button"
-    ));
   }
 
   function prefersReducedMotion() {

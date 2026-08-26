@@ -1999,9 +1999,9 @@ test("reader restores the RSVP mode control and follows session autoplay", () =>
   ).attributes["aria-pressed"], "true");
 });
 
-test("reader keyboard controls pause and move between sentence contexts", () => {
+test("reader keyboard shortcuts control playback while a reader button has focus", () => {
   const harness = createOutlineReaderHarness();
-  const { document, documentElement, timers, messageListener } = harness;
+  const { document, timers, messageListener } = harness;
   messageListener({ type: "SHOW_RSVP_LOADING", requestId: "keyboard-request" });
   messageListener({
     type: "START_RSVP",
@@ -2023,12 +2023,15 @@ test("reader keyboard controls pause and move between sentence contexts", () => 
   );
   const playPauseButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
   const backButton = findElement(overlay, (element) => element.attributes["aria-label"] === "1文戻る");
+  assert.equal(playPauseButton.attributes["aria-keyshortcuts"], "Space");
+  assert.equal(backButton.attributes["aria-keyshortcuts"], "ArrowLeft");
+  playPauseButton.focus();
 
   let prevented = false;
   document.dispatchEvent({
     type: "keydown",
     code: "Space",
-    target: documentElement,
+    target: playPauseButton,
     preventDefault() {
       prevented = true;
     },
@@ -2043,7 +2046,7 @@ test("reader keyboard controls pause and move between sentence contexts", () => 
   document.dispatchEvent({
     type: "keydown",
     code: "Space",
-    target: documentElement,
+    target: playPauseButton,
     preventDefault() {},
   });
   const firstTimer = [...timers.values()][0];
@@ -2056,12 +2059,108 @@ test("reader keyboard controls pause and move between sentence contexts", () => 
   document.dispatchEvent({
     type: "keydown",
     code: "ArrowLeft",
-    target: documentElement,
+    target: playPauseButton,
     preventDefault() {},
   });
   assert.match(display.textContent, /最初の節/);
   assert.equal(previousContext.textContent, "");
   assert.equal(nextContext.textContent, "次の節です。");
+});
+
+test("reader keyboard shortcuts do not capture editable or modified key presses", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener, sessionCommands } = harness;
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "keyboard-safety-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "keyboard-safety-request",
+  });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  const playPauseButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
+  playPauseButton.dispatchEvent({ type: "click" });
+  const input = new FakeElement("input");
+  input.ownerDocument = document;
+  overlay.append(input);
+
+  let prevented = false;
+  document.dispatchEvent({
+    type: "keydown",
+    code: "Space",
+    target: input,
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  document.dispatchEvent({
+    type: "keydown",
+    code: "ArrowLeft",
+    target: input,
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  document.dispatchEvent({
+    type: "keydown",
+    code: "Space",
+    ctrlKey: true,
+    target: playPauseButton,
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  document.dispatchEvent({
+    type: "keydown",
+    code: "ArrowLeft",
+    shiftKey: true,
+    target: playPauseButton,
+    preventDefault() {
+      prevented = true;
+    },
+  });
+
+  assert.equal(prevented, false);
+  assert.equal(playPauseButton.attributes["aria-label"], "再生");
+  assert.equal(sessionCommands.filter(({ type }) => type === "play" || type === "previousSentence").length, 0);
+});
+
+test("reader text mode leaves Space and ArrowLeft to the browser", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener, sessionCommands } = harness;
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-keyboard-request" });
+  messageListener({
+    type: "START_RSVP",
+    text: "最初の節です。次の節です。",
+    requestId: "text-keyboard-request",
+  });
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
+  const textOverlay = document.getElementById("__rsvp-reader-root");
+  const textScroller = findElement(
+    textOverlay,
+    (element) => element.attributes["data-reader-text-scroller"] === "true",
+  );
+
+  let prevented = false;
+  document.dispatchEvent({
+    type: "keydown",
+    code: "Space",
+    target: textScroller,
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  document.dispatchEvent({
+    type: "keydown",
+    code: "ArrowLeft",
+    target: textScroller,
+    preventDefault() {
+      prevented = true;
+    },
+  });
+
+  assert.equal(prevented, false);
+  assert.equal(sessionCommands.filter(({ type }) => type === "play" || type === "previousSentence").length, 0);
 });
 
 test("reader follows page headings and switches to text mode", () => {

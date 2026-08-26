@@ -3,7 +3,7 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const port = Number(process.env.READER_E2E_PORT) || 4173;
@@ -98,6 +98,23 @@ try {
   if (readerErrorCount > 0) {
     assert.fail(`reader preparation failed: ${await readerError.innerText()}\n${JSON.stringify({ pageConsole, workerConsole })}`);
   }
+  const modeButton = page.getByRole("button", { name: "文章で読む" });
+  const initialSourceStart = await readerUnit.getAttribute("data-source-start");
+  assert.notEqual(initialSourceStart, null);
+  await modeButton.focus();
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("button", { name: "再生" })).toBeVisible();
+  await expect(modeButton).toBeVisible();
+
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("button", { name: "一時停止" })).toBeVisible();
+  await expect(readerUnit).not.toHaveAttribute("data-source-start", initialSourceStart);
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("button", { name: "再生" })).toBeVisible();
+  const advancedSourceStart = Number(await readerUnit.getAttribute("data-source-start"));
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(async () => Number(await readerUnit.getAttribute("data-source-start"))).toBeLessThan(advancedSourceStart);
+
   const sessionDiagnostics = await worker.evaluate(async (activeTabId) => {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: activeTabId },
