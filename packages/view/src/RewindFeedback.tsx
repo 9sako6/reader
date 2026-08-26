@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, type ReactElement } from "react";
-import type { ReaderRewindFeedback, ReaderViewHandlers } from "./types";
+import type { MobileReaderViewHandlers, ReaderRewindFeedback } from "./types";
 
-export function RewindFeedback({ feedback, reducedMotion, animate, onDone }: { feedback: ReaderRewindFeedback; reducedMotion: boolean; animate?: ReaderViewHandlers["rewindAnimation"]; onDone?(id: number): void }): ReactElement {
+export function RewindFeedback({ feedback, reducedMotion, animate, onDone }: { feedback: ReaderRewindFeedback; reducedMotion: boolean; animate: MobileReaderViewHandlers["rewindAnimation"]; onDone(id: number): void }): ReactElement {
   const firstRingRef = useRef<HTMLElement | null>(null);
   const secondRingRef = useRef<HTMLElement | null>(null);
   const iconRef = useRef<SVGElement | null>(null);
@@ -11,8 +11,8 @@ export function RewindFeedback({ feedback, reducedMotion, animate, onDone }: { f
     const firstRing = firstRingRef.current;
     const secondRing = secondRingRef.current;
     const icon = iconRef.current;
-    if (!firstRing || !secondRing || !icon || !animate) return undefined;
-    return animate({ firstRing, secondRing, icon }, reducedMotion, () => onDoneRef.current?.(feedback.id));
+    if (!firstRing || !secondRing || !icon) return undefined;
+    return animate({ firstRing, secondRing, icon }, reducedMotion, () => onDoneRef.current(feedback.id));
   }, [animate, feedback.id, reducedMotion]);
   return (
     <div className="rewind-feedback" aria-hidden="true" style={{ left: `${feedback.left}px`, top: `${feedback.top}px` }}>

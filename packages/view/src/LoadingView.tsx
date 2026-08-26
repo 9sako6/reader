@@ -1,25 +1,26 @@
 import type { ReactElement } from "react";
 import { Button } from "./Button";
 import { LoadingIndicator } from "./LoadingIndicator";
-import type { ReaderViewHandlers, ReaderViewModel } from "./types";
+import type { LoadingScreen, ReaderViewHandlers, ReaderViewLayout } from "./types";
 
-export function LoadingView({ model, handlers }: { model: Extract<ReaderViewModel, { kind: "loading" }>; handlers: ReaderViewHandlers }): ReactElement {
+export function LoadingView({ layout, screen, handlers }: { layout: ReaderViewLayout; screen: LoadingScreen; handlers: ReaderViewHandlers }): ReactElement {
+  const mobile = layout === "mobile";
   return (
     <div
-      className={model.mobile ? "launch-feedback" : undefined}
+      className={mobile ? "launch-feedback" : undefined}
       data-reader-loading="true"
-      style={{ pointerEvents: model.slow ? "auto" : "none" }}
+      style={{ pointerEvents: screen.slow ? "auto" : "none" }}
     >
       <LoadingIndicator
-        mobile={model.mobile === true}
-        reducedMotion={model.reducedMotion}
-        revealed={model.revealed !== false}
+        mobile={mobile}
+        reducedMotion={screen.reducedMotion}
+        revealed={screen.revealed}
         animate={handlers.loadingAnimation}
       />
-      {model.slow ? (
+      {screen.slow ? (
         <>
           <div
-            className={model.mobile ? "launch-status" : undefined}
+            className={mobile ? "launch-status" : undefined}
             data-reader-loading-label="true"
             role="status"
           >
@@ -28,7 +29,7 @@ export function LoadingView({ model, handlers }: { model: Extract<ReaderViewMode
           <button
             type="button"
             data-reader-loading-cancel="true"
-            className={`reader-button${model.mobile ? " launch-cancel" : ""}`}
+            className={`reader-button${mobile ? " launch-cancel" : ""}`}
             onClick={handlers.cancel}
           >
             中止

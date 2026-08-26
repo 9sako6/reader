@@ -1,12 +1,12 @@
 import { useLayoutEffect, useRef, type ReactElement } from "react";
 import type { ReaderViewHandlers } from "./types";
 
-export function LoadingIndicator({ mobile, reducedMotion, revealed, animate }: { mobile: boolean; reducedMotion: boolean; revealed: boolean; animate?: ReaderViewHandlers["loadingAnimation"] }): ReactElement {
+export function LoadingIndicator({ mobile, reducedMotion, revealed, animate }: { mobile: boolean; reducedMotion: boolean; revealed: boolean; animate: ReaderViewHandlers["loadingAnimation"] }): ReactElement {
   const indicatorRef = useRef<HTMLElement | null>(null);
   const animationStartedRef = useRef(false);
   useLayoutEffect(() => {
     const indicator = indicatorRef.current;
-    if (!indicator || !revealed || reducedMotion || animationStartedRef.current || !animate) return undefined;
+    if (!indicator || !revealed || reducedMotion || animationStartedRef.current) return undefined;
     animationStartedRef.current = true;
     return animate(indicator, reducedMotion);
   }, [animate, reducedMotion, revealed]);

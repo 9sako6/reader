@@ -2,16 +2,19 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { ReaderView } from "./ReaderView";
 import viewStyles from "./view.css";
-import type { ReaderViewHandlers, ReaderViewModel, ReaderViewMount } from "./types";
+import type { DesktopReaderViewHandlers, MobileReaderViewHandlers, ReaderScreen, ReaderViewHandlersByLayout, ReaderViewLayout, ReaderViewMount } from "./types";
 
-function mount(host: Element): ReaderViewMount {
+function mount<Layout extends ReaderViewLayout>(host: Element, options: { layout: Layout }): ReaderViewMount<Layout> {
   const root: Root = createRoot(host);
   return {
-    render(model: ReaderViewModel, handlers: ReaderViewHandlers): void {
+    render(screen: ReaderScreen, handlers: ReaderViewHandlersByLayout[Layout]): void {
+      const view = options.layout === "mobile"
+        ? <ReaderView layout="mobile" screen={screen} handlers={handlers as MobileReaderViewHandlers} />
+        : <ReaderView layout="desktop" screen={screen} handlers={handlers as DesktopReaderViewHandlers} />;
       flushSync(() => root.render(
         <>
           <style data-reader-view-styles="true">{viewStyles}</style>
-          <ReaderView model={model} handlers={handlers} />
+          {view}
         </>,
       ));
     },
@@ -23,7 +26,9 @@ function mount(host: Element): ReaderViewMount {
 }
 
 const scope = globalThis as typeof globalThis & {
-  ReaderView?: { mount(host: Element): ReaderViewMount };
+  ReaderView?: {
+    mount<Layout extends ReaderViewLayout>(host: Element, options: { layout: Layout }): ReaderViewMount<Layout>;
+  };
 };
 
 scope.ReaderView = { mount };

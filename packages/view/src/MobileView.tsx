@@ -7,7 +7,7 @@ import { ReaderTextScroller } from "./ReaderTextScroller";
 import { RewindFeedback } from "./RewindFeedback";
 import { RsvpUnit } from "./RsvpUnit";
 import { orderedTextChildren } from "./TextContent";
-import type { ReaderViewHandlers, ReaderViewModel } from "./types";
+import type { MobileReaderViewHandlers, ReaderScreen } from "./types";
 
 function MobileContext({ position, text, reducedMotion }: { position: "previous" | "next"; text: string; reducedMotion: boolean }): ReactElement {
   const element = useRef<HTMLDivElement>(null);
@@ -21,24 +21,25 @@ function MobileContext({ position, text, reducedMotion }: { position: "previous"
   return <div ref={element} className={`context-unit ${position}`} aria-hidden="true">{text}</div>;
 }
 
-export function MobileView({ model, handlers }: { model: ReaderViewModel; handlers: ReaderViewHandlers }): ReactElement | null {
-  if (model.kind === "closed") return null;
-  if (model.kind === "loading") return <LoadingView model={model} handlers={handlers} />;
-  if (model.kind === "error") return <ErrorView model={model} handlers={handlers} />;
-  const rsvp = model.kind === "rsvp";
+export function MobileView({ screen, handlers }: { screen: ReaderScreen; handlers: MobileReaderViewHandlers }): ReactElement {
+  if (screen.kind === "loading") return <LoadingView layout="mobile" screen={screen} handlers={handlers} />;
+  if (screen.kind === "error") return <ErrorView layout="mobile" screen={screen} handlers={handlers} />;
+  const rsvp = screen.kind !== "text";
+  const unitScreen = screen.kind === "rsvp-unit" ? screen : null;
+  const figureScreen = screen.kind === "rsvp-figure" ? screen : null;
   return (
-    <section className="reader" role="dialog" aria-label="reader" aria-modal="true" onPointerUp={rsvp ? (event) => handlers.rsvpPointerUp?.(event.nativeEvent) : undefined}>
+    <section className="reader" role="dialog" aria-label="reader" aria-modal="true" onPointerUp={rsvp ? (event) => handlers.rsvpPointerUp(event.nativeEvent) : undefined}>
       <header className="topbar">
         <button className="icon-button" type="button" aria-label="readerを閉じる" onClick={handlers.close}><ReaderIcon name="close" size={24} /></button>
       </header>
       <footer className="controlbar">
         <button className="mode-button" type="button" data-reader-mode-button="true" onClick={rsvp ? handlers.switchToText : handlers.switchToRsvp}>{rsvp ? "文章で読む" : "RSVPで読む"}</button>
-        <div className="progress" data-reader-progress={rsvp ? undefined : "true"}>{`${model.progress}%`}</div>
+        <div className="progress" data-reader-progress={rsvp ? undefined : "true"}>{`${screen.progress}%`}</div>
         {rsvp ? (
-          <div className="control-dock" hidden={model.controlsVisible === false}>
+          <div className="control-dock" hidden={!screen.controlsVisible}>
             <button className="dock-button previous" type="button" aria-label="1文戻る" aria-keyshortcuts="ArrowLeft" onClick={handlers.previousSentence}><ReaderIcon name="previous" size={34} /></button>
-            <button className="dock-button play" type="button" aria-label={model.playing ? "一時停止" : "再生"} aria-pressed={model.playing} aria-keyshortcuts="Space" onClick={model.figure ? handlers.resumeFigure : handlers.togglePlayback}>
-              <ReaderIcon name={model.playing ? "pause" : "play"} size={model.playing ? 30 : 34} />
+            <button className="dock-button play" type="button" aria-label={figureScreen ? "続きを読む" : unitScreen?.playback === "playing" ? "一時停止" : "再生"} aria-pressed={figureScreen ? undefined : unitScreen?.playback === "playing"} aria-keyshortcuts="Space" onClick={figureScreen ? handlers.resumeFigure : handlers.togglePlayback}>
+              <ReaderIcon name={unitScreen?.playback === "playing" ? "pause" : "play"} size={unitScreen?.playback === "playing" ? 30 : 34} />
             </button>
           </div>
         ) : null}
@@ -48,22 +49,22 @@ export function MobileView({ model, handlers }: { model: ReaderViewModel; handle
           <>
             <div className="rsvp-view">
               <div className="focus-area">
-                <MobileContext position="previous" text={model.previous} reducedMotion={model.reducedMotion === true} />
-                {model.figure
-                  ? <Figure figureView={model.figure} handlers={handlers} text={false} />
-                  : <div className={`rsvp-unit ${model.unit?.kind || "body"}`} data-reader-unit="true" data-reader-position-kind="text" data-source-start={model.unit ? String(model.unit.start) : "0"} data-source-end={model.unit ? String(model.unit.end) : "0"} aria-live="off" aria-atomic="false">
-                    <RsvpUnit unit={model.unit} />
+                <MobileContext position="previous" text={unitScreen?.previous || ""} reducedMotion={screen.reducedMotion} />
+                {figureScreen
+                  ? <Figure figureView={figureScreen.figure} handlers={handlers} text={false} />
+                  : <div className={`rsvp-unit ${unitScreen!.unit.kind}`} data-reader-unit="true" data-reader-position-kind="text" data-source-start={String(unitScreen!.unit.start)} data-source-end={String(unitScreen!.unit.end)} aria-live="off" aria-atomic="false">
+                    <RsvpUnit unit={unitScreen!.unit} />
                   </div>}
-                <MobileContext position="next" text={model.next} reducedMotion={model.reducedMotion === true} />
+                <MobileContext position="next" text={unitScreen?.next || ""} reducedMotion={screen.reducedMotion} />
               </div>
             </div>
-            {model.rewindFeedback ? <RewindFeedback key={`rewind-${model.rewindFeedback.id}`} feedback={model.rewindFeedback} reducedMotion={model.reducedMotion === true} animate={handlers.rewindAnimation} onDone={handlers.rewindFeedbackDone} /> : null}
+            {screen.rewindFeedback ? <RewindFeedback key={`rewind-${screen.rewindFeedback.id}`} feedback={screen.rewindFeedback} reducedMotion={screen.reducedMotion} animate={handlers.rewindAnimation} onDone={handlers.rewindFeedbackDone} /> : null}
           </>
         ) : (
           <ReaderTextScroller tagName="div" className="text-view" handlers={handlers}>
             <article className="article">
-              {model.title ? <h1 className="article-title">{model.title}</h1> : null}
-              {orderedTextChildren(model, handlers)}
+              {screen.title ? <h1 className="article-title">{screen.title}</h1> : null}
+              {orderedTextChildren(screen, handlers)}
             </article>
           </ReaderTextScroller>
         )}

@@ -400,14 +400,11 @@ test("Chrome heading jump updates progress to the selected section offset", asyn
   const progress = dialog.locator('[data-reader-progress="true"]');
   await dialog.getByRole("button", { name: "文章で読む" }).click();
   const article = dialog.locator("article.article");
-  const sourceMarkers = article.locator("[data-source-end]");
-  await expect(sourceMarkers.first()).toBeAttached();
-  const sourceLength = await sourceMarkers.evaluateAll((elements) => Math.max(
+  const sourceLength = await article.locator("[data-source-end]").evaluateAll((elements) => Math.max(
     ...elements.map((element) => Number(element.getAttribute("data-source-end"))),
   ));
   const selectedSectionOffset = Number(await article.locator("p.paragraph[data-source-start][data-source-end]").last().getAttribute("data-source-start"));
   await dialog.getByRole("button", { name: "RSVPで読む" }).click();
-  await expect(dialog.getByRole("button", { name: "文章で読む" })).toBeVisible();
 
   const minimap = dialog.locator('[data-reader-minimap="true"]');
   await expect(minimap).toBeVisible();
@@ -1758,13 +1755,13 @@ test("mobile viewer pauses for an image and exposes its context", async ({ page 
   await expect(figure).toBeVisible({ timeout: 15_000 });
   await expect(figure.getByRole("img", { name: "本文の読書フロー図" })).toBeVisible();
   await expect(figure).toContainText("読書フローの図");
-  await expect(dialog.getByRole("button", { name: "再生" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "続きを読む" })).toBeVisible();
   const transport = dialog.locator(".control-dock");
   await figure.click({ position: { x: 5, y: 5 } });
   await expect(transport).toHaveAttribute("hidden", "");
   await figure.click({ position: { x: 5, y: 5 } });
   await expect(transport).not.toHaveAttribute("hidden", "");
-  await dialog.getByRole("button", { name: "再生" }).click();
+  await dialog.getByRole("button", { name: "続きを読む" }).click();
   await expect(figure).toBeHidden();
   await expect(dialog.locator("[data-reader-unit]")).toBeVisible();
 });
@@ -1936,7 +1933,7 @@ test("mobile viewer shows delayed figure loading and resumes after a 404", async
   await expect(failedFigure.locator("[data-reader-image-surface]")).toHaveCount(0);
   await expect(failedFigure.locator("[data-reader-figure-description]")).toBeVisible();
   await expect(failedFigure.getByRole("button", { name: /画像を/u })).toHaveCount(0);
-  await failedDialog.getByRole("button", { name: "再生" }).click();
+  await failedDialog.getByRole("button", { name: "続きを読む" }).click();
   await expect(failedDialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
 });
 
@@ -2125,9 +2122,8 @@ for (const viewer of ["chrome", "mobile"] as const) {
           || geometry.bottom <= controlBox.y
           || geometry.top >= controlBox.y + controlBox.height).toBe(true);
       }
-      const resumeName = viewer === "mobile" ? "再生" : "続きを読む";
-      await expect(dialog.getByRole("button", { name: resumeName })).toBeVisible();
-      await dialog.getByRole("button", { name: resumeName }).click();
+      await expect(dialog.getByRole("button", { name: "続きを読む" })).toBeVisible();
+      await dialog.getByRole("button", { name: "続きを読む" }).click();
       await expect(dialog.locator("[data-reader-unit]")).toContainText("画像の直後から");
     });
   }

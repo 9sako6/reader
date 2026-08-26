@@ -525,8 +525,8 @@ function createSafariReaderHarness(
   context.Extractor = testExtractor;
   assert.equal(typeof context.ReaderView?.mount, "function");
   const originalReactMount = context.ReaderView.mount;
-  context.ReaderView.mount = (host) => {
-    const mount = originalReactMount(host);
+  context.ReaderView.mount = (host, mountOptions) => {
+    const mount = originalReactMount(host, mountOptions);
     reactMountCount += 1;
     return {
       ...mount,
@@ -539,12 +539,12 @@ function createSafariReaderHarness(
   if (options.mountFailsOnce) {
     const mount = context.ReaderView.mount;
     let failed = false;
-    context.ReaderView.mount = (root) => {
+    context.ReaderView.mount = (root, mountOptions) => {
       if (!failed) {
         failed = true;
         throw new Error("reader_view_mount_failed");
       }
-      return mount(root);
+      return mount(root, mountOptions);
     };
   }
   context.ReaderSession = session;
@@ -1441,7 +1441,7 @@ test("Safari figure surface is keyboard accessible and keeps a failed image reco
   assert.equal(findElement(figurePanel, (element) => element.attributes["data-reader-figure-status"] === "true").hidden, false);
   image.dispatchEvent({ type: "error" });
   assert.equal(findElement(figurePanel, (element) => element.attributes["data-reader-figure-status"] === "true").textContent, "画像を読み込めませんでした");
-  const resume = findElement(documentElement, (element) => element.attributes["aria-label"] === "再生");
+  const resume = findElement(documentElement, (element) => element.attributes["aria-label"] === "続きを読む");
   assert.ok(resume);
   resume.dispatchEvent({ type: "click" });
   assert.match(findElement(documentElement, (element) => element.className.startsWith("rsvp-unit")).textContent, /画像の後/u);
@@ -1513,7 +1513,7 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
 
   const imagePlayButton = findElement(
     documentElement,
-    (element) => element.attributes["aria-label"] === "再生",
+    (element) => element.attributes["aria-label"] === "続きを読む",
   );
   assert.ok(imagePlayButton);
   imagePlayButton.dispatchEvent({ type: "click" });
@@ -1628,7 +1628,7 @@ test("Safari reader preserves the text marker when an earlier responsive text im
   }
   const figureImage = findElement(figurePanel, (element) => element.tagName === "IMG");
   figureImage.dispatchEvent({ type: "error" });
-  findElement(documentElement, (element) => element.attributes["aria-label"] === "再生").dispatchEvent({ type: "click" });
+  findElement(documentElement, (element) => element.attributes["aria-label"] === "続きを読む").dispatchEvent({ type: "click" });
   findElement(documentElement, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
 
   const scroller = findElement(documentElement, (element) => element.className === "text-view");

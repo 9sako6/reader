@@ -131,7 +131,7 @@ test("Chrome text reader allows selecting and copying a paragraph on a page that
 
     const view = globalThis.ReaderView;
     if (!view) throw new Error("reader view was not loaded");
-    view.mount(mountPoint).render({
+    view.mount(mountPoint, { layout: "desktop" }).render({
       kind: "text",
       language: "ja",
       title: "",
@@ -144,6 +144,8 @@ test("Chrome text reader allows selecting and copying a paragraph on a page that
         sentenceSpans: [{ start: 0, end: 43, sentenceIndex: 0 }],
       }],
       figures: [],
+      headings: [],
+      activeHeadingIndex: -1,
       position: { kind: "text", sourceOffset: 0 },
       progress: 0,
     }, {
@@ -153,10 +155,14 @@ test("Chrome text reader allows selecting and copying a paragraph on a page that
       switchToText() {},
       switchToRsvp() {},
       previousSentence() {},
+      headingSelect() {},
       togglePlayback() {},
       resumeFigure() {},
       figureLoad() {},
       figureError() {},
+      figureImage() {},
+      toggleFigureBrightness() {},
+      loadingAnimation() { return undefined; },
       textScroll() {},
       textPosition() {},
     });

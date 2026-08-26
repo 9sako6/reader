@@ -1,18 +1,18 @@
 import type {
-  ReaderViewHandlers as ReaderViewHandlersContract,
-  ReaderViewModel as ReaderViewModelContract,
+  ReaderScreen as ReaderScreenContract,
+  ReaderViewLayout as ReaderViewLayoutContract,
   ReaderViewMount as ReaderViewMountContract,
 } from "../../../packages/view/src/types";
 
 declare global {
   var __rsvpReaderInstalled: boolean;
 
-  type ReaderViewModel = ReaderViewModelContract;
-  type ReaderViewHandlers = ReaderViewHandlersContract;
-  type ReaderViewMount = ReaderViewMountContract;
+  type ReaderScreen = ReaderScreenContract;
+  type ReaderViewLayout = ReaderViewLayoutContract;
+  type ReaderViewMount<Layout extends ReaderViewLayout> = ReaderViewMountContract<Layout>;
 
   interface ReaderViewApi {
-    mount(host: Element): ReaderViewMount;
+    mount<Layout extends ReaderViewLayout>(host: Element, options: { layout: Layout }): ReaderViewMount<Layout>;
   }
 
   var ReaderView: ReaderViewApi | undefined;

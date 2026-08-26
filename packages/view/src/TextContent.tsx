@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { BlockView } from "./BlockView";
 import { Figure } from "./Figure";
-import type { ReaderViewHandlers, ReaderViewModel } from "./types";
+import type { ReaderViewHandlers, TextScreen } from "./types";
 
-export function orderedTextChildren(model: Extract<ReaderViewModel, { kind: "text" }>, handlers: ReaderViewHandlers): ReactNode[] {
+export function orderedTextChildren(model: TextScreen, handlers: ReaderViewHandlers): ReactNode[] {
   const blocks = model.blocks
     .filter((block) => !model.figures.some((figure) => (
       figure.kind !== "image"

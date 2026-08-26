@@ -710,8 +710,8 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
   let reactMountCount = 0;
   let reactUnmountCount = 0;
   const originalReactMount = context.ReaderView.mount;
-  context.ReaderView.mount = (host) => {
-    const mount = originalReactMount(host);
+  context.ReaderView.mount = (host, mountOptions) => {
+    const mount = originalReactMount(host, mountOptions);
     reactMountCount += 1;
     return {
       ...mount,
@@ -724,19 +724,19 @@ function createOutlineReaderHarness(options: { initFails?: boolean; mountFailsOn
   if (options.mountFailsOnce) {
     const mount = context.ReaderView.mount;
     let failed = false;
-    context.ReaderView.mount = (host) => {
+    context.ReaderView.mount = (host, mountOptions) => {
       if (!failed) {
         failed = true;
         throw new Error("reader_view_mount_failed");
       }
-      return mount(host);
+      return mount(host, mountOptions);
     };
   }
   let unmountFailed = false;
   if (options.unmountFailsOnce) {
     const mount = context.ReaderView.mount;
-    context.ReaderView.mount = (host) => {
-      const mounted = mount(host);
+    context.ReaderView.mount = (host, mountOptions) => {
+      const mounted = mount(host, mountOptions);
       return {
         ...mounted,
         unmount() {

@@ -7,10 +7,10 @@ import viewerStyles from "./viewer.css";
   type ReadingMode = "rsvp" | "text";
   type FigureViewState =
     | { kind: "idle" }
-    | { kind: "loading"; token: number; figureIndex: number }
+    | { kind: "loading"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "ready"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
     | { kind: "failed"; token: number; figureIndex: number };
-  type ReactReaderBlock = Extract<ReaderViewModel, { kind: "text" }>["blocks"][number];
+  type ReactReaderBlock = Extract<ReaderScreen, { kind: "text" }>["blocks"][number];
   interface LaunchProgress {
     startedAt: number;
     revealTimer: number | null;
@@ -41,7 +41,6 @@ import viewerStyles from "./viewer.css";
   let flowItems: ReaderFlowItem[] = [];
   let currentPosition: ReaderPosition = { kind: "text", sourceOffset: 0 };
   let figureViewState: FigureViewState = { kind: "idle" };
-  let reactFigureBrightness: "dimmed" | "revealed" = "dimmed";
   let figureLoadToken = 0;
   let figureLoadRevealTimerId: number | null = null;
   let opening = false;
@@ -66,7 +65,7 @@ import viewerStyles from "./viewer.css";
   let sessionDismissed = false;
   let resumePlaybackOnReopen = false;
   let sessionLifecycleAttached = false;
-  let reactViewMount: ReaderViewMount | null = null;
+  let reactViewMount: ReaderViewMount<"mobile"> | null = null;
   let reactViewHost: HTMLDivElement | null = null;
   let reactTextScroller: HTMLElement | null = null;
   let reactTextMarkers: HTMLElement[] = [];
@@ -176,7 +175,7 @@ import viewerStyles from "./viewer.css";
     performanceReactInitStarted = true;
     markPerformance("reader:react-init-start");
     try {
-      reactViewMount = globalThis.ReaderView.mount(root);
+      reactViewMount = globalThis.ReaderView.mount(root, { layout: "mobile" });
       reactViewHost = root;
     } catch (error) {
       root.remove();
@@ -195,25 +194,34 @@ import viewerStyles from "./viewer.css";
     performanceReactInitMarked = false;
   }
 
-  function reactViewModel(): ReaderViewModel {
+  function reactScreen(): ReaderScreen {
     if (activePreparation.kind === "preparing") {
-      return { kind: "loading", slow: false, revealed: launchProgress?.revealed === true, reducedMotion: prefersReducedMotion(), mobile: true };
+      return { kind: "loading", slow: false, revealed: launchProgress?.revealed === true, reducedMotion: prefersReducedMotion() };
     }
     if (activePreparation.kind === "failed") {
-      return { kind: "error", message: preparationFailureLabel(activePreparation.reason), canRetry: true, mobile: true };
+      return { kind: "error", message: preparationFailureLabel(activePreparation.reason) };
     }
     const state = readingSessionState();
     if (state?.mode === "text") {
-      return { kind: "text", language: content?.readingContext.language || "ja", blocks: viewBlocks, figures: content?.readingContext.figures || [], position: currentPosition, progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, title: content?.readingContext.title || global.document.title || "", mobile: true };
+      return { kind: "text", language: content?.readingContext.language || "ja", blocks: viewBlocks, figures: content?.readingContext.figures || [], headings: content?.readingContext.headings || [], activeHeadingIndex: activeHeadingAt(currentPosition.sourceOffset), position: currentPosition, progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, title: content?.readingContext.title || global.document.title || "" };
     }
     const item = state ? flowItems[state.flowIndex] : flowItems[0];
     const unitIndex = state?.unitIndex ?? (item?.kind === "unit" ? item.unitIndex : 0);
-    const figureIndex = item?.kind === "figure" ? item.figureIndex : null;
-    const figure = figureIndex === null ? null : content?.readingContext.figures?.[figureIndex] || null;
-    const figureStatus = figure && figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.kind : figure ? "loading" : null;
-    const unit = item?.kind === "unit" ? units[unitIndex] || null : null;
-    const context = unit ? global.Engine.surroundingSentences(units, unitIndex) : { previous: "", next: "" };
-    return { kind: "rsvp", previous: context.previous, next: context.next, unit, figure: figure && figureIndex !== null && figureStatus ? { figure, figureIndex, status: figureStatus, token: figureViewState.kind !== "idle" && figureViewState.figureIndex === figureIndex ? figureViewState.token : undefined, loadingVisible: figureStatus === "loading" && figureLoadRevealTimerId === null, brightness: reactFigureBrightness } : null, playing: state?.playback === "playing", controlsVisible, reducedMotion: prefersReducedMotion(), progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, rewindFeedback: rewindFeedback || undefined, headings: content?.readingContext.headings || [], activeHeadingIndex: global.Engine.findActiveHeadingIndex(content?.readingContext.sectionTransitions || [], currentPosition.sourceOffset, content?.readingContext.initialHeadingIndex ?? -1), mobile: true };
+    const rsvpScreen = { controlsVisible, reducedMotion: prefersReducedMotion(), progress: content?.text ? global.Engine.calculateReadingProgress(currentPosition.sourceOffset, content.text.length) : 0, loadingCover: false, rewindFeedback, headings: content?.readingContext.headings || [], activeHeadingIndex: activeHeadingAt(currentPosition.sourceOffset) };
+    if (item?.kind === "figure") {
+      const figure = content?.readingContext.figures?.[item.figureIndex];
+      if (!figure || figureViewState.kind === "idle" || figureViewState.figureIndex !== item.figureIndex) throw new Error("reader_figure_state_unavailable");
+      const figureView = figureViewState.kind === "loading"
+        ? { figure, figureIndex: item.figureIndex, status: "loading" as const, token: figureViewState.token, loadingVisible: figureLoadRevealTimerId === null, brightness: figureViewState.brightness }
+        : figureViewState.kind === "ready"
+          ? { figure, figureIndex: item.figureIndex, status: "ready" as const, brightness: figureViewState.brightness }
+          : { figure, figureIndex: item.figureIndex, status: "failed" as const };
+      return { kind: "rsvp-figure", figure: figureView, ...rsvpScreen };
+    }
+    const unit = item?.kind === "unit" ? units[unitIndex] : undefined;
+    if (!unit) throw new Error("reader_unit_unavailable");
+    const context = global.Engine.surroundingSentences(units, unitIndex);
+    return { kind: "rsvp-unit", previous: context.previous, next: context.next, unit, playback: state?.playback === "playing" ? "playing" : "paused", ...rsvpScreen };
   }
 
   function renderReactView(): void {
@@ -227,9 +235,8 @@ import viewerStyles from "./viewer.css";
         const figure = content?.readingContext.figures?.[item.figureIndex];
         if (figure?.kind === "code" || (figure?.kind === "mermaid" && !figure.src)) {
           figureViewState = { kind: "ready", token, figureIndex: item.figureIndex, brightness: "revealed" };
-          reactFigureBrightness = "revealed";
         } else {
-          figureViewState = { kind: "loading", token, figureIndex: item.figureIndex };
+          figureViewState = { kind: "loading", token, figureIndex: item.figureIndex, brightness: "dimmed" };
           figureLoadRevealTimerId = global.setTimeout(() => {
             figureLoadRevealTimerId = null;
             if (figureViewState.kind === "loading" && figureViewState.token === token) renderReactView();
@@ -239,7 +246,8 @@ import viewerStyles from "./viewer.css";
     } else if (figureViewState.kind !== "idle") {
       invalidateFigureLoad();
     }
-    reactViewMount.render(reactViewModel(), {
+    const screen = reactScreen();
+    reactViewMount.render(screen, {
       close,
       cancel: () => {
         if (activePreparation.kind === "preparing") cancelOpening(Number(activePreparation.requestId));
@@ -252,10 +260,10 @@ import viewerStyles from "./viewer.css";
       rsvpPointerUp: handleRsvpPointerUp,
       togglePlayback,
       resumeFigure: advanceFromFigure,
-      figureLoad: (figureIndex: number, token?: number) => settleReactFigure(figureIndex, true, token),
-      figureError: (figureIndex: number, token?: number) => settleReactFigure(figureIndex, false, token),
-      figureImage: (element: HTMLImageElement, figureIndex: number, token?: number) => {
-        if (typeof token !== "number" || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token || !element.complete) return;
+      figureLoad: (figureIndex: number, token: number) => settleReactFigure(figureIndex, true, token),
+      figureError: (figureIndex: number, token: number) => settleReactFigure(figureIndex, false, token),
+      figureImage: (element: HTMLImageElement, figureIndex: number, token: number) => {
+        if (figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token || !element.complete) return;
         const capturedToken = token;
         void Promise.resolve().then(() => {
           if (element.isConnected === false || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== capturedToken) return;
@@ -299,35 +307,33 @@ import viewerStyles from "./viewer.css";
       performanceReactInitMarked = true;
       markPerformance("reader:react-init-end");
     }
-    const model = reactViewModel() as { kind: string; unit?: ReaderUnit | null };
-    if (model.kind === "rsvp") {
+    if (screen.kind === "rsvp-unit" || screen.kind === "rsvp-figure") {
       if (!performanceControlsMarked) {
         performanceControlsMarked = true;
         markPerformance("reader:controls-ready");
       }
-      if (model.unit && !performanceUnitMarked) {
+      if (screen.kind === "rsvp-unit" && !performanceUnitMarked) {
         performanceUnitMarked = true;
         markPerformance("reader:first-unit");
       }
     }
   }
 
-  function settleReactFigure(figureIndex: number, loaded: boolean, token?: number): void {
-    if (typeof token !== "number" || figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token) return;
+  function settleReactFigure(figureIndex: number, loaded: boolean, token: number): void {
+    if (figureViewState.kind !== "loading" || figureViewState.figureIndex !== figureIndex || figureViewState.token !== token) return;
     if (figureLoadRevealTimerId !== null) {
       global.clearTimeout(figureLoadRevealTimerId);
       figureLoadRevealTimerId = null;
     }
     figureViewState = loaded
-      ? { kind: "ready", token: figureViewState.token, figureIndex, brightness: "dimmed" }
+      ? { kind: "ready", token: figureViewState.token, figureIndex, brightness: figureViewState.brightness }
       : { kind: "failed", token: figureViewState.token, figureIndex };
     renderReactView();
   }
 
   function toggleReactFigureBrightness(figureIndex: number): void {
-    if (figureViewState.kind === "idle" || figureViewState.figureIndex !== figureIndex) return;
-    reactFigureBrightness = reactFigureBrightness === "revealed" ? "dimmed" : "revealed";
-    if (figureViewState.kind === "ready") figureViewState = { ...figureViewState, brightness: reactFigureBrightness };
+    if ((figureViewState.kind !== "loading" && figureViewState.kind !== "ready") || figureViewState.figureIndex !== figureIndex) return;
+    figureViewState = { ...figureViewState, brightness: figureViewState.brightness === "revealed" ? "dimmed" : "revealed" };
     renderReactView();
   }
 
@@ -680,6 +686,7 @@ import viewerStyles from "./viewer.css";
   }
 
   function renderSessionState(): void {
+    if (!readingSessionState()) return;
     renderReactView();
   }
 
@@ -1154,7 +1161,6 @@ import viewerStyles from "./viewer.css";
   function invalidateFigureLoad(): void {
     figureLoadToken += 1;
     figureViewState = { kind: "idle" };
-    reactFigureBrightness = "dimmed";
     if (figureLoadRevealTimerId !== null) {
       global.clearTimeout(figureLoadRevealTimerId);
       figureLoadRevealTimerId = null;
