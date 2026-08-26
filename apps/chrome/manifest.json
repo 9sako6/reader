@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "reader",
-  "version": "2026.8.2",
+  "version": "2026.8.3",
   "minimum_chrome_version": "116",
   "description": "表示中または選択した文章を通常表示またはRSVPで読みやすくします。",
   "permissions": ["contextMenus", "activeTab", "scripting", "offscreen"],
