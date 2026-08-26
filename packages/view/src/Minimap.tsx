@@ -1,8 +1,9 @@
 import type { ReactElement } from "react";
-import type { ReaderViewHandlers, ReaderViewModel } from "./types";
+import type { ReaderHeading } from "../../extractor/src/types";
+import type { ReaderViewHandlers } from "./types";
 
-export function Minimap({ model, handlers }: { model: Extract<ReaderViewModel, { kind: "rsvp" }>; handlers: ReaderViewHandlers }): ReactElement | null {
-  if (model.headings.length === 0) return null;
+export function Minimap({ headings, activeHeadingIndex, handlers }: { headings: ReaderHeading[]; activeHeadingIndex: number; handlers: ReaderViewHandlers }): ReactElement | null {
+  if (headings.length === 0) return null;
   return (
     <aside
       data-reader-minimap="true"
@@ -13,11 +14,11 @@ export function Minimap({ model, handlers }: { model: Extract<ReaderViewModel, {
         aria-label="記事の構成"
         className="reader-minimap-list"
       >
-        {model.headings.map((heading, index) => (
+        {headings.map((heading, index) => (
           <button
             key={`${index}-${heading.text}`}
             type="button"
-            aria-current={index === model.activeHeadingIndex ? "location" : "false"}
+            aria-current={index === activeHeadingIndex ? "location" : "false"}
             onClick={() => handlers.headingSelect?.(index)}
             className="reader-button reader-minimap-item"
             style={{ paddingLeft: `${8 + Math.max(0, heading.level - 1) * 11}px` }}

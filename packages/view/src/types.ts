@@ -26,6 +26,8 @@ export type ReaderViewModel =
     language: string;
     blocks: ReaderViewBlock[];
     figures: ReaderFigure[];
+    headings?: ReaderHeading[];
+    activeHeadingIndex?: number;
     position: ReaderPosition;
     progress: number;
     title: string;

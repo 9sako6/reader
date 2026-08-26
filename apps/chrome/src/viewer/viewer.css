@@ -57,8 +57,8 @@ nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-of
   [data-reader-topbar] button,
   [data-reader-mode-button] { transition: none !important; }
 }
-@media (max-width: 1080px) {
-  [data-reader-stage] { width: calc(100% - 32px) !important; height: calc(100% - 32px) !important; grid-template-columns: minmax(0, 1fr) !important; column-gap: 0 !important; }
+@media (max-width: 1279px) {
+  [data-reader-stage] { width: calc(100% - 32px) !important; height: calc(100% - 32px) !important; }
   [data-reader-minimap] { display: none !important; }
 }
 @media (max-width: 720px) {

@@ -11,6 +11,7 @@ async function readReaderPosition(dialog: ReturnType<Page["getByRole"]>): Promis
   sourceStart: number;
   figureIndex: number | null;
 }> {
+  await expect(dialog.getByRole("button", { name: "文章で読む" })).toBeVisible();
   const figure = dialog.locator('[data-reader-position-kind="figure"]:visible').first();
   if (await figure.count() > 0) {
     return {
@@ -28,7 +29,7 @@ async function readReaderPosition(dialog: ReturnType<Page["getByRole"]>): Promis
 }
 
 async function pauseReaderIfPlaying(dialog: ReturnType<Page["getByRole"]>): Promise<void> {
-  await expect(dialog.getByRole("button", { name: /^(文章で読む|RSVPで読む)$/ })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "文章で読む" })).toBeVisible();
   const pause = dialog.getByRole("button", { name: "一時停止" });
   if (await pause.count() > 0 && await pause.isVisible()) await pause.click();
 }
@@ -399,11 +400,14 @@ test("Chrome heading jump updates progress to the selected section offset", asyn
   const progress = dialog.locator('[data-reader-progress="true"]');
   await dialog.getByRole("button", { name: "文章で読む" }).click();
   const article = dialog.locator("article.article");
-  const sourceLength = await article.locator("[data-source-end]").evaluateAll((elements) => Math.max(
+  const sourceMarkers = article.locator("[data-source-end]");
+  await expect(sourceMarkers.first()).toBeAttached();
+  const sourceLength = await sourceMarkers.evaluateAll((elements) => Math.max(
     ...elements.map((element) => Number(element.getAttribute("data-source-end"))),
   ));
   const selectedSectionOffset = Number(await article.locator("p.paragraph[data-source-start][data-source-end]").last().getAttribute("data-source-start"));
   await dialog.getByRole("button", { name: "RSVPで読む" }).click();
+  await expect(dialog.getByRole("button", { name: "文章で読む" })).toBeVisible();
 
   const minimap = dialog.locator('[data-reader-minimap="true"]');
   await expect(minimap).toBeVisible();
@@ -431,7 +435,7 @@ test("Chrome minimap keeps a long heading and its active background inside the p
   await page.setViewportSize({ width: 1280, height: 800 });
   const longHeading = "Chromeで長い見出しがミニマップで背景色からはみ出して描画される問題の原因と修正方法を詳しく説明する";
   await page.setContent(`
-    <main style="width: 280px; height: 220px">
+    <main style="position: relative; width: 280px; height: 220px">
       <aside data-reader-minimap="true" aria-label="読書位置">
         <div class="reader-minimap-title">記事の構成</div>
         <nav aria-label="記事の構成" class="reader-minimap-list">
@@ -2324,6 +2328,89 @@ test("Chrome text mode replaces RSVP content without opening an inset modal", as
   expect(surfaces.borderRadius).toBe("0px");
 });
 
+test("Chrome desktop keeps the reading surface and controls fixed across modes", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true, outline: "two" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const minimap = dialog.getByRole("complementary", { name: "読書位置" });
+  await expect(minimap).toBeVisible();
+  await minimap.getByRole("button", { name: "画像のある節" }).click();
+  await expect(minimap.getByRole("button", { name: "画像のある節" })).toHaveAttribute("aria-current", "location");
+
+  const geometry = () => dialog.evaluate((reader) => {
+    const rectangle = (selector: string) => {
+      const element = reader.querySelector<HTMLElement>(selector);
+      if (!element) throw new Error(`missing ${selector}`);
+      const box = element.getBoundingClientRect();
+      return { left: box.left, top: box.top, width: box.width, height: box.height };
+    };
+    return {
+      pane: rectangle('[data-reader-reading-pane="true"]'),
+      minimap: rectangle('[data-reader-minimap="true"]'),
+      close: rectangle('[aria-label="readerを閉じる"]'),
+      mode: rectangle('[data-reader-mode-button="true"]'),
+    };
+  });
+  const rsvpGeometry = await geometry();
+  expect(rsvpGeometry.pane.left + rsvpGeometry.pane.width / 2).toBe(720);
+
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  await expect(minimap).toBeVisible();
+  await expect(minimap.getByRole("button", { name: "画像のある節" })).toHaveAttribute("aria-current", "location");
+  const textGeometry = await geometry();
+  expect(textGeometry).toEqual(rsvpGeometry);
+
+  const articleBox = await dialog.locator("article.reader-article").boundingBox();
+  expect(articleBox).not.toBeNull();
+  expect(Math.abs(articleBox!.x + articleBox!.width / 2 - 720)).toBeLessThanOrEqual(1);
+  expect(rsvpGeometry.minimap.left + rsvpGeometry.minimap.width).toBeLessThanOrEqual(articleBox!.x - 32);
+});
+
+test("Chrome desktop hides the outline when there is no room beside the centered reading surface", async ({ page }) => {
+  await page.setViewportSize({ width: 1279, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true, outline: "two" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const minimap = dialog.getByRole("complementary", { name: "読書位置" });
+  await expect(minimap).toBeHidden();
+  const rsvpPane = await dialog.locator('[data-reader-reading-pane="true"]').boundingBox();
+  expect(rsvpPane).not.toBeNull();
+  expect(Math.abs(rsvpPane!.x + rsvpPane!.width / 2 - 639.5)).toBeLessThanOrEqual(1);
+
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  await expect(minimap).toBeHidden();
+  const article = await dialog.locator("article.reader-article").boundingBox();
+  expect(article).not.toBeNull();
+  expect(Math.abs(article!.x + article!.width / 2 - 639.5)).toBeLessThanOrEqual(1);
+});
+
+test("Chrome text scrolling updates the active outline without changing modes", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true, outline: "two" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  await dialog.getByRole("button", { name: "文章で読む" }).click();
+  const minimap = dialog.getByRole("complementary", { name: "読書位置" });
+  const trailingParagraph = dialog.locator("p.paragraph[data-source-start][data-source-end]").last();
+  await trailingParagraph.evaluate((element) => {
+    const scroller = element.closest<HTMLElement>('[data-reader-text-scroller="true"]');
+    if (!scroller) throw new Error("text scroller not found");
+    scroller.style.paddingBottom = "600px";
+  });
+  await placeTextMarker(trailingParagraph, 40);
+
+  await expect(minimap.getByRole("button", { name: "画像のある節" })).toHaveAttribute("aria-current", "location");
+  await expect(dialog.getByRole("button", { name: "RSVPで読む" })).toBeVisible();
+
+  await minimap.getByRole("button", { name: "実ブラウザで読む" }).click();
+  await expect(minimap.getByRole("button", { name: "実ブラウザで読む" })).toHaveAttribute("aria-current", "location");
+  await expect(dialog.getByRole("button", { name: "RSVPで読む" })).toBeVisible();
+});
+
 test("Chrome desktop controls use large iPhone-style icons in a bottom dock", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await loadViewer(page, "chrome");
@@ -2776,7 +2863,7 @@ test("real WASM session keeps close, stale preparation, and scheduled ticks iner
   const trace = await page.evaluate(async () => {
     const api = (globalThis as typeof globalThis & {
       ReaderSession: {
-        create(): {
+        create(onStateChange: (state: { phase: string; generation: number }) => void): {
           ready: Promise<void>;
           state: { phase: string; generation: number } | null;
           dispatch(command: Record<string, unknown> & { type: string }): void;
@@ -2784,22 +2871,27 @@ test("real WASM session keeps close, stale preparation, and scheduled ticks iner
         };
       };
     }).ReaderSession;
-    const handle = api.create();
+    let nextState: ((state: { phase: string; generation: number }) => void) | null = null;
+    const handle = api.create((state) => {
+      nextState?.(state);
+      nextState = null;
+    });
     await handle.ready;
+    const dispatch = (command: Record<string, unknown> & { type: string }) => new Promise<{ phase: string; generation: number }>((resolve) => {
+      nextState = resolve;
+      handle.dispatch(command);
+    });
     const prep = {
       textLength: 4,
       units: [{ sentenceIndex: 0, kind: "body" as const, start: 0, end: 4, durationMs: 1 }],
       figures: [],
       flow: [{ kind: "unit" as const, sourceOffset: 0, unitIndex: 0 }],
     };
-    handle.dispatch({ type: "open", requestId: "A" });
-    handle.dispatch({ type: "open", requestId: "B" });
-    handle.dispatch({ type: "prepareSucceeded", requestId: "A", flow: prep });
-    const stalePreparation = handle.state;
-    handle.dispatch({ type: "prepareSucceeded", requestId: "B", flow: prep });
-    const reading = handle.state;
-    handle.dispatch({ type: "close" });
-    const closed = handle.state;
+    await dispatch({ type: "open", requestId: "A" });
+    await dispatch({ type: "open", requestId: "B" });
+    const stalePreparation = await dispatch({ type: "prepareSucceeded", requestId: "A", flow: prep });
+    const reading = await dispatch({ type: "prepareSucceeded", requestId: "B", flow: prep });
+    const closed = await dispatch({ type: "close" });
     await new Promise((resolve) => setTimeout(resolve, 5));
     const afterScheduledTick = handle.state;
     handle.destroy();

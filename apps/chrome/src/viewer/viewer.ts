@@ -239,6 +239,8 @@ import viewerStyles from "./viewer.css";
         kind: "text",
         blocks: viewBlocks,
         figures,
+        headings,
+        activeHeadingIndex: activeHeadingAt(currentPosition.sourceOffset),
         language: segmentationLocale,
         position: currentPosition,
         progress: readingProgress(currentPosition),
@@ -1368,6 +1370,19 @@ import viewerStyles from "./viewer.css";
     if (units.length === 0) return;
     const transition = sectionTransitions.find((entry) => entry.headingIndex === headingIndex);
     const targetOffset = transition?.offset ?? 0;
+    if (sessionMode() === "text") {
+      textRestoring = true;
+      dispatchSession({
+        type: "switchToText",
+        position: { kind: "text", sourceOffset: targetOffset },
+      });
+      if (textScroller) {
+        restoreTextPosition(textScroller, textPositionMarkers);
+        textRestoreScrollTop = textScroller.scrollTop;
+      }
+      scheduleTextRestoreRelease();
+      return;
+    }
     dispatchSession({
       type: "switchToRsvp",
       position: { kind: "text", sourceOffset: targetOffset },
@@ -1386,7 +1401,7 @@ import viewerStyles from "./viewer.css";
       trapFocus(event);
       return;
     }
-    if (sessionMode() !== "rsvp" || isEditableTarget(event)) return;
+    if (sessionMode() !== "rsvp" || isEditableTarget(event) || isImageSurfaceTarget(event)) return;
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (event.code === "Space" || event.key === " ") {
       event.preventDefault();
@@ -1482,6 +1497,14 @@ import viewerStyles from "./viewer.css";
       if (candidate.isContentEditable === true || tagName === "input" || tagName === "textarea" || tagName === "select") return true;
     }
     return false;
+  }
+
+  function isImageSurfaceTarget(event: KeyboardEvent): boolean {
+    return eventPath(event).some((target) => (
+      typeof target === "object"
+      && target !== null
+      && (target as HTMLElement).getAttribute?.("data-reader-image-surface") === "true"
+    ));
   }
 
   function prefersReducedMotion() {

@@ -158,6 +158,42 @@
               messageListeners.push(listener);
             },
           },
+          connect({ name }) {
+            const workerUrl = globalThis.__READER_WASM_FAILURE && !globalThis.__READER_WASM_RETRY
+              ? "/missing/session-worker.js"
+              : chromeGlobal.runtime.getURL("session-worker.js");
+            const worker = new Worker(workerUrl, { type: "module" });
+            const portMessageListeners = new Set();
+            const portDisconnectListeners = new Set();
+            worker.addEventListener("message", (event) => {
+              for (const listener of portMessageListeners) listener(event.data);
+            });
+            worker.addEventListener("error", (event) => {
+              for (const listener of portMessageListeners) {
+                listener({ type: "error", message: event.message || "ReaderSession worker failed" });
+              }
+            });
+            return {
+              name,
+              onMessage: {
+                addListener(listener) {
+                  portMessageListeners.add(listener);
+                },
+              },
+              onDisconnect: {
+                addListener(listener) {
+                  portDisconnectListeners.add(listener);
+                },
+              },
+              postMessage(message) {
+                worker.postMessage(message);
+              },
+              disconnect() {
+                worker.terminate();
+                for (const listener of portDisconnectListeners) listener();
+              },
+            };
+          },
           sendMessage(message) {
             if (message?.type === "CANCEL_RSVP" && typeof message.requestId === "string") {
               cancelledRequestIds.add(message.requestId);

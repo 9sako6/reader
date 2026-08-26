@@ -1430,13 +1430,13 @@ test("reader shows the article outline beside the focal point", () => {
     (element) => element.attributes["data-reader-context-next"] === "true",
   );
 
-  assert.equal(stage.style.gridTemplateColumns, "280px minmax(0, 1fr)");
   assert.equal(stage.attributes["data-reader-stage"], "true");
   assert.deepEqual(Array.from(stage.animations[0].keyframes, ({ opacity }) => opacity), [0, 1]);
   assert.equal(stage.animations[0].options.duration, 220);
   assert.equal(stage.animations[0].options.easing, "cubic-bezier(0.22, 1, 0.36, 1)");
-  assert.equal(stage.style.columnGap, "32px");
   assert.equal(stage.children[0], minimap);
+  assert.match(ReaderViewStyles, /\[data-reader-stage\] \{[^}]*width: min\(1296px, calc\(100% - 48px\)\)/su);
+  assert.match(ReaderViewStyles, /\[data-reader-minimap\] \{[^}]*position: absolute[^}]*width: 280px/su);
   assert.equal(minimap.attributes["data-reader-minimap"], "true");
   assert.equal(outline.children.length, 2);
   assert.equal(outline.children[0].textContent, "記事タイトル");
@@ -2225,9 +2225,59 @@ test("reader follows page headings and switches to text mode", () => {
     (element) => element.attributes["data-reader-text-scroller"] === "true",
   );
   const rsvpModeButton = findElementByText(textShell, "RSVPで読む");
+  const textOutline = findElement(
+    textShell,
+    (element) => element.attributes["aria-label"] === "記事の構成",
+  );
   assert.ok(textScroller);
+  assert.equal(textOutline.children[0].textContent, "ページタイトル");
+  assert.equal(textOutline.children[1].textContent, "概要");
+  assert.equal(textOutline.children[1].attributes["aria-current"], "location");
   assert.match(rsvpModeButton.parent.attributes.class, /reader-mode-position-text/u);
   assert.ok(findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる"));
+});
+
+test("reader updates the text outline from the first visible sentence", () => {
+  const harness = createOutlineReaderHarness();
+  const { document, messageListener } = harness;
+  const text = "最初の節です。次の節です。";
+  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-outline-scroll" });
+  messageListener({
+    type: "START_RSVP",
+    text,
+    requestId: "text-outline-scroll",
+    readingContext: {
+      headings: [
+        { text: "ページタイトル", level: 1 },
+        { text: "概要", level: 2 },
+      ],
+      sectionTransitions: [
+        { offset: 0, headingIndex: 0 },
+        { offset: 7, headingIndex: 1 },
+      ],
+      initialHeadingIndex: -1,
+    },
+  });
+
+  const overlay = document.getElementById("__rsvp-reader-root");
+  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
+  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
+  const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
+  scroller.rect = { top: 0, bottom: 500, left: 0, right: 1280, width: 1280, height: 500 };
+  scroller.scrollTop = 120;
+  textMarkers[0].rect = { top: -120, bottom: -20, left: 304, right: 976, width: 672, height: 100 };
+  textMarkers[1].rect = { top: 100, bottom: 200, left: 304, right: 976, width: 672, height: 100 };
+  scroller.dispatchEvent({ type: "scroll" });
+
+  const updatedTextShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const updatedOutline = findElement(
+    updatedTextShell,
+    (element) => element.attributes["aria-label"] === "記事の構成",
+  );
+  assert.equal(updatedOutline.children[0].attributes["aria-current"], "false");
+  assert.equal(updatedOutline.children[1].attributes["aria-current"], "location");
+  assert.ok(findElementByText(updatedTextShell, "RSVPで読む"));
 });
 
 test("reader uses sentence and figure markers to preserve a shared position", () => {
