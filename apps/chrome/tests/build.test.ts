@@ -9,7 +9,7 @@ test("Chrome build contains the shared pipeline and only the desktop viewer", ()
   const manifest = JSON.parse(fs.readFileSync(path.join(output, "manifest.json"), "utf8"));
   assert.equal(manifest.name, "reader");
   assert.equal(manifest.minimum_chrome_version, "116");
-  assert.deepEqual(manifest.permissions, ["contextMenus", "activeTab", "scripting", "offscreen"]);
+  assert.deepEqual(manifest.permissions, ["activeTab", "scripting", "offscreen"]);
   assert.equal(manifest.background.service_worker, "service-worker.js");
   assert.equal(manifest.host_permissions, undefined);
   assert.deepEqual(manifest.content_security_policy, {

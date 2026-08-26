@@ -3,8 +3,8 @@
   "name": "reader",
   "version": "2026.8.4",
   "minimum_chrome_version": "116",
-  "description": "表示中または選択した文章を通常表示またはRSVPで読みやすくします。",
-  "permissions": ["contextMenus", "activeTab", "scripting", "offscreen"],
+  "description": "表示中の文章を通常表示またはRSVPで読みやすくします。",
+  "permissions": ["activeTab", "scripting", "offscreen"],
   "action": {
     "default_title": "ページをreaderで読む"
   },

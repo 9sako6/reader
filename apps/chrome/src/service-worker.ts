@@ -1,19 +1,8 @@
-const MENU_ID = "read-selection-rsvp";
 const SESSION_HOST_PATH = "session-host.html";
-
-type PreparationOperation =
-  | { kind: "page" }
-  | { kind: "selection"; text: string; readingContext: ReadingContext | null };
-
-interface RetryOperation {
-  requestId: string;
-  operation: PreparationOperation;
-}
 
 let requestSequence = 0;
 const activeRequestByTab = new Map<number, string>();
-const retryOperationByTab = new Map<number, RetryOperation>();
-let activePreparation: PreparationState = { kind: "idle" };
+const failedRequestByTab = new Map<number, string>();
 let sessionHostCreation: Promise<void> | null = null;
 
 async function ensureSessionHost(): Promise<void> {
@@ -57,16 +46,6 @@ function abortPreparationController(requestId: string): void {
   scope.__rsvpPreparationControllers?.delete(requestId);
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: MENU_ID,
-      title: "RSVPで読む",
-      contexts: ["selection"],
-    });
-  });
-});
-
 chrome.runtime.onMessage.addListener((message: unknown, sender) => {
   if (typeof message !== "object" || message === null) return;
   const value = message as Record<string, unknown>;
@@ -82,45 +61,22 @@ chrome.runtime.onMessage.addListener((message: unknown, sender) => {
   }
 });
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== MENU_ID || !tab?.id) return;
-
-  const text = info.selectionText;
-  if (!text || text.trim().length === 0) return;
-
-  await startReader(tab.id, text);
-});
-
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab?.id) return;
-  await startPreparation(tab.id, { kind: "page" });
+  await startPreparation(tab.id);
 });
 
-async function startReader(
-  tabId: number,
-  text: string,
-  readingContext: ReadingContext | null = null,
-): Promise<void> {
-  await startPreparation(tabId, { kind: "selection", text, readingContext });
-}
-
 async function retryPreparation(tabId: number, requestId: string): Promise<void> {
-  const retryOperation = retryOperationByTab.get(tabId);
-  if (!retryOperation || retryOperation.requestId !== requestId) return;
-  await startPreparation(tabId, retryOperation.operation);
+  if (failedRequestByTab.get(tabId) !== requestId) return;
+  await startPreparation(tabId);
 }
 
-async function startPreparation(tabId: number, operation: PreparationOperation): Promise<void> {
+async function startPreparation(tabId: number): Promise<void> {
   const previousRequestId = activeRequestByTab.get(tabId);
-  const requestId = beginPreparation(tabId, operation);
+  const requestId = beginPreparation(tabId);
   if (previousRequestId) await abortInjectedPreparation(tabId, previousRequestId);
   try {
     await openReader(tabId, requestId);
-    if (operation.kind === "selection") {
-      await sendReaderContent(tabId, requestId, operation.text, operation.readingContext);
-      return;
-    }
-
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ["vendor/defuddle/defuddle.js"],
@@ -143,16 +99,15 @@ async function startPreparation(tabId: number, operation: PreparationOperation):
     }
     console.error("Failed to prepare page with reader", error);
     const reason = classifyPreparationFailure(error);
-    activePreparation = { kind: "failed", requestId, reason };
+    failedRequestByTab.set(tabId, requestId);
     await showReaderError(tabId, requestId, reason);
   }
 }
 
-function beginPreparation(tabId: number, operation: PreparationOperation): string {
+function beginPreparation(tabId: number): string {
   const requestId = `${Date.now()}-${requestSequence += 1}`;
   activeRequestByTab.set(tabId, requestId);
-  retryOperationByTab.set(tabId, { requestId, operation });
-  activePreparation = { kind: "preparing", requestId, startedAt: Date.now() };
+  failedRequestByTab.delete(tabId);
   return requestId;
 }
 
@@ -203,10 +158,6 @@ async function sendReaderContent(
     readingContext,
     requestId,
   });
-  if (isActiveRequest(tabId, requestId)) {
-    activePreparation = { kind: "ready", requestId };
-    retryOperationByTab.delete(tabId);
-  }
 }
 
 async function showReaderError(
@@ -226,10 +177,7 @@ function cancelPreparation(tabId: number, requestId: string): void {
   if (!isActiveRequest(tabId, requestId)) return;
   void abortInjectedPreparation(tabId, requestId);
   activeRequestByTab.delete(tabId);
-  if (retryOperationByTab.get(tabId)?.requestId === requestId) retryOperationByTab.delete(tabId);
-  if (activePreparation.kind !== "idle" && activePreparation.requestId === requestId) {
-    activePreparation = { kind: "cancelled", requestId };
-  }
+  if (failedRequestByTab.get(tabId) === requestId) failedRequestByTab.delete(tabId);
 }
 
 async function abortInjectedPreparation(tabId: number, requestId: string): Promise<void> {

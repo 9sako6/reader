@@ -1,6 +1,6 @@
 # Chrome拡張
 
-Chrome 116以降で選択した文章やページ本文を読み取ります。Desktop Viewerでは、記事の構成を見ながら文章表示とRSVPを切り替えられます。
+Chrome 116以降でページ本文を読み取ります。Desktop Viewerでは、記事の構成を見ながら文章表示とRSVPを切り替えられます。
 
 ## ビルド
 
@@ -13,7 +13,7 @@ mise run build:chrome
 ## 構成
 
 - `manifest.json`: Chrome拡張の権限、Service Worker、配布バージョン
-- `src/service-worker.ts`: コンテキストメニュー、拡張アイコン、ページ本文抽出の起点
+- `src/service-worker.ts`: 拡張アイコンとページ本文抽出の起点
 - `src/runtime.ts`: ReaderSession client、React View、Engine、Extractor、Desktop Viewerを単一bundleへまとめるentry point
 - `session-host.html` / `src/session-host.ts`: WebサイトのCSPから独立したoffscreen documentでReaderSession Workerを管理する
 - `src/session-worker.ts`: ReaderSession facade、WASM、読書タイマーを所有するWorker

@@ -9,7 +9,6 @@ function createServiceWorkerHarness() {
   let reportExtractionStarted = null;
   const harness: any = {
     listeners: {},
-    createdMenu: null,
     scriptCalls: [],
     messages: [],
     runtimeMessages: [],
@@ -48,11 +47,6 @@ function createServiceWorkerHarness() {
     runtime: {
       getURL(path) {
         return `chrome-extension://reader/${path}`;
-      },
-      onInstalled: {
-        addListener(listener) {
-          harness.listeners.installed = listener;
-        },
       },
       onMessage: {
         addListener(listener) {
@@ -104,19 +98,6 @@ function createServiceWorkerHarness() {
         harness.messages.push({ tabId, message });
       },
     },
-    contextMenus: {
-      removeAll(callback) {
-        callback();
-      },
-      create(menu) {
-        harness.createdMenu = menu;
-      },
-      onClicked: {
-        addListener(listener) {
-          harness.listeners.clicked = listener;
-        },
-      },
-    },
   };
   const source = fs.readFileSync(
     path.join(__dirname, "..", "..", "..", ".build", "browser-runtime", "service-worker.js"),
@@ -133,16 +114,11 @@ function createServiceWorkerHarness() {
   return harness;
 }
 
-test("service worker registers whole-page and selection entry points", () => {
+test("service worker registers the toolbar and preparation message entry points", () => {
   const harness = createServiceWorkerHarness();
 
-  assert.equal(typeof harness.listeners.installed, "function");
-  assert.equal(typeof harness.listeners.clicked, "function");
   assert.equal(typeof harness.listeners.actionClicked, "function");
-  harness.listeners.installed();
-  assert.equal(harness.createdMenu.id, "read-selection-rsvp");
-  assert.equal(harness.createdMenu.title, "RSVPで読む");
-  assert.deepEqual(Array.from(harness.createdMenu.contexts), ["selection"]);
+  assert.equal(typeof harness.listeners.runtimeMessage, "function");
 });
 
 test("toolbar action loads the reader and starts extracted page content", async () => {
@@ -181,23 +157,6 @@ test("toolbar action loads the reader and starts extracted page content", async 
   assert.match(extractionCall.func.toString(), /signal:\w+\.signal/u);
 });
 
-test("selection action starts the selected text without page extraction", async () => {
-  const harness = createServiceWorkerHarness();
-
-  await harness.listeners.clicked(
-    { menuItemId: "read-selection-rsvp", selectionText: "選択した本文" },
-    { id: 8 },
-  );
-
-  assert.equal(harness.messages[0].tabId, 8);
-  assert.equal(harness.messages[0].message.type, "SHOW_RSVP_LOADING");
-  assert.equal(harness.messages[1].tabId, 8);
-  assert.equal(harness.messages[1].message.type, "START_RSVP");
-  assert.equal(harness.messages[1].message.text, "選択した本文");
-  assert.equal(harness.scriptCalls.length, 1);
-  assert.deepEqual(Array.from(harness.scriptCalls[0].args), ["chrome-extension://reader/runtime.js"]);
-});
-
 test("toolbar action reports an extraction error for an empty page", async () => {
   const harness = createServiceWorkerHarness();
   harness.extractionResult = null;
@@ -227,6 +186,11 @@ test("service worker aborts cooperative extraction and drops its result after ca
   assert.deepEqual(Array.from(harness.abortedRequestIds), [loadingMessage.requestId]);
   harness.rejectExtraction(Object.assign(new Error("Aborted"), { name: "AbortError" }));
   await actionPromise;
+  harness.listeners.runtimeMessage(
+    { type: "RETRY_RSVP", requestId: loadingMessage.requestId },
+    { tab: { id: 10 } },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.deepEqual(harness.messages.map(({ message }) => message.type), ["SHOW_RSVP_LOADING"]);
 });
@@ -296,36 +260,4 @@ test("service worker retries only the matching failed request with a new request
   );
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(harness.messages.length, 4);
-});
-
-test("service worker releases selection retry data after success and cancel", async () => {
-  const successfulHarness = createServiceWorkerHarness();
-  await successfulHarness.listeners.clicked(
-    { menuItemId: "read-selection-rsvp", selectionText: "保持しない選択本文" },
-    { id: 12 },
-  );
-  const successfulRequestId = successfulHarness.messages[0].message.requestId;
-  successfulHarness.listeners.runtimeMessage(
-    { type: "RETRY_RSVP", requestId: successfulRequestId },
-    { tab: { id: 12 } },
-  );
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(successfulHarness.messages.length, 2);
-
-  const cancelledHarness = createServiceWorkerHarness();
-  await cancelledHarness.listeners.clicked(
-    { menuItemId: "read-selection-rsvp", selectionText: "取消後に保持しない選択本文" },
-    { id: 13 },
-  );
-  const cancelledRequestId = cancelledHarness.messages[0].message.requestId;
-  cancelledHarness.listeners.runtimeMessage(
-    { type: "CANCEL_RSVP", requestId: cancelledRequestId },
-    { tab: { id: 13 } },
-  );
-  cancelledHarness.listeners.runtimeMessage(
-    { type: "RETRY_RSVP", requestId: cancelledRequestId },
-    { tab: { id: 13 } },
-  );
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(cancelledHarness.messages.length, 2);
 });
