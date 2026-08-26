@@ -427,6 +427,45 @@ test("Chrome heading jump updates progress to the selected section offset", asyn
   expect(Math.abs(progressGeometry.bottomGap - 16)).toBeLessThanOrEqual(1);
 });
 
+test("Chrome minimap keeps a long heading and its active background inside the panel", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const longHeading = "averylongheadingwithoutanybreakopportunitiesthatmuststayinsidetheminimapaverylongheadingwithoutanybreakopportunities";
+  await page.setContent(`
+    <main style="width: 280px; height: 640px">
+      <aside data-reader-minimap="true" aria-label="読書位置">
+        <div class="reader-minimap-title">記事の構成</div>
+        <nav aria-label="記事の構成" class="reader-minimap-list">
+          <button type="button" aria-current="location" class="reader-button reader-minimap-item">${longHeading}</button>
+        </nav>
+      </aside>
+    </main>
+  `);
+  await page.addStyleTag({ path: "packages/view/src/view.css" });
+
+  const minimap = page.getByRole("complementary", { name: "読書位置" });
+  const activeHeading = minimap.getByRole("button", { name: longHeading });
+  await expect(minimap).toBeVisible();
+  await expect(activeHeading).toHaveAttribute("aria-current", "location");
+
+  const geometry = await minimap.evaluate((panel, headingText) => {
+    const button = [...panel.querySelectorAll<HTMLButtonElement>("button")]
+      .find((element) => element.textContent === headingText);
+    if (!button) throw new Error("active heading button not found");
+    const panelRectangle = panel.getBoundingClientRect();
+    const buttonRectangle = button.getBoundingClientRect();
+    return {
+      panelLeft: panelRectangle.left,
+      panelRight: panelRectangle.right,
+      buttonLeft: buttonRectangle.left,
+      buttonRight: buttonRectangle.right,
+      textFitsButton: button.scrollWidth <= button.clientWidth,
+    };
+  }, longHeading);
+  expect(geometry.buttonLeft).toBeGreaterThanOrEqual(geometry.panelLeft);
+  expect(geometry.buttonRight).toBeLessThanOrEqual(geometry.panelRight);
+  expect(geometry.textFitsButton).toBe(true);
+});
+
 test("Chrome extraction errors keep retry and close actions readable in more contrast", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ contrast: "more" });
