@@ -105,7 +105,7 @@
 [data-reader-minimap] { position: relative; width: 100%; max-height: min(72vh, 640px); box-sizing: border-box; z-index: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; gap: 16px; align-self: center; padding: 14px 10px 10px; border: 1px solid rgba(255,255,255,0.11); border-radius: 18px; background: rgba(36,36,36,0.72); box-shadow: 0 18px 50px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.05); backdrop-filter: blur(28px) saturate(150%); -webkit-backdrop-filter: blur(28px) saturate(150%); color: rgba(255,255,255,0.62); }
 .reader-minimap-title { font-size: 13px; }
 .reader-minimap-list { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 2px 0; scrollbar-width: none; -ms-overflow-style: none; }
-.reader-minimap-item { width: 100%; min-width: 0; min-height: 36px; box-sizing: border-box; padding: 4px 8px; border-radius: 8px; background: transparent; text-align: left; overflow-wrap: anywhere; font-size: 13px; color: inherit; box-shadow: none; }
+.reader-minimap-item { flex-shrink: 0; width: 100%; min-width: 0; min-height: 36px; box-sizing: border-box; padding: 4px 8px; border-radius: 8px; background: transparent; text-align: left; overflow-wrap: anywhere; font-size: 13px; color: inherit; box-shadow: none; }
 .reader-minimap-item[aria-current="location"] { background: rgba(255,255,255,0.12); }
 
 .reader-code-surface { width: min(100%, 760px); margin: 0 auto; position: relative; box-sizing: border-box; border-radius: 12px; overflow: hidden; }

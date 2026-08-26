@@ -429,13 +429,17 @@ test("Chrome heading jump updates progress to the selected section offset", asyn
 
 test("Chrome minimap keeps a long heading and its active background inside the panel", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  const longHeading = "averylongheadingwithoutanybreakopportunitiesthatmuststayinsidetheminimapaverylongheadingwithoutanybreakopportunities";
+  const longHeading = "Chromeで長い見出しがミニマップで背景色からはみ出して描画される問題の原因と修正方法を詳しく説明する";
   await page.setContent(`
-    <main style="width: 280px; height: 640px">
+    <main style="width: 280px; height: 220px">
       <aside data-reader-minimap="true" aria-label="読書位置">
         <div class="reader-minimap-title">記事の構成</div>
         <nav aria-label="記事の構成" class="reader-minimap-list">
-          <button type="button" aria-current="location" class="reader-button reader-minimap-item">${longHeading}</button>
+          <button type="button" aria-current="false" class="reader-button reader-minimap-item">はじめに</button>
+          <button type="button" aria-current="location" class="reader-button reader-minimap-item" style="padding-left: 30px">${longHeading}</button>
+          <button type="button" aria-current="false" class="reader-button reader-minimap-item" style="padding-left: 30px">原因</button>
+          <button type="button" aria-current="false" class="reader-button reader-minimap-item" style="padding-left: 30px">修正方法</button>
+          <button type="button" aria-current="false" class="reader-button reader-minimap-item">まとめ</button>
         </nav>
       </aside>
     </main>
@@ -451,19 +455,34 @@ test("Chrome minimap keeps a long heading and its active background inside the p
     const button = [...panel.querySelectorAll<HTMLButtonElement>("button")]
       .find((element) => element.textContent === headingText);
     if (!button) throw new Error("active heading button not found");
+    const followingButton = [...panel.querySelectorAll<HTMLButtonElement>("button")]
+      .find((element) => element.textContent === "原因");
+    const list = panel.querySelector<HTMLElement>("nav");
+    if (!followingButton || !list) throw new Error("minimap structure not found");
+    const textRange = document.createRange();
+    textRange.selectNodeContents(button);
     const panelRectangle = panel.getBoundingClientRect();
     const buttonRectangle = button.getBoundingClientRect();
+    const textRectangle = textRange.getBoundingClientRect();
+    const followingRectangle = followingButton.getBoundingClientRect();
     return {
       panelLeft: panelRectangle.left,
       panelRight: panelRectangle.right,
       buttonLeft: buttonRectangle.left,
       buttonRight: buttonRectangle.right,
-      textFitsButton: button.scrollWidth <= button.clientWidth,
+      buttonBottom: buttonRectangle.bottom,
+      textBottom: textRectangle.bottom,
+      followingTop: followingRectangle.top,
+      textFitsBackground: button.scrollWidth <= button.clientWidth && button.scrollHeight <= button.clientHeight,
+      listScrolls: list.scrollHeight > list.clientHeight,
     };
   }, longHeading);
   expect(geometry.buttonLeft).toBeGreaterThanOrEqual(geometry.panelLeft);
   expect(geometry.buttonRight).toBeLessThanOrEqual(geometry.panelRight);
-  expect(geometry.textFitsButton).toBe(true);
+  expect(geometry.textBottom).toBeLessThanOrEqual(geometry.buttonBottom);
+  expect(geometry.textBottom).toBeLessThan(geometry.followingTop);
+  expect(geometry.textFitsBackground).toBe(true);
+  expect(geometry.listScrolls).toBe(true);
 });
 
 test("Chrome extraction errors keep retry and close actions readable in more contrast", async ({ page }) => {
