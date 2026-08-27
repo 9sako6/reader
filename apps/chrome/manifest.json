@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "reader",
-  "version": "2026.8.5",
+  "version": "2026.8.6",
   "minimum_chrome_version": "116",
   "description": "表示中の文章をPageまたはSpotsで読みやすくします。",
   "permissions": ["activeTab", "scripting", "offscreen"],
