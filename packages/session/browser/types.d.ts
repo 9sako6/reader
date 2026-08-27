@@ -1,7 +1,7 @@
 import type { ReaderUnitKind } from "../../engine/src/types";
 import type { PreparationFailure } from "../../extractor/src/types";
 
-export type ReaderSessionMode = "rsvp" | "text";
+export type ReaderSessionMode = "spots" | "page";
 export type ReaderSessionPlayback = "playing" | "paused";
 
 export type ReaderSessionPosition =
@@ -9,10 +9,10 @@ export type ReaderSessionPosition =
   | { kind: "figure"; sourceOffset: number; figureIndex: number };
 
 export type ReaderSessionFlowItem =
-  | { kind: "unit"; sourceOffset: number; unitIndex: number }
+  | { kind: "spot"; sourceOffset: number; spotIndex: number }
   | { kind: "figure"; sourceOffset: number; figureIndex: number };
 
-export interface ReaderSessionUnitMetadata {
+export interface ReaderSessionSpotMetadata {
   sentenceIndex: number;
   kind: ReaderUnitKind;
   start: number;
@@ -27,7 +27,7 @@ export interface ReaderSessionFigureMetadata {
 
 export interface ReaderSessionPreparation {
   textLength: number;
-  units: ReaderSessionUnitMetadata[];
+  spots: ReaderSessionSpotMetadata[];
   figures: ReaderSessionFigureMetadata[];
   flow: ReaderSessionFlowItem[];
 }
@@ -45,11 +45,11 @@ export type ReaderSessionState =
       flowLength: number;
       generation: number;
       sourceOffset: number;
-      currentKind: "unit" | "figure";
+      currentKind: "spot" | "figure";
       requestId: string;
       timerPending: boolean;
       position: ReaderSessionPosition;
-      unitIndex: number | null;
+      spotIndex: number | null;
       figureIndex: number | null;
     }
   | { phase: "error"; requestId: string; reason: ReaderSessionFailure; generation: number }
@@ -63,10 +63,10 @@ export type ReaderSessionCommand =
   | { type: "play" }
   | { type: "pause" }
   | { type: "previousSentence" }
-  | { type: "switchToText"; position: ReaderSessionPosition }
-  | { type: "switchToRsvp"; position: ReaderSessionPosition }
+  | { type: "switchToPage"; position: ReaderSessionPosition }
+  | { type: "switchToSpots"; position: ReaderSessionPosition }
   | { type: "resumeFromFigure" }
-  | { type: "rebuildUnits"; units: ReaderSessionUnitMetadata[]; position: ReaderSessionPosition }
+  | { type: "rebuildSpots"; spots: ReaderSessionSpotMetadata[]; position: ReaderSessionPosition }
   | { type: "visibilityHidden" }
   | { type: "close" };
 

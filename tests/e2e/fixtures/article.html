@@ -195,10 +195,10 @@
             };
           },
           sendMessage(message) {
-            if (message?.type === "CANCEL_RSVP" && typeof message.requestId === "string") {
+            if (message?.type === "CANCEL_READER" && typeof message.requestId === "string") {
               cancelledRequestIds.add(message.requestId);
             }
-            if (message?.type === "RETRY_RSVP" && typeof message.requestId === "string") {
+            if (message?.type === "RETRY_READER" && typeof message.requestId === "string") {
               open({ delay: 0, text: "再試行成功。" });
             }
             return Promise.resolve();
@@ -238,16 +238,16 @@
           const requestedDelay = Number(options.delay);
           const delay = Number.isFinite(requestedDelay) && requestedDelay >= 0 ? requestedDelay : defaultDelay;
           const shouldFail = options.error === true;
-          for (const listener of messageListeners) listener({ type: "SHOW_RSVP_LOADING", requestId });
+          for (const listener of messageListeners) listener({ type: "SHOW_READER_LOADING", requestId });
           const start = () => {
             if (cancelledRequestIds.has(requestId)) return;
             if (shouldFail) {
               for (const listener of messageListeners) {
-                listener({ type: "RSVP_ERROR", requestId, reason: options.reason || "extraction_failed" });
+                listener({ type: "READER_ERROR", requestId, reason: options.reason || "extraction_failed" });
               }
               return;
             }
-            for (const listener of messageListeners) listener({ type: "START_RSVP", requestId, text, readingContext });
+            for (const listener of messageListeners) listener({ type: "START_READER", requestId, text, readingContext });
             if (options.paused === true) {
               const pauseWhenReady = () => {
                 const host = readerHost();

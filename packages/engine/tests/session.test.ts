@@ -18,7 +18,7 @@ const units = [
   { text: "最後です。", start: 12, end: 17, sentenceIndex: 2 },
 ];
 
-test("source offsets map to RSVP units", () => {
+test("source offsets map to semantic units", () => {
   assert.equal(findUnitIndex(units, 0), 0);
   assert.equal(findUnitIndex(units, 6), 1);
   assert.equal(findUnitIndex(units, 99), 3);
@@ -159,11 +159,11 @@ test("reading flow orders text and figures by source offset without mutating inp
 
   assert.deepEqual(flow, [
     { kind: "figure", sourceOffset: 0, figureIndex: 2 },
-    { kind: "unit", sourceOffset: 0, unitIndex: 0 },
+    { kind: "spot", sourceOffset: 0, spotIndex: 0 },
     { kind: "figure", sourceOffset: 10, figureIndex: 0 },
     { kind: "figure", sourceOffset: 10, figureIndex: 1 },
-    { kind: "unit", sourceOffset: 10, unitIndex: 1 },
-    { kind: "unit", sourceOffset: 20, unitIndex: 2 },
+    { kind: "spot", sourceOffset: 10, spotIndex: 1 },
+    { kind: "spot", sourceOffset: 20, spotIndex: 2 },
     { kind: "figure", sourceOffset: 22, figureIndex: 3 },
   ]);
   assert.deepEqual(units.map((unit) => unit.start), originalUnitOrder);

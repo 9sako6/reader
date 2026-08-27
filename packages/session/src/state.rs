@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ReaderUnit {
+pub struct Spot {
     pub sentence_index: usize,
-    pub kind: ReaderUnitKind,
+    pub kind: SpotKind,
     pub start: usize,
     pub end: usize,
     pub duration_ms: u64,
@@ -14,7 +14,7 @@ pub struct ReaderUnit {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ReaderUnitKind {
+pub enum SpotKind {
     Body,
     Quote,
     Aside,
@@ -31,11 +31,11 @@ pub struct Figure {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum FlowItem {
-    Unit {
+    Spot {
         #[serde(rename = "sourceOffset")]
         source_offset: usize,
-        #[serde(rename = "unitIndex")]
-        unit_index: usize,
+        #[serde(rename = "spotIndex")]
+        spot_index: usize,
     },
     Figure {
         #[serde(rename = "sourceOffset")]
@@ -48,7 +48,7 @@ pub enum FlowItem {
 impl FlowItem {
     pub fn source_offset(&self) -> usize {
         match self {
-            Self::Unit { source_offset, .. } | Self::Figure { source_offset, .. } => *source_offset,
+            Self::Spot { source_offset, .. } | Self::Figure { source_offset, .. } => *source_offset,
         }
     }
 
@@ -83,8 +83,8 @@ impl Position {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
-    Rsvp,
-    Text,
+    Spots,
+    Page,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -109,7 +109,7 @@ pub enum PreparationFailure {
 pub struct PreparationInput {
     pub text_length: usize,
     #[serde(default)]
-    pub units: Vec<ReaderUnit>,
+    pub spots: Vec<Spot>,
     #[serde(default)]
     pub figures: Vec<Figure>,
     #[serde(default)]
@@ -119,7 +119,7 @@ pub struct PreparationInput {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionContent {
     pub text_length: usize,
-    pub units: Vec<ReaderUnit>,
+    pub spots: Vec<Spot>,
     pub figures: Vec<Figure>,
     pub flow: Vec<FlowItem>,
 }
@@ -128,7 +128,7 @@ impl From<PreparationInput> for Arc<SessionContent> {
     fn from(input: PreparationInput) -> Self {
         Arc::new(SessionContent {
             text_length: input.text_length,
-            units: input.units,
+            spots: input.spots,
             figures: input.figures,
             flow: input.flow,
         })
@@ -179,7 +179,7 @@ pub struct ObservableState {
     pub timer_pending: bool,
     pub content_present: bool,
     pub position: Option<Position>,
-    pub unit_index: Option<usize>,
+    pub spot_index: Option<usize>,
     pub figure_index: Option<usize>,
     pub reason: Option<String>,
 }
@@ -202,7 +202,7 @@ impl ReaderSessionState {
     pub fn observable(&self) -> ObservableState {
         let empty = |phase: &str, generation: u64, request_id: String| ObservableState {
             phase: phase.into(),
-            mode: "rsvp".into(),
+            mode: "spots".into(),
             playback: "paused".into(),
             flow_index: 0,
             flow_length: 0,
@@ -213,7 +213,7 @@ impl ReaderSessionState {
             timer_pending: false,
             content_present: false,
             position: None,
-            unit_index: None,
+            spot_index: None,
             figure_index: None,
             reason: None,
         };
@@ -234,9 +234,9 @@ impl ReaderSessionState {
                 request_id,
             } => {
                 let current = content.flow.get(*flow_index);
-                let (current_kind, unit_index, figure_index) = match current {
-                    Some(FlowItem::Unit { unit_index, .. }) => {
-                        ("unit".into(), Some(*unit_index), None)
+                let (current_kind, spot_index, figure_index) = match current {
+                    Some(FlowItem::Spot { spot_index, .. }) => {
+                        ("spot".into(), Some(*spot_index), None)
                     }
                     Some(FlowItem::Figure { figure_index, .. }) => {
                         ("figure".into(), None, Some(*figure_index))
@@ -256,7 +256,7 @@ impl ReaderSessionState {
                     timer_pending: matches!(playback, Playback::Playing),
                     content_present: true,
                     position: Some(position.clone()),
-                    unit_index,
+                    spot_index,
                     figure_index,
                     reason: None,
                 }
@@ -277,8 +277,8 @@ impl ReaderSessionState {
 
 fn mode_string(mode: &Mode) -> String {
     match mode {
-        Mode::Rsvp => "rsvp",
-        Mode::Text => "text",
+        Mode::Spots => "spots",
+        Mode::Page => "page",
     }
     .into()
 }

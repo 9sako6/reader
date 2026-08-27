@@ -9,7 +9,7 @@ import type {
   ReaderSessionPosition as ReaderSessionPositionContract,
   ReaderSessionPreparation as ReaderSessionPreparationContract,
   ReaderSessionState as ReaderSessionStateContract,
-  ReaderSessionUnitMetadata as ReaderSessionUnitMetadataContract,
+  ReaderSessionSpotMetadata as ReaderSessionSpotMetadataContract,
 } from "./types";
 
 declare global {
@@ -17,7 +17,7 @@ declare global {
   type ReaderSessionPlayback = ReaderSessionPlaybackContract;
   type ReaderSessionPosition = ReaderSessionPositionContract;
   type ReaderSessionFlowItem = ReaderSessionFlowItemContract;
-  type ReaderSessionUnitMetadata = ReaderSessionUnitMetadataContract;
+  type ReaderSessionSpotMetadata = ReaderSessionSpotMetadataContract;
   type ReaderSessionPreparation = ReaderSessionPreparationContract;
   type ReaderSessionFailure = ReaderSessionFailureContract;
   type ReaderSessionState = ReaderSessionStateContract;

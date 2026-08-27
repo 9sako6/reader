@@ -13,15 +13,15 @@ Playwright WebKitではSafari Web Extensionの権限、実機のsafe area、Voic
 - 縦向きと横向きのそれぞれで、右端の取っ手を1回押すとreaderが開く
 - 記事の本文、見出し、引用、list、`pre`、inline code、画像、alt、captionが欠落しない
 - 読書中の画像で自動再生が止まり、再生と1文戻るのどちらからも正しい位置へ移動する
-- RSVPと文章表示を往復しても、読んでいた文または画像の位置が保たれる
+- SpotsとPageを往復しても、読んでいた文または画像の位置が保たれる
 - readerを閉じると、開く前のページとscroll位置へ戻る
 - ページ遷移後は遷移先の記事が表示され、遷移前の記事が再利用されない
 - 遅延読み込み画像と読み込み失敗画像があっても、閉じる、mode切替、再生を操作できる
 
 ## 表示設定
 
-- 文字サイズを200%にしてもRSVPの中央unitが折り返さず、操作が画面外へ出ない
-- Dynamic Typeの標準と最大で、文章表示の本文と操作が重ならない
+- 文字サイズを200%にしても中央のSpotが折り返さず、操作が画面外へ出ない
+- Dynamic Typeの標準と最大で、Pageの本文と操作が重ならない
 - Reduce Motionを有効にすると、取っ手、mode切替、画像veilの不要な動きが止まる
 - Increase Contrastを有効にすると、補助文、進捗、操作アイコンを判別できる
 - 縦横の切替後も注視位置、safe area、44×44pt以上の操作領域が保たれる
@@ -31,7 +31,7 @@ Playwright WebKitではSafari Web Extensionの権限、実機のsafe area、Voic
 - readerを開いた直後から、再生／一時停止と1文戻るが表示され、VoiceOverと外付けキーボードで操作できる
 - VoiceOverの読み上げ順が、閉じる、mode、本文、1文戻る、再生の順で理解できる
 - 閉じる、mode、再生／一時停止、1文戻るの名前と状態が読み上げられる
-- RSVPの高速なunit更新が毎回読み上げられない
+- Spotsの高速なSpot更新が毎回読み上げられない
 - 本文画像のaltとcaptionが読み上げられ、再開操作へ移動できる
 - 外付けキーボードのTab移動がreader外へ抜けず、Escapeで閉じ、起動した取っ手へfocusが戻る
 

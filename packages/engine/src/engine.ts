@@ -167,7 +167,7 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     unit: ReaderUnit,
     locale: string,
     maxWidth: number,
-    measureText: RsvpFrameOptions["measureText"],
+    measureText: SpotOptions["measureText"],
   ): ReaderUnit[] {
     if (unit.kind === "code" || measureText(unit.text, unit.kind) <= maxWidth) return [{ ...unit }];
     const graphemes = [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(unit.text)];
@@ -289,7 +289,7 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     });
   }
 
-  function buildRsvpFrames(units: ReaderUnit[], options: RsvpFrameOptions): RsvpFrame[] {
+  function buildSpots(units: ReaderUnit[], options: SpotOptions): Spot[] {
     const locale = options?.locale || "ja";
     const maxWidth = Number.isFinite(options?.maxWidth) && options.maxWidth > 0
       ? options.maxWidth
@@ -316,15 +316,15 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     });
   }
 
-  function buildReadingFlow(units: ReaderUnit[], figures: EngineFigure[]): ReaderFlowItem[] {
+  function buildReadingFlow(spots: Spot[], figures: EngineFigure[]): ReaderFlowItem[] {
     const items: Array<ReaderFlowItem & { order: number }> = [];
-    for (const [unitIndex, unit] of (Array.isArray(units) ? units : []).entries()) {
-      if (!unit) continue;
+    for (const [spotIndex, spot] of (Array.isArray(spots) ? spots : []).entries()) {
+      if (!spot) continue;
       items.push({
-        kind: "unit",
-        sourceOffset: unit.start,
-        unitIndex,
-        order: unitIndex,
+        kind: "spot",
+        sourceOffset: spot.start,
+        spotIndex,
+        order: spotIndex,
       });
     }
     for (const [figureIndex, figure] of (Array.isArray(figures) ? figures : []).entries()) {
@@ -344,7 +344,7 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
       .map(({ order: _order, ...item }) => item);
   }
 
-  function positionForFlowItem(flowItem: ReaderFlowItem, units: ReaderUnit[]): ReaderPosition {
+  function positionForFlowItem(flowItem: ReaderFlowItem, spots: Spot[]): ReaderPosition {
     if (flowItem.kind === "figure") {
       return {
         kind: "figure",
@@ -354,7 +354,7 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     }
     return {
       kind: "text",
-      sourceOffset: units[flowItem.unitIndex]?.start ?? flowItem.sourceOffset,
+      sourceOffset: spots[flowItem.spotIndex]?.start ?? flowItem.sourceOffset,
     };
   }
 
@@ -466,7 +466,7 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     segmentText,
     splitSentenceSpans,
     preserveCodeRanges,
-    buildRsvpFrames,
+    buildSpots,
     buildReadingFlow,
     positionForFlowItem,
     findActiveHeadingIndex,

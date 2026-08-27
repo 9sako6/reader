@@ -41,7 +41,7 @@ const ui: ReaderPresentationUiState = {
   figure: { kind: "idle" },
 };
 
-test("PreparedReaderDocument owns semantic units, fitted frames, timing, and flow", () => {
+test("PreparedReaderDocument owns semantic units, fitted spots, timing, and flow", () => {
   const source = "非常に長い意味のまとまりです。次です。";
   const document = prepareReaderDocument(content(source), Engine, {
     maxWidth: 6,
@@ -49,20 +49,20 @@ test("PreparedReaderDocument owns semantic units, fitted frames, timing, and flo
   });
 
   assert.ok(document.readerUnits.some((unit: { text: string }) => graphemeCount(unit.text) > 6));
-  assert.ok(document.frames.length > document.readerUnits.length);
-  assert.ok(document.frames.every((frame: { text: string; durationMs: number }) => (
-    graphemeCount(frame.text) <= 6 && frame.durationMs > 0
+  assert.ok(document.spots.length > document.readerUnits.length);
+  assert.ok(document.spots.every((spot: { text: string; durationMs: number }) => (
+    graphemeCount(spot.text) <= 6 && spot.durationMs > 0
   )));
-  for (const frame of document.frames) {
-    assert.equal(source.slice(frame.start, frame.end), frame.text);
+  for (const spot of document.spots) {
+    assert.equal(source.slice(spot.start, spot.end), spot.text);
   }
   assert.deepEqual(
-    sessionPreparation(document).units.map(({ durationMs, start, end }: { durationMs: number; start: number; end: number }) => ({ durationMs, start, end })),
-    document.frames.map(({ durationMs, start, end }: { durationMs: number; start: number; end: number }) => ({ durationMs, start, end })),
+    sessionPreparation(document).spots.map(({ durationMs, start, end }: { durationMs: number; start: number; end: number }) => ({ durationMs, start, end })),
+    document.spots.map(({ durationMs, start, end }: { durationMs: number; start: number; end: number }) => ({ durationMs, start, end })),
   );
 });
 
-test("reflow changes final frames without changing the extracted document or fixed semantics", () => {
+test("reflow changes final spots without changing the extracted document or fixed semantics", () => {
   const source = "非常に長い意味のまとまりです。次です。";
   const narrow = prepareReaderDocument(content(source), Engine, {
     maxWidth: 5,
@@ -75,40 +75,40 @@ test("reflow changes final frames without changing the extracted document or fix
 
   assert.strictEqual(wide.text, narrow.text);
   assert.strictEqual(wide.readerUnits, narrow.readerUnits);
-  assert.ok(wide.frames.length < narrow.frames.length);
+  assert.ok(wide.spots.length < narrow.spots.length);
 });
 
-test("presentReader selects the frame and progress only from ReaderSession state", () => {
+test("presentReader selects the spot and progress only from ReaderSession state", () => {
   const source = "一文目です。二文目です。三文目です。";
   const document = prepareReaderDocument(content(source), Engine, {
     maxWidth: 20,
     measureText: graphemeCount,
   });
-  const unitIndex = 1;
-  const flowIndex = document.flow.findIndex((item: { kind: string; unitIndex?: number }) => (
-    item.kind === "unit" && item.unitIndex === unitIndex
+  const spotIndex = 1;
+  const flowIndex = document.flow.findIndex((item: { kind: string; spotIndex?: number }) => (
+    item.kind === "spot" && item.spotIndex === spotIndex
   ));
-  const frame = document.frames[unitIndex];
+  const spot = document.spots[spotIndex];
   const session: ReaderSessionState = {
     phase: "reading",
-    mode: "rsvp",
+    mode: "spots",
     playback: "paused",
     flowIndex,
     flowLength: document.flow.length,
     generation: 1,
-    sourceOffset: frame.start,
-    currentKind: "unit",
+    sourceOffset: spot.start,
+    currentKind: "spot",
     requestId: "request-1",
     timerPending: false,
-    position: { kind: "text", sourceOffset: frame.start },
-    unitIndex,
+    position: { kind: "text", sourceOffset: spot.start },
+    spotIndex,
     figureIndex: null,
   };
 
   const screen = presentReader(document, session, ui);
-  assert.equal(screen.kind, "rsvp-unit");
-  if (screen.kind !== "rsvp-unit") return;
-  assert.strictEqual(screen.frame, frame);
+  assert.equal(screen.kind, "spot");
+  if (screen.kind !== "spot") return;
+  assert.strictEqual(screen.spot, spot);
   assert.equal(screen.previous, "一文目です。");
   assert.equal(screen.next, "三文目です。");
 });

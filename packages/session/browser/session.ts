@@ -108,12 +108,12 @@
     const mode = text(state.mode, "mode");
     const playback = text(state.playback, "playback");
     const currentKind = text(state.currentKind, "currentKind");
-    if (mode !== "rsvp" && mode !== "text") throw new TypeError("Invalid ReaderSession mode");
+    if (mode !== "spots" && mode !== "page") throw new TypeError("Invalid ReaderSession mode");
     if (playback !== "playing" && playback !== "paused") throw new TypeError("Invalid ReaderSession playback");
-    if (currentKind !== "unit" && currentKind !== "figure") throw new TypeError("Invalid ReaderSession current kind");
-    const unitIndex = state.unitIndex === null ? null : integer(state.unitIndex, "unitIndex");
+    if (currentKind !== "spot" && currentKind !== "figure") throw new TypeError("Invalid ReaderSession current kind");
+    const spotIndex = state.spotIndex === null ? null : integer(state.spotIndex, "spotIndex");
     const figureIndex = state.figureIndex === null ? null : integer(state.figureIndex, "figureIndex");
-    if ((currentKind === "unit") !== (unitIndex !== null) || (currentKind === "figure") !== (figureIndex !== null)) {
+    if ((currentKind === "spot") !== (spotIndex !== null) || (currentKind === "figure") !== (figureIndex !== null)) {
       throw new TypeError("Inconsistent ReaderSession current item");
     }
     return {
@@ -128,7 +128,7 @@
       requestId: text(state.requestId, "requestId"),
       timerPending: state.timerPending === true,
       position: decodePosition(state.position),
-      unitIndex,
+      spotIndex,
       figureIndex,
     };
   }

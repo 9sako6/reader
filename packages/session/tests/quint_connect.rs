@@ -1,7 +1,7 @@
 use quint_connect::{Config, Driver, Result, State, Step};
 use reader_session::{
-    Figure, FlowItem, Position, PreparationInput, ReaderSessionCommand, ReaderSessionState,
-    ReaderUnit, ReaderUnitKind, initial_state, reduce,
+    Figure, FlowItem, Position, PreparationInput, ReaderSessionCommand, ReaderSessionState, Spot,
+    SpotKind, initial_state, reduce,
 };
 use serde::Deserialize;
 
@@ -77,10 +77,10 @@ impl Driver for SessionDriver {
             Pause => self.apply(ReaderSessionCommand::Pause),
             Tick(generation: u64) => self.apply(ReaderSessionCommand::Tick { generation }),
             PreviousSentence => self.apply(ReaderSessionCommand::PreviousSentence),
-            SwitchToText(position: u64) => self.apply(ReaderSessionCommand::SwitchToText { position: model_position(position) }),
-            SwitchToRsvp(position: u64) => self.apply(ReaderSessionCommand::SwitchToRsvp { position: model_position(position) }),
+            SwitchToPage(position: u64) => self.apply(ReaderSessionCommand::SwitchToPage { position: model_position(position) }),
+            SwitchToSpots(position: u64) => self.apply(ReaderSessionCommand::SwitchToSpots { position: model_position(position) }),
             ResumeFromFigure => self.apply(ReaderSessionCommand::ResumeFromFigure),
-            RebuildUnits(position: u64) => self.apply(ReaderSessionCommand::RebuildUnits { units: preparation().units, position: model_position(position) }),
+            RebuildSpots(position: u64) => self.apply(ReaderSessionCommand::RebuildSpots { spots: preparation().spots, position: model_position(position) }),
             VisibilityHidden => self.apply(ReaderSessionCommand::VisibilityHidden),
             Close => self.apply(ReaderSessionCommand::Close),
         })
@@ -94,24 +94,24 @@ impl SessionDriver {
 }
 
 fn preparation() -> PreparationInput {
-    let units = vec![
-        ReaderUnit {
+    let spots = vec![
+        Spot {
             sentence_index: 0,
-            kind: ReaderUnitKind::Body,
+            kind: SpotKind::Body,
             start: 0,
             end: 3,
             duration_ms: 10,
         },
-        ReaderUnit {
+        Spot {
             sentence_index: 1,
-            kind: ReaderUnitKind::Body,
+            kind: SpotKind::Body,
             start: 3,
             end: 5,
             duration_ms: 10,
         },
-        ReaderUnit {
+        Spot {
             sentence_index: 1,
-            kind: ReaderUnitKind::Body,
+            kind: SpotKind::Body,
             start: 5,
             end: 8,
             duration_ms: 10,
@@ -128,9 +128,9 @@ fn preparation() -> PreparationInput {
         },
     ];
     let flow = vec![
-        FlowItem::Unit {
+        FlowItem::Spot {
             source_offset: 0,
-            unit_index: 0,
+            spot_index: 0,
         },
         FlowItem::Figure {
             source_offset: 3,
@@ -140,18 +140,18 @@ fn preparation() -> PreparationInput {
             source_offset: 3,
             figure_index: 1,
         },
-        FlowItem::Unit {
+        FlowItem::Spot {
             source_offset: 3,
-            unit_index: 1,
+            spot_index: 1,
         },
-        FlowItem::Unit {
+        FlowItem::Spot {
             source_offset: 5,
-            unit_index: 2,
+            spot_index: 2,
         },
     ];
     PreparationInput {
         text_length: 8,
-        units,
+        spots,
         figures,
         flow,
     }
@@ -184,7 +184,7 @@ fn observable_state_is_stable_for_the_same_command_trace() {
         flow: preparation(),
     });
     assert_eq!(driver.state.observable().flow_length, 5);
-    assert_eq!(driver.state.observable().current_kind, "unit");
+    assert_eq!(driver.state.observable().current_kind, "spot");
 }
 
 #[test]
@@ -221,8 +221,8 @@ fn consecutive_figures_keep_identity_and_consume_once() {
     driver.apply(ReaderSessionCommand::ResumeFromFigure);
     let after_figures = driver.state.observable();
     assert_eq!(after_figures.flow_index, 3);
-    assert_eq!(after_figures.current_kind, "unit");
-    assert_eq!(after_figures.unit_index, Some(1));
+    assert_eq!(after_figures.current_kind, "spot");
+    assert_eq!(after_figures.spot_index, Some(1));
     assert_eq!(after_figures.playback, "playing");
     assert!(after_figures.timer_pending);
 }
@@ -328,8 +328,8 @@ fn paused_mode_round_trip() -> impl Driver {
     SessionDriver::default()
 }
 
-#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "rebuildUnitsWhilePlaying")]
-fn rebuild_units_while_playing() -> impl Driver {
+#[quint_connect::quint_test(spec = "spec/reader_session.qnt", test = "rebuildSpotsWhilePlaying")]
+fn rebuild_spots_while_playing() -> impl Driver {
     SessionDriver::default()
 }
 

@@ -148,7 +148,7 @@
       ownedReader.remove();
     } else {
       contentRoot.querySelector?.("#__reader-host")?.remove();
-      contentRoot.querySelector?.("#__rsvp-reader-root")?.remove();
+      contentRoot.querySelector?.("#__reader-root")?.remove();
     }
 
     const indexedSource = indexSourceOffsets(contentRoot);

@@ -463,7 +463,7 @@ test("extractPage returns article text and heading offsets", () => {
   const section = { tagName: "H2", textContent: "次の節" };
   const article = {
     querySelector(selector) {
-      if (selector !== "#__rsvp-reader-root") return null;
+      if (selector !== "#__reader-root") return null;
       return {
         remove() {
           readerOverlayRemoved = true;
@@ -561,7 +561,7 @@ test("extractPage removes an owned reader node before considering a colliding ro
       if (selector === '[data-reader-owned="true"]') {
         return { remove() { ownedRemoved = true; } };
       }
-      if (selector === "#__rsvp-reader-root") {
+      if (selector === "#__reader-root") {
         return { remove() { collidingIdRemoved = true; } };
       }
       return null;

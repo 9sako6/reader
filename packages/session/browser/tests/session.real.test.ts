@@ -29,13 +29,13 @@ test("browser facade drives the generated Rust WASM session through intent comma
       requestId: "real",
       flow: {
         textLength: 4,
-        units: [{ sentenceIndex: 0, kind: "body", start: 0, end: 4, durationMs: 1 }],
+        spots: [{ sentenceIndex: 0, kind: "body", start: 0, end: 4, durationMs: 1 }],
         figures: [],
-        flow: [{ kind: "unit", sourceOffset: 0, unitIndex: 0 }],
+        flow: [{ kind: "spot", sourceOffset: 0, spotIndex: 0 }],
       },
     });
     assert.equal(handle.state.phase, "reading");
-    assert.equal(handle.state.currentKind, "unit");
+    assert.equal(handle.state.currentKind, "spot");
     assert.equal(JSON.stringify(handle.state).includes("contentPresent"), false);
     handle.dispatch({ type: "close" });
     handle.destroy();
@@ -48,9 +48,9 @@ test("browser facade drives the generated Rust WASM session through intent comma
       requestId: "invalid",
       flow: {
         textLength: 4,
-        units: [{ sentenceIndex: 0, kind: "body", start: 0, end: 4, durationMs: 1 }],
+        spots: [{ sentenceIndex: 0, kind: "body", start: 0, end: 4, durationMs: 1 }],
         figures: [{ sourceOffset: 2, sourceEnd: 2 }],
-        flow: [{ kind: "unit", sourceOffset: 0, unitIndex: 0 }],
+        flow: [{ kind: "spot", sourceOffset: 0, spotIndex: 0 }],
       },
     });
     assert.deepEqual(invalid.state, {

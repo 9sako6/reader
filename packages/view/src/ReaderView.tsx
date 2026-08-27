@@ -17,9 +17,9 @@ export function ReaderView(props: ReaderViewProps): ReactElement {
       return <LoadingView layout="desktop" screen={screen} handlers={props.handlers} />;
     case "error":
       return <ErrorView layout="desktop" screen={screen} handlers={props.handlers} />;
-    case "rsvp-unit":
-    case "rsvp-figure":
-    case "text":
+    case "spot":
+    case "spot-figure":
+    case "page":
       return <DesktopView screen={screen} handlers={props.handlers} />;
   }
 }

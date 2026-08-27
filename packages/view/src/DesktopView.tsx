@@ -4,17 +4,18 @@ import { Figure } from "./Figure";
 import { IconButton } from "./IconButton";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { Minimap } from "./Minimap";
-import { RsvpUnit } from "./RsvpUnit";
-import { orderedTextChildren } from "./TextContent";
-import { ReaderTextScroller } from "./ReaderTextScroller";
+import { ModeSelector } from "./ModeSelector";
+import { orderedPageChildren } from "./PageContent";
+import { PageScroller } from "./PageScroller";
+import { SpotText } from "./SpotText";
 import type { DesktopReaderViewHandlers, ReaderScreen } from "./types";
 
-type DesktopScreen = Extract<ReaderScreen, { kind: "rsvp-unit" | "rsvp-figure" | "text" }>;
+type DesktopScreen = Extract<ReaderScreen, { kind: "spot" | "spot-figure" | "page" }>;
 
 export function DesktopView({ screen, handlers }: { screen: DesktopScreen; handlers: DesktopReaderViewHandlers }): ReactElement {
-  const rsvp = screen.kind !== "text";
-  const unitScreen = screen.kind === "rsvp-unit" ? screen : null;
-  const figureScreen = screen.kind === "rsvp-figure" ? screen : null;
+  const spots = screen.kind !== "page";
+  const spotScreen = screen.kind === "spot" ? screen : null;
+  const figureScreen = screen.kind === "spot-figure" ? screen : null;
   const closeButton = (
     <Button
       label="閉じる"
@@ -22,18 +23,11 @@ export function DesktopView({ screen, handlers }: { screen: DesktopScreen; handl
       variant="close"
     />
   );
-  const modeButton = (
-    <Button
-      label={rsvp ? "文章で読む" : "RSVPで読む"}
-      onClick={rsvp ? handlers.switchToText : handlers.switchToRsvp}
-      variant="mode"
-    />
-  );
   return (
     <div
       data-reader-desktop-root="true"
-      data-reader-text-shell={rsvp ? undefined : "true"}
-      className={rsvp ? "rsvp-view" : "text-view"}
+      data-reader-page-shell={spots ? undefined : "true"}
+      className={spots ? "spots-view" : "page-view"}
     >
       <div data-reader-stage="true">
         <Minimap headings={screen.headings} activeHeadingIndex={screen.activeHeadingIndex} handlers={handlers} />
@@ -41,51 +35,56 @@ export function DesktopView({ screen, handlers }: { screen: DesktopScreen; handl
           <div data-reader-topbar="true" className="reader-desktop-topbar">
             {closeButton}
           </div>
-          {rsvp ? (
+          {spots ? (
             <>
               <div data-reader-context-previous="true" aria-hidden="true">
-                {unitScreen?.previous || ""}
+                {spotScreen?.previous || ""}
               </div>
               <div
-                data-reader-unit="true"
-                data-reader-unit-kind={unitScreen?.frame.kind}
+                data-reader-spot="true"
+                data-reader-spot-kind={spotScreen?.spot.kind}
                 data-reader-position-kind={figureScreen ? "figure" : "text"}
-                data-source-start={String(figureScreen?.figure.figure.sourceOffset ?? unitScreen?.frame.start ?? 0)}
-                data-source-end={String(figureScreen?.figure.figure.sourceEnd ?? unitScreen?.frame.end ?? 0)}
+                data-source-start={String(figureScreen?.figure.figure.sourceOffset ?? spotScreen?.spot.start ?? 0)}
+                data-source-end={String(figureScreen?.figure.figure.sourceEnd ?? spotScreen?.spot.end ?? 0)}
                 data-figure-index={figureScreen ? String(figureScreen.figure.figureIndex) : undefined}
                 aria-live="off"
                 aria-atomic="false"
-                className={`reader-unit${figureScreen ? " reader-unit-figure" : unitScreen?.frame.kind === "code" ? " reader-unit-code" : ""}`}
+                className={`reader-spot${figureScreen ? " reader-spot-figure" : spotScreen?.spot.kind === "code" ? " reader-spot-code" : ""}`}
               >
-                {figureScreen ? <Figure figureView={figureScreen.figure} handlers={handlers} text={false} /> : <RsvpUnit frame={unitScreen!.frame} />}
+                {figureScreen ? <Figure figureView={figureScreen.figure} handlers={handlers} page={false} /> : <SpotText spot={spotScreen!.spot} />}
               </div>
               <div data-reader-context-next="true" aria-hidden="true">
-                {unitScreen?.next || ""}
+                {spotScreen?.next || ""}
               </div>
               <footer data-reader-controlbar="true">
                 <div data-reader-control-dock="true">
                   <IconButton label="1文戻る" onClick={handlers.previousSentence} iconSize={38} variant="previous" />
-                  <IconButton label={figureScreen ? "続きを読む" : unitScreen?.playback === "playing" ? "一時停止" : "再生"} onClick={figureScreen ? handlers.resumeFigure : handlers.togglePlayback} iconSize={unitScreen?.playback === "playing" ? 34 : 38} variant="play" pressed={figureScreen ? undefined : unitScreen?.playback === "playing"} />
+                  <IconButton label={figureScreen ? "続きを読む" : spotScreen?.playback === "playing" ? "一時停止" : "再生"} onClick={figureScreen ? handlers.resumeFigure : handlers.togglePlayback} iconSize={spotScreen?.playback === "playing" ? 34 : 38} variant="play" pressed={figureScreen ? undefined : spotScreen?.playback === "playing"} />
                   <span aria-hidden="true" />
                 </div>
               </footer>
             </>
           ) : (
-            <ReaderTextScroller tagName="div" className="text-view reader-text-scroller" handlers={handlers}>
+            <PageScroller tagName="div" className="page-view reader-page-scroller" handlers={handlers}>
               <article className="article reader-article">
                 {screen.title ? <h1 className="article-title">{screen.title}</h1> : null}
-                {orderedTextChildren(screen, handlers)}
+                {orderedPageChildren(screen, handlers)}
               </article>
-            </ReaderTextScroller>
+            </PageScroller>
           )}
-          <div className={rsvp ? "reader-mode-position reader-mode-position-rsvp" : "reader-mode-position reader-mode-position-text"}>
-            {modeButton}
+          <div className={spots ? "reader-mode-position reader-mode-position-spots" : "reader-mode-position reader-mode-position-page"}>
+            <ModeSelector
+              spots={spots}
+              switchToSpots={handlers.switchToSpots}
+              switchToPage={handlers.switchToPage}
+              layout="desktop"
+            />
           </div>
-          <span data-reader-progress="true" className={rsvp ? "reader-progress reader-progress-rsvp" : "reader-progress reader-progress-text"}>
+          <span data-reader-progress="true" className={spots ? "reader-progress reader-progress-spots" : "reader-progress reader-progress-page"}>
             {`${screen.progress}%`}
           </span>
         </main>
-        {rsvp && screen.loadingCover ? <LoadingIndicator mobile={false} reducedMotion={screen.reducedMotion} revealed animate={handlers.loadingAnimation} /> : null}
+        {spots && screen.loadingCover ? <LoadingIndicator mobile={false} reducedMotion={screen.reducedMotion} revealed animate={handlers.loadingAnimation} /> : null}
       </div>
     </div>
   );

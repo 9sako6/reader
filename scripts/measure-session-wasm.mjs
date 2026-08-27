@@ -21,9 +21,9 @@ session.dispatch(JSON.stringify({
   requestId: "measurement",
   flow: {
     textLength: 8,
-    units: [{ sentenceIndex: 0, kind: "body", start: 0, end: 3, durationMs: 1 }],
+    spots: [{ sentenceIndex: 0, kind: "body", start: 0, end: 3, durationMs: 1 }],
     figures: [],
-    flow: [{ kind: "unit", sourceOffset: 0, unitIndex: 0 }],
+    flow: [{ kind: "spot", sourceOffset: 0, spotIndex: 0 }],
   },
 }));
 const dispatchMilliseconds = performance.now() - dispatchStartedAt;

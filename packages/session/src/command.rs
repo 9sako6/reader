@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::state::{Position, PreparationFailure, PreparationInput, ReaderUnit};
+use crate::state::{Position, PreparationFailure, PreparationInput, Spot};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type")]
@@ -35,15 +35,15 @@ pub enum ReaderSessionCommand {
     Tick { generation: u64 },
     #[serde(rename = "previousSentence")]
     PreviousSentence,
-    #[serde(rename = "switchToText")]
-    SwitchToText { position: Position },
-    #[serde(rename = "switchToRsvp")]
-    SwitchToRsvp { position: Position },
+    #[serde(rename = "switchToPage")]
+    SwitchToPage { position: Position },
+    #[serde(rename = "switchToSpots")]
+    SwitchToSpots { position: Position },
     #[serde(rename = "resumeFromFigure")]
     ResumeFromFigure,
-    #[serde(rename = "rebuildUnits")]
-    RebuildUnits {
-        units: Vec<ReaderUnit>,
+    #[serde(rename = "rebuildSpots")]
+    RebuildSpots {
+        spots: Vec<Spot>,
         position: Position,
     },
     #[serde(rename = "visibilityHidden")]

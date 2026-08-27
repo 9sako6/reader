@@ -136,7 +136,7 @@ test("toolbar action loads the reader and starts extracted page content", async 
   assert.deepEqual(Array.from(harness.scriptCalls[0].args), ["chrome-extension://reader/runtime.js"]);
   assert.match(harness.scriptCalls[0].func.toString(), /import\(/u);
   assert.equal(harness.messages[0].tabId, 7);
-  assert.equal(harness.messages[0].message.type, "SHOW_RSVP_LOADING");
+  assert.equal(harness.messages[0].message.type, "SHOW_READER_LOADING");
   assert.equal(typeof harness.finishExtraction, "function");
 
   harness.finishExtraction();
@@ -146,7 +146,7 @@ test("toolbar action loads the reader and starts extracted page content", async 
   const injectedFiles = harness.scriptCalls.flatMap((call) => call.files || []);
   assert.equal(injectedFiles.filter((file) => file === "vendor/defuddle/defuddle.js").length, 1);
   assert.equal(harness.messages[1].tabId, 7);
-  assert.equal(harness.messages[1].message.type, "START_RSVP");
+  assert.equal(harness.messages[1].message.type, "START_READER");
   assert.equal(harness.messages[1].message.text, "記事本文");
   assert.equal(harness.messages[1].message.readingContext.headings[0].text, "記事タイトル");
   assert.equal("morphologyTokens" in harness.messages[1].message, false);
@@ -163,12 +163,12 @@ test("toolbar action reports an extraction error for an empty page", async () =>
 
   const actionPromise = harness.listeners.actionClicked({ id: 9 });
   await harness.extractionStarted;
-  assert.equal(harness.messages[0].message.type, "SHOW_RSVP_LOADING");
+  assert.equal(harness.messages[0].message.type, "SHOW_READER_LOADING");
   assert.equal(typeof harness.finishExtraction, "function");
   harness.finishExtraction();
   await actionPromise;
 
-  assert.equal(harness.messages[1].message.type, "RSVP_ERROR");
+  assert.equal(harness.messages[1].message.type, "READER_ERROR");
   assert.equal(harness.messages[1].message.requestId, harness.messages[0].message.requestId);
   assert.equal(harness.messages[1].message.reason, "content_not_found");
 });
@@ -180,19 +180,19 @@ test("service worker aborts cooperative extraction and drops its result after ca
   await harness.extractionStarted;
   const loadingMessage = harness.messages[0].message;
   harness.listeners.runtimeMessage(
-    { type: "CANCEL_RSVP", requestId: loadingMessage.requestId },
+    { type: "CANCEL_READER", requestId: loadingMessage.requestId },
     { tab: { id: 10 } },
   );
   assert.deepEqual(Array.from(harness.abortedRequestIds), [loadingMessage.requestId]);
   harness.rejectExtraction(Object.assign(new Error("Aborted"), { name: "AbortError" }));
   await actionPromise;
   harness.listeners.runtimeMessage(
-    { type: "RETRY_RSVP", requestId: loadingMessage.requestId },
+    { type: "RETRY_READER", requestId: loadingMessage.requestId },
     { tab: { id: 10 } },
   );
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.deepEqual(harness.messages.map(({ message }) => message.type), ["SHOW_RSVP_LOADING"]);
+  assert.deepEqual(harness.messages.map(({ message }) => message.type), ["SHOW_READER_LOADING"]);
 });
 
 test("service worker aborts the previous tab extraction when a newer request starts", async () => {
@@ -216,9 +216,9 @@ test("service worker aborts the previous tab extraction when a newer request sta
   await firstAction;
 
   assert.deepEqual(harness.messages.map(({ message }) => message.type), [
-    "SHOW_RSVP_LOADING",
-    "SHOW_RSVP_LOADING",
-    "START_RSVP",
+    "SHOW_READER_LOADING",
+    "SHOW_READER_LOADING",
+    "START_READER",
   ]);
   assert.equal(harness.messages[2].message.requestId, secondRequestId);
 });
@@ -234,7 +234,7 @@ test("service worker retries only the matching failed request with a new request
   await actionPromise;
 
   harness.listeners.runtimeMessage(
-    { type: "RETRY_RSVP", requestId: "stale-request" },
+    { type: "RETRY_READER", requestId: "stale-request" },
     { tab: { id: 11 } },
   );
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -242,20 +242,20 @@ test("service worker retries only the matching failed request with a new request
 
   harness.extractionResult = { text: "再試行本文", readingContext: {} };
   harness.listeners.runtimeMessage(
-    { type: "RETRY_RSVP", requestId: failedRequestId },
+    { type: "RETRY_READER", requestId: failedRequestId },
     { tab: { id: 11 } },
   );
   await new Promise((resolve) => setTimeout(resolve, 0));
   const retriedRequestId = harness.messages[2].message.requestId;
-  assert.equal(harness.messages[2].message.type, "SHOW_RSVP_LOADING");
+  assert.equal(harness.messages[2].message.type, "SHOW_READER_LOADING");
   assert.notEqual(retriedRequestId, failedRequestId);
   harness.finishExtraction();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(harness.messages[3].message.type, "START_RSVP");
+  assert.equal(harness.messages[3].message.type, "START_READER");
   assert.equal(harness.messages[3].message.requestId, retriedRequestId);
 
   harness.listeners.runtimeMessage(
-    { type: "RETRY_RSVP", requestId: failedRequestId },
+    { type: "RETRY_READER", requestId: failedRequestId },
     { tab: { id: 11 } },
   );
   await new Promise((resolve) => setTimeout(resolve, 0));

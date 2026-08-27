@@ -2,8 +2,8 @@ import type {
   ReaderEngine as ReaderEngineContract,
   ReaderFlowItem as ReaderFlowItemContract,
   ReaderPosition as ReaderPositionContract,
-  RsvpFrame as RsvpFrameContract,
-  RsvpFrameOptions as RsvpFrameOptionsContract,
+  Spot as SpotContract,
+  SpotOptions as SpotOptionsContract,
   ReaderTimingProfile as ReaderTimingProfileContract,
   ReaderUnit as ReaderUnitContract,
   ReaderUnitKind as ReaderUnitKindContract,
@@ -16,8 +16,8 @@ declare global {
   type ReaderUnit = ReaderUnitContract;
   type ReaderTimingProfile = ReaderTimingProfileContract;
   type ReaderPosition = ReaderPositionContract;
-  type RsvpFrame = RsvpFrameContract;
-  type RsvpFrameOptions = RsvpFrameOptionsContract;
+  type Spot = SpotContract;
+  type SpotOptions = SpotOptionsContract;
   type ReaderFlowItem = ReaderFlowItemContract;
   type ReaderEngine = ReaderEngineContract;
 

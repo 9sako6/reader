@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, type ReactElement, type ReactNode } from "react";
 import type { ReaderViewHandlers } from "./types";
 
-export function ReaderTextScroller({
+export function PageScroller({
   tagName,
   className,
   handlers,
@@ -12,26 +12,26 @@ export function ReaderTextScroller({
   handlers: ReaderViewHandlers;
   children: ReactNode;
 }): ReactElement {
-  const textScrollHandler = useRef(handlers.textScroll);
-  const textPositionHandler = useRef(handlers.textPosition);
+  const pageScrollHandler = useRef(handlers.pageScroll);
+  const pagePositionHandler = useRef(handlers.pagePosition);
   const elementRef = useRef<HTMLElement | null>(null);
-  textScrollHandler.current = handlers.textScroll;
-  textPositionHandler.current = handlers.textPosition;
+  pageScrollHandler.current = handlers.pageScroll;
+  pagePositionHandler.current = handlers.pagePosition;
   const ref = useCallback((element: HTMLElement | null) => {
     elementRef.current = element;
   }, []);
   useLayoutEffect(() => {
     const element = elementRef.current;
     if (!element) return;
-    textScrollHandler.current(element);
-    return () => textScrollHandler.current(null);
+    pageScrollHandler.current(element);
+    return () => pageScrollHandler.current(null);
   }, []);
   const onScroll = useCallback((event: { currentTarget: EventTarget | null }) => {
-    if (event.currentTarget) textPositionHandler.current(event.currentTarget as HTMLElement);
+    if (event.currentTarget) pagePositionHandler.current(event.currentTarget as HTMLElement);
   }, []);
   const Tag = tagName;
   return (
-    <Tag className={className} data-reader-text-scroller="true" ref={ref} onScroll={onScroll}>
+    <Tag className={className} data-reader-page-scroller="true" ref={ref} onScroll={onScroll}>
       {children}
     </Tag>
   );

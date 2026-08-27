@@ -26,10 +26,10 @@ async function ensureSessionHost(): Promise<void> {
 
 function registerAndExtractPage(requestId: string): Promise<ReaderContent | null> {
   const scope = globalThis as typeof globalThis & {
-    __rsvpPreparationControllers?: Map<string, AbortController>;
+    __readerPreparationControllers?: Map<string, AbortController>;
   };
-  const controllers = scope.__rsvpPreparationControllers || new Map<string, AbortController>();
-  scope.__rsvpPreparationControllers = controllers;
+  const controllers = scope.__readerPreparationControllers || new Map<string, AbortController>();
+  scope.__readerPreparationControllers = controllers;
   const controller = new AbortController();
   controllers.set(requestId, controller);
   return globalThis.Extractor.fromPageAsync(undefined, undefined, { signal: controller.signal }).finally(() => {
@@ -39,11 +39,11 @@ function registerAndExtractPage(requestId: string): Promise<ReaderContent | null
 
 function abortPreparationController(requestId: string): void {
   const scope = globalThis as typeof globalThis & {
-    __rsvpPreparationControllers?: Map<string, AbortController>;
+    __readerPreparationControllers?: Map<string, AbortController>;
   };
-  const controller = scope.__rsvpPreparationControllers?.get(requestId);
+  const controller = scope.__readerPreparationControllers?.get(requestId);
   controller?.abort();
-  scope.__rsvpPreparationControllers?.delete(requestId);
+  scope.__readerPreparationControllers?.delete(requestId);
 }
 
 chrome.runtime.onMessage.addListener((message: unknown, sender) => {
@@ -52,11 +52,11 @@ chrome.runtime.onMessage.addListener((message: unknown, sender) => {
   const tabId = sender.tab?.id;
   if (typeof tabId !== "number" || typeof value.requestId !== "string") return;
 
-  if (value.type === "CANCEL_RSVP") {
+  if (value.type === "CANCEL_READER") {
     cancelPreparation(tabId, value.requestId);
     return;
   }
-  if (value.type === "RETRY_RSVP") {
+  if (value.type === "RETRY_READER") {
     void retryPreparation(tabId, value.requestId);
   }
 });
@@ -140,7 +140,7 @@ async function openReader(tabId: number, requestId: string): Promise<void> {
   });
   if (!isActiveRequest(tabId, requestId)) return;
   await chrome.tabs.sendMessage(tabId, {
-    type: "SHOW_RSVP_LOADING",
+    type: "SHOW_READER_LOADING",
     requestId,
   });
 }
@@ -153,7 +153,7 @@ async function sendReaderContent(
 ): Promise<void> {
   if (!isActiveRequest(tabId, requestId)) return;
   await chrome.tabs.sendMessage(tabId, {
-    type: "START_RSVP",
+    type: "START_READER",
     text,
     readingContext,
     requestId,
@@ -167,7 +167,7 @@ async function showReaderError(
 ): Promise<void> {
   if (!isActiveRequest(tabId, requestId)) return;
   await chrome.tabs.sendMessage(tabId, {
-    type: "RSVP_ERROR",
+    type: "READER_ERROR",
     requestId,
     reason,
   }).catch(() => {});

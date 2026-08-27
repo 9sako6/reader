@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const {
   DEFAULT_TIMING_PROFILE,
   segmentText,
-  buildRsvpFrames,
+  buildSpots,
   preserveCodeRanges,
   splitSentenceSpans,
   findActiveHeadingIndex,
@@ -16,21 +16,21 @@ function graphemeCount(text: string, locale = "ja"): number {
   return [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(text)].length;
 }
 
-function framesFor(text: string, locale = "ja", maxGraphemes = 12) {
-  return buildRsvpFrames(segmentText(text, locale), {
+function spotsFor(text: string, locale = "ja", maxGraphemes = 12) {
+  return buildSpots(segmentText(text, locale), {
     locale,
     maxWidth: maxGraphemes,
     measureText: (value: string) => graphemeCount(value, locale),
   });
 }
 
-test("a long inline code expression remains one scrollable RSVP unit", () => {
+test("a long inline code expression remains one scrollable Spot", () => {
   const source = "Use extraordinarily_long_identifier.withNamespace() before continuing.";
   const code = "extraordinarily_long_identifier.withNamespace()";
   const start = source.indexOf(code);
   const segmented = segmentText(source, "en", [start, start + code.length]);
 
-  const units = buildRsvpFrames(
+  const units = buildSpots(
     preserveCodeRanges(segmented, source, [{ text: code, start, end: start + code.length }]),
     {
       locale: "en",
@@ -98,7 +98,7 @@ test("segmentText is deterministic regardless of legacy morphology input", () =>
   ]);
 });
 
-test("final RSVP frames fit the supplied width without changing the semantic units", () => {
+test("final Spots fit the supplied width without changing the semantic units", () => {
   const text = "非常に長い技術文章のまとまりをそのまま表示して改行が起きないようにする。";
   assert.deepEqual(segmentText(text).map((unit) => unit.text), [
     "非常に長い技術文章のまとまり",
@@ -107,7 +107,7 @@ test("final RSVP frames fit the supplied width without changing the semantic uni
     "する。",
   ]);
   assert.deepEqual(
-    framesFor(text).map((frame: { text: string }) => frame.text),
+    spotsFor(text).map((spot: { text: string }) => spot.text),
     [
       "非常に長い技術文章の",
       "まとまり",
@@ -120,18 +120,18 @@ test("final RSVP frames fit the supplied width without changing the semantic uni
 
 test("long units split at word boundaries without breaking katakana words", () => {
   assert.deepEqual(
-    framesFor("ソフトウェアエンジニアリング").map((unit: { text: string }) => unit.text),
+    spotsFor("ソフトウェアエンジニアリング").map((unit: { text: string }) => unit.text),
     ["ソフトウェア", "エンジニアリング"],
   );
   assert.deepEqual(
-    framesFor("ソフトウェア開発ライフサイクル").map((unit: { text: string }) => unit.text),
+    spotsFor("ソフトウェア開発ライフサイクル").map((unit: { text: string }) => unit.text),
     ["ソフトウェア開発", "ライフサイクル"],
   );
 });
 
-test("English frames prefer word boundaries within the measured width", () => {
+test("English Spots prefer word boundaries within the measured width", () => {
   const source = "Quint is a specification language that can be used";
-  const units = framesFor(source, "en", 24);
+  const units = spotsFor(source, "en", 24);
 
   assert.deepEqual(units.map((unit) => unit.text), [
     "Quint is a specification",
@@ -142,7 +142,7 @@ test("English frames prefer word boundaries within the measured width", () => {
   for (const unit of units) assert.equal(source.slice(unit.start, unit.end), unit.text);
 });
 
-test("buildRsvpFrames fits unbroken text and preserves grapheme and source offsets", () => {
+test("buildSpots fits unbroken text and preserves grapheme and source offsets", () => {
   const cases = [
     { name: "English word", source: "Supercalifragilisticexpialidocious" },
     { name: "alphanumeric token", source: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" },
@@ -165,7 +165,7 @@ test("buildRsvpFrames fits unbroken text and preserves grapheme and source offse
         start: sourceStart,
         end: sourceStart + source.length,
       };
-      const units = buildRsvpFrames([unit], {
+      const units = buildSpots([unit], {
         locale: "ja",
         maxWidth: limit,
         measureText: (value: string) => graphemeCount(value),
@@ -181,7 +181,7 @@ test("buildRsvpFrames fits unbroken text and preserves grapheme and source offse
   }
 });
 
-test("buildRsvpFrames adjusts Japanese punctuation without exceeding the width", () => {
+test("buildSpots adjusts Japanese punctuation without exceeding the width", () => {
   const cases = [
     { source: "あいう）えお", expected: ["あい", "う）え", "お"] },
     { source: "abcdef）ghij", expected: ["abc", "de", "f）", "ghi", "j"] },
@@ -191,7 +191,7 @@ test("buildRsvpFrames adjusts Japanese punctuation without exceeding the width",
   for (const { source, expected } of cases) {
     const sourceWithPrefix = `prefix:${source}:suffix`;
     const sourceStart = "prefix:".length;
-    const units = buildRsvpFrames([{
+    const units = buildSpots([{
       text: source,
       sentenceIndex: 0,
       kind: "body",
@@ -212,8 +212,8 @@ test("buildRsvpFrames adjusts Japanese punctuation without exceeding the width",
   }
 });
 
-test("buildRsvpFrames makes section transitions final frame boundaries before timing", () => {
-  const frames = buildRsvpFrames([{
+test("buildSpots makes section transitions final Spot boundaries before timing", () => {
+  const spots = buildSpots([{
     text: "前半後半",
     sentenceIndex: 0,
     kind: "body",
@@ -225,22 +225,22 @@ test("buildRsvpFrames makes section transitions final frame boundaries before ti
     sectionOffsets: [2],
   });
 
-  assert.deepEqual(frames.map((frame: { text: string; start: number; end: number }) => ({
-    text: frame.text,
-    start: frame.start,
-    end: frame.end,
+  assert.deepEqual(spots.map((spot: { text: string; start: number; end: number }) => ({
+    text: spot.text,
+    start: spot.start,
+    end: spot.end,
   })), [
     { text: "前半", start: 0, end: 2 },
     { text: "後半", start: 2, end: 4 },
   ]);
   assert.equal(
-    frames[0].durationMs - frames[1].durationMs,
+    spots[0].durationMs - spots[1].durationMs,
     DEFAULT_TIMING_PROFILE.sectionPauseMs,
   );
 });
 
 test("long Japanese corner-bracket quotes are split without losing quote styling", () => {
-  const units = framesFor("「これはとても長い引用なので一度では表示せず注視点を固定したまま分割する」");
+  const units = spotsFor("「これはとても長い引用なので一度では表示せず注視点を固定したまま分割する」");
   assert.deepEqual(units.map((unit) => unit.text), [
     "「これはとても長い引用",
     "なので一度では表示せず注",

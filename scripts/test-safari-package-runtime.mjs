@@ -187,7 +187,7 @@ async function verifySafariRuntime() {
       const unitDeadline = Date.now() + 10000;
       function finishWhenRuntimeIsReady() {
       const host = document.getElementById("__reader-host");
-      const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+      const unit = host?.shadowRoot?.querySelector('[data-reader-spot="true"]');
       const initialized = Boolean(sessionHandle?.state);
       const unitText = unit?.textContent?.trim() || "";
       const wasmReady = wasmResponses.some(({ status, contentType }) => status === 200 && contentType === "application/wasm");
@@ -257,7 +257,7 @@ async function verifyGeneratedRuntimeInWebKit() {
         const deadline = performance.now() + 3000;
         const poll = () => {
           const host = document.getElementById("__reader-host");
-          const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+          const unit = host?.shadowRoot?.querySelector('[data-reader-spot="true"]');
           const initialized = Boolean(sessionHandle?.state);
           const unitText = unit?.textContent?.trim() || "";
           const wasmReady = wasmResponses.some(({ status, contentType }) => status === 200 && contentType === "application/wasm");
@@ -287,8 +287,8 @@ async function verifyGeneratedRuntimeInWebKit() {
         createCount,
         wasmResponses,
         host: Boolean(host),
-        unit: Boolean(host?.shadowRoot?.querySelector('[data-reader-unit="true"]')),
-        unitText: host?.shadowRoot?.querySelector('[data-reader-unit="true"]')?.textContent?.trim() || "",
+        unit: Boolean(host?.shadowRoot?.querySelector('[data-reader-spot="true"]')),
+        unitText: host?.shadowRoot?.querySelector('[data-reader-spot="true"]')?.textContent?.trim() || "",
       };
     });
     assert.equal(result.initialized, true);
@@ -349,7 +349,7 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
       const deadline = performance.now() + 5000;
       while (performance.now() < deadline) {
         const host = document.getElementById("__reader-host");
-        const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+        const unit = host?.shadowRoot?.querySelector('[data-reader-spot="true"]');
         if (typeof globalThis.ReaderSession?.create === "function" && unit?.textContent?.trim()) {
           return { unitText: unit.textContent.trim(), initialized: true };
         }
@@ -357,7 +357,7 @@ async function verifyGeneratedLazyRuntimeInWebKit() {
       }
       return {
         initialized: typeof globalThis.ReaderSession?.create === "function",
-        unitText: document.getElementById("__reader-host")?.shadowRoot?.querySelector('[data-reader-unit="true"]')?.textContent?.trim() || "",
+        unitText: document.getElementById("__reader-host")?.shadowRoot?.querySelector('[data-reader-spot="true"]')?.textContent?.trim() || "",
       };
     });
     assert.equal(result.initialized, true);
@@ -388,7 +388,7 @@ async function verifyGeneratedLazyRuntimeSingleFlightInWebKit() {
       const deadline = performance.now() + 5000;
       while (performance.now() < deadline) {
         const host = document.getElementById("__reader-host");
-        const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+        const unit = host?.shadowRoot?.querySelector('[data-reader-spot="true"]');
         if (typeof globalThis.ReaderSession?.create === "function" && unit?.textContent?.trim()) {
           return {
             initialized: true,
@@ -517,7 +517,7 @@ async function verifyGeneratedLazyRuntimeRetryInWebKit() {
       const deadline = performance.now() + 5000;
       while (performance.now() < deadline) {
         const host = document.getElementById("__reader-host");
-        const unit = host?.shadowRoot?.querySelector('[data-reader-unit="true"]');
+        const unit = host?.shadowRoot?.querySelector('[data-reader-spot="true"]');
         if (typeof globalThis.ReaderSession?.create === "function" && unit?.textContent?.trim()) {
           return { initialized: true, unitText: unit.textContent.trim() };
         }
@@ -555,7 +555,7 @@ async function verifyGeneratedLazyRuntimeHandoffProgressInWebKit() {
     await reader.locator(".launch-progress-track").waitFor();
     assert.equal(await reader.locator(".launch-status").count(), 0);
     assert.equal(await reader.locator(".launch-cancel").count(), 0);
-    await reader.locator('[data-reader-unit="true"]').waitFor();
+    await reader.locator('[data-reader-spot="true"]').waitFor();
     const state = await page.evaluate(() => {
       const host = document.getElementById("__reader-host");
       return {

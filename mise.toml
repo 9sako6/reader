@@ -22,17 +22,17 @@ run = "pnpm exec quint typecheck packages/session/spec/reader_session.qnt"
 
 [tasks."spec:test"]
 description = "Run ReaderSession named Quint tests"
-run = "pnpm exec quint test packages/session/spec/reader_session.qnt --match '^(closeThenLateTick|closeThenLatePreparationSuccess|newRequestSupersedesOldRequest|newRequestRejectsLatePreparationFailure|playUntilFigureAndResume|consecutiveFiguresAndResume|duplicateFigureTickDoesNotConsume|previousSentenceWhilePlaying|previousSentenceFromPaused|previousSentenceFromFigure|pausedTickDoesNotAdvance|staleGenerationTickDoesNotAdvance|cancelThenLatePreparationSuccess|switchModeAtFigure|switchModeAfterFigure|pausedModeRoundTrip|rebuildUnitsWhilePlaying|visibilityHiddenPauses|visibilityHiddenDuringPreparation|visibilityHiddenDuringPreparationThenFailure|visibilityHiddenDuringPreparationIsIdempotent)$' --seed=180018 --max-samples=1"
+run = "pnpm exec quint test packages/session/spec/reader_session.qnt --match '^(closeThenLateTick|closeThenLatePreparationSuccess|newRequestSupersedesOldRequest|newRequestRejectsLatePreparationFailure|playUntilFigureAndResume|consecutiveFiguresAndResume|duplicateFigureTickDoesNotConsume|previousSentenceWhilePlaying|previousSentenceFromPaused|previousSentenceFromFigure|pausedTickDoesNotAdvance|staleGenerationTickDoesNotAdvance|cancelThenLatePreparationSuccess|switchModeAtFigure|switchModeAfterFigure|pausedModeRoundTrip|rebuildSpotsWhilePlaying|visibilityHiddenPauses|visibilityHiddenDuringPreparation|visibilityHiddenDuringPreparationThenFailure|visibilityHiddenDuringPreparationIsIdempotent)$' --seed=180018 --max-samples=1"
 
 [tasks."spec:simulate"]
 description = "Run the fixed-seed ReaderSession Quint simulation"
 depends = ["spec:check"]
-run = "pnpm exec quint run packages/session/spec/reader_session.qnt --max-steps=12 --max-samples=1000 --seed=180018 --invariants endedHasNoContent playingOnlyInRsvp figureIsPaused timerOnlyWhilePlaying positionIsInRange staleTickDoesNotAdvance stalePreparationDoesNotOpen hiddenPreparationStartsPaused repeatedPreparationVisibilityIsStable closedSessionCannotRevive noImplicitRewind figureConsumedAtMostOnce modeRoundTripKeepsLocation"
+run = "pnpm exec quint run packages/session/spec/reader_session.qnt --max-steps=12 --max-samples=1000 --seed=180018 --invariants endedHasNoContent playingOnlyInSpots figureIsPaused timerOnlyWhilePlaying positionIsInRange staleTickDoesNotAdvance stalePreparationDoesNotOpen hiddenPreparationStartsPaused repeatedPreparationVisibilityIsStable closedSessionCannotRevive noImplicitRewind figureConsumedAtMostOnce modeRoundTripKeepsLocation"
 
 [tasks."spec:verify"]
 description = "Fully verify the finite ReaderSession model with TLC"
 depends = ["spec:check"]
-run = "pnpm exec quint verify packages/session/spec/reader_session.qnt --backend=tlc --verbosity=3 --invariants endedHasNoContent playingOnlyInRsvp figureIsPaused timerOnlyWhilePlaying positionIsInRange staleTickDoesNotAdvance stalePreparationDoesNotOpen hiddenPreparationStartsPaused repeatedPreparationVisibilityIsStable closedSessionCannotRevive noImplicitRewind figureConsumedAtMostOnce modeRoundTripKeepsLocation"
+run = "pnpm exec quint verify packages/session/spec/reader_session.qnt --backend=tlc --verbosity=3 --invariants endedHasNoContent playingOnlyInSpots figureIsPaused timerOnlyWhilePlaying positionIsInRange staleTickDoesNotAdvance stalePreparationDoesNotOpen hiddenPreparationStartsPaused repeatedPreparationVisibilityIsStable closedSessionCannotRevive noImplicitRewind figureConsumedAtMostOnce modeRoundTripKeepsLocation"
 
 [tasks."test:session"]
 description = "Run the ReaderSession Rust and Quint Connect tests"

@@ -16,11 +16,11 @@ export interface ReaderUnit {
   end: number;
 }
 
-export interface RsvpFrame extends ReaderUnit {
+export interface Spot extends ReaderUnit {
   durationMs: number;
 }
 
-export interface RsvpFrameOptions {
+export interface SpotOptions {
   locale?: string;
   maxWidth: number;
   measureText(text: string, kind: ReaderUnitKind): number;
@@ -44,17 +44,17 @@ export type ReaderPosition =
   | { kind: "figure"; sourceOffset: number; figureIndex: number };
 
 export type ReaderFlowItem =
-  | { kind: "unit"; sourceOffset: number; unitIndex: number }
+  | { kind: "spot"; sourceOffset: number; spotIndex: number }
   | { kind: "figure"; sourceOffset: number; figureIndex: number };
 
 export interface ReaderEngine {
   readonly DEFAULT_TIMING_PROFILE: Readonly<ReaderTimingProfile>;
   segmentText(text: string, locale?: string, boundaries?: number[]): ReaderUnit[];
   preserveCodeRanges(units: ReaderUnit[], text: string, ranges: ReaderCodeRange[]): ReaderUnit[];
-  buildRsvpFrames(units: ReaderUnit[], options: RsvpFrameOptions): RsvpFrame[];
+  buildSpots(units: ReaderUnit[], options: SpotOptions): Spot[];
   splitSentenceSpans(text: string, locale?: string): SentenceSpan[];
-  buildReadingFlow(units: ReaderUnit[], figures: ReaderFigure[]): ReaderFlowItem[];
-  positionForFlowItem(flowItem: ReaderFlowItem, units: ReaderUnit[]): ReaderPosition;
+  buildReadingFlow(spots: Spot[], figures: ReaderFigure[]): ReaderFlowItem[];
+  positionForFlowItem(flowItem: ReaderFlowItem, spots: Spot[]): ReaderPosition;
   findActiveHeadingIndex(transitions: ReaderSectionTransition[], currentOffset: number, fallbackIndex?: number): number;
   calculateReadingProgress(currentEnd: number, sourceLength: number): number;
   findUnitIndex(units: ReaderUnit[], offset: number): number;

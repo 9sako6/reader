@@ -1,6 +1,6 @@
 import viewerStyles from "./viewer.css";
 import {
-  createRsvpTextMeasurer,
+  createSpotTextMeasurer,
   prepareReaderDocument,
   presentReader,
   reflowReaderDocument,
@@ -13,7 +13,7 @@ import {
   if (root.MobileViewer) return;
   root.MobileViewer = factory(root);
 })(globalThis, function createMobileViewer(global: typeof globalThis): ReaderMobileViewer {
-  type ReadingMode = "rsvp" | "text";
+  type ReaderSessionMode = "spots" | "page";
   type FigureViewState =
     | { kind: "idle" }
     | { kind: "loading"; token: number; figureIndex: number; brightness: "dimmed" | "revealed" }
@@ -26,8 +26,8 @@ import {
   }
   const HOST_ID = "__reader-host";
   const LOADER_REVEAL_DELAY_MS = 200;
-  const TEXT_VIEW_READABLE_TOP_PX = 72;
-  const TEXT_VIEW_READABLE_BOTTOM_PX = 96;
+  const PAGE_VIEW_READABLE_TOP_PX = 72;
+  const PAGE_VIEW_READABLE_BOTTOM_PX = 96;
   const PERFORMANCE_PHASE_TO_METRIC: Record<ReaderExtractionPhase, keyof ReaderExtractionMetrics> = {
     dominant_article: "dominantArticleMs",
     defuddle_parse: "defuddleMs",
@@ -68,21 +68,21 @@ import {
   let sessionLifecycleAttached = false;
   let reactViewMount: ReaderViewMount<"mobile"> | null = null;
   let reactViewHost: HTMLDivElement | null = null;
-  let reactTextScroller: HTMLElement | null = null;
-  let reactTextMarkers: HTMLElement[] = [];
-  let reactTextRestoring = false;
-  let reactTextRestoreGeneration = 0;
-  let reactTextRestorePending = false;
-  let reactTextRestoreScrollTop: number | null = null;
+  let reactPageScroller: HTMLElement | null = null;
+  let reactPageMarkers: HTMLElement[] = [];
+  let reactPageRestoring = false;
+  let reactPageRestoreGeneration = 0;
+  let reactPageRestorePending = false;
+  let reactPageRestoreScrollTop: number | null = null;
   let rewindFeedback: { left: number; top: number; id: number } | null = null;
   let rewindFeedbackId = 0;
   let rewindFeedbackClearTimer: number | null = null;
-  const reactTextFigureCorrections = new WeakMap<HTMLElement, { scroller: HTMLElement; positionMarkers: HTMLElement[] }>();
+  const reactPageFigureCorrections = new WeakMap<HTMLElement, { scroller: HTMLElement; positionMarkers: HTMLElement[] }>();
   let performanceRenderMarked = false;
   let performanceControlsMarked = false;
-  let performanceUnitMarked = false;
-  const measureRsvpText = createRsvpTextMeasurer(global.document);
-  let rsvpFrameWidth = 0;
+  let performanceSpotMarked = false;
+  const measureSpotText = createSpotTextMeasurer(global.document);
+  let spotWidth = 0;
   let performanceReactInitStarted = false;
   let performanceReactInitMarked = false;
 
@@ -90,8 +90,8 @@ import {
     return sessionState?.phase === "reading" ? sessionState : null;
   }
 
-  function sessionMode(): ReadingMode {
-    return readingSessionState()?.mode ?? "rsvp";
+  function sessionMode(): ReaderSessionMode {
+    return readingSessionState()?.mode ?? "spots";
   }
 
   function sessionFlowIndex(): number {
@@ -107,7 +107,7 @@ import {
     if (state) return state.position;
     const first = preparedDocument?.flow[0];
     return first && preparedDocument
-      ? global.Engine.positionForFlowItem(first, preparedDocument.frames)
+      ? global.Engine.positionForFlowItem(first, preparedDocument.spots)
       : { kind: "text", sourceOffset: 0 };
   }
 
@@ -115,11 +115,11 @@ import {
     return sessionState?.phase === "preparing" && sessionState.requestId === requestId;
   }
 
-  function currentRsvpFrameLayout() {
+  function currentSpotLayout() {
     const viewportWidth = global.innerWidth || global.document.documentElement.clientWidth || 320;
     return {
       maxWidth: Math.max(1, viewportWidth - 40),
-      measureText: measureRsvpText,
+      measureText: measureSpotText,
     };
   }
 
@@ -257,10 +257,10 @@ import {
         else close();
       },
       retry,
-      switchToText: () => switchMode("text"),
-      switchToRsvp: () => switchMode("rsvp"),
+      switchToPage: () => switchMode("page"),
+      switchToSpots: () => switchMode("spots"),
       previousSentence: goBackFromControl,
-      rsvpPointerUp: handleRsvpPointerUp,
+      spotsPointerUp: handleSpotsPointerUp,
       togglePlayback,
       resumeFigure: advanceFromFigure,
       figureLoad: (figureIndex: number, token: number) => settleReactFigure(figureIndex, true, token),
@@ -277,47 +277,47 @@ import {
       rewindFeedbackDone: clearRewindFeedback,
       loadingAnimation: animateLoadingIndicator,
       rewindAnimation: animateRewindFeedback,
-      textScroll: (element: HTMLElement | null) => {
+      pageScroll: (element: HTMLElement | null) => {
         if (!element) {
-          reactTextScroller = null;
-          reactTextMarkers = [];
+          reactPageScroller = null;
+          reactPageMarkers = [];
           return;
         }
         if (!preparedDocument) return;
-        reactTextScroller = element;
-        reactTextMarkers = Array.from(element.querySelectorAll<HTMLElement>("[data-reader-position-kind=\"text\"], [data-reader-position-kind=\"figure\"]"));
-        reactTextRestoreScrollTop = element.scrollTop;
-        for (const figure of element.querySelectorAll<HTMLElement>("[data-reader-text-figure=\"true\"]")) {
-          attachTextFigureLoadCorrection(element, figure, reactTextMarkers);
+        reactPageScroller = element;
+        reactPageMarkers = Array.from(element.querySelectorAll<HTMLElement>("[data-reader-position-kind=\"text\"], [data-reader-position-kind=\"figure\"]"));
+        reactPageRestoreScrollTop = element.scrollTop;
+        for (const figure of element.querySelectorAll<HTMLElement>("[data-reader-page-figure=\"true\"]")) {
+          attachPageFigureLoadCorrection(element, figure, reactPageMarkers);
         }
-        if (reactTextRestorePending) {
-          scheduleReactTextRestore(element, reactTextMarkers);
+        if (reactPageRestorePending) {
+          scheduleReactPageRestore(element, reactPageMarkers);
         }
       },
-      textPosition: (element: HTMLElement) => {
-        if (reactTextRestoring) {
-          if (reactTextRestoreScrollTop === null || Math.abs(element.scrollTop - reactTextRestoreScrollTop) < 1) return;
-          if (reactTextRestorePending) {
-            reactTextRestorePending = false;
-            reactTextRestoreGeneration += 1;
+      pagePosition: (element: HTMLElement) => {
+        if (reactPageRestoring) {
+          if (reactPageRestoreScrollTop === null || Math.abs(element.scrollTop - reactPageRestoreScrollTop) < 1) return;
+          if (reactPageRestorePending) {
+            reactPageRestorePending = false;
+            reactPageRestoreGeneration += 1;
           }
         }
-        updateTextPosition(element, reactTextMarkers);
-        reactTextRestoreScrollTop = element.scrollTop;
+        updatePagePosition(element, reactPageMarkers);
+        reactPageRestoreScrollTop = element.scrollTop;
       },
     });
     if (performanceReactInitStarted && !performanceReactInitMarked) {
       performanceReactInitMarked = true;
       markPerformance("reader:react-init-end");
     }
-    if (screen.kind === "rsvp-unit" || screen.kind === "rsvp-figure") {
+    if (screen.kind === "spot" || screen.kind === "spot-figure") {
       if (!performanceControlsMarked) {
         performanceControlsMarked = true;
         markPerformance("reader:controls-ready");
       }
-      if (screen.kind === "rsvp-unit" && !performanceUnitMarked) {
-        performanceUnitMarked = true;
-        markPerformance("reader:first-unit");
+      if (screen.kind === "spot" && !performanceSpotMarked) {
+        performanceSpotMarked = true;
+        markPerformance("reader:first-spot");
       }
     }
   }
@@ -393,7 +393,7 @@ import {
     if (!reactViewMount || !reactViewHost) throw new Error("reader_view_unavailable");
     performanceRenderMarked = false;
     performanceControlsMarked = false;
-    performanceUnitMarked = false;
+    performanceSpotMarked = false;
     const generation = ++uiGeneration;
     opening = true;
     attachSessionLifecycle();
@@ -459,16 +459,16 @@ import {
         return;
       }
       if (!extractedContent?.text) throw new Error("content_not_found");
-      const layout = currentRsvpFrameLayout();
+      const layout = currentSpotLayout();
       preparedDocument = prepareReaderDocument(
         extractedContent,
         global.Engine,
         layout,
         global.document.title || "",
       );
-      rsvpFrameWidth = layout.maxWidth;
+      spotWidth = layout.maxWidth;
       markPerformance("reader:segmentation-end");
-      if (preparedDocument.frames.length === 0) throw new Error("units_not_found");
+      if (preparedDocument.spots.length === 0) throw new Error("spots_not_found");
     } catch (error) {
       if (!isCurrentSession(generation)) {
         destroyLaunchProgress(progress);
@@ -634,19 +634,19 @@ import {
     renderReactView();
   }
 
-  function attachTextFigureLoadCorrection(
+  function attachPageFigureLoadCorrection(
     scroller: HTMLElement,
     figureElement: HTMLElement,
     positionMarkers: HTMLElement[],
   ): void {
-    const existing = reactTextFigureCorrections.get(figureElement);
+    const existing = reactPageFigureCorrections.get(figureElement);
     if (existing) {
       existing.scroller = scroller;
       existing.positionMarkers = positionMarkers;
       return;
     }
     const correction = { scroller, positionMarkers };
-    reactTextFigureCorrections.set(figureElement, correction);
+    reactPageFigureCorrections.set(figureElement, correction);
     const surface = Array.from(figureElement.children).find((child) => child.tagName === "BUTTON");
     const image = surface && Array.from(surface.children).find((child) => child.tagName === "IMG") as HTMLImageElement | undefined;
     if (!image) return;
@@ -657,7 +657,7 @@ import {
     delete image.dataset.readerSource;
     delete image.dataset.readerSrcset;
     delete image.dataset.readerSizes;
-    const currentMarker = currentTextPositionMarker(correction.positionMarkers);
+    const currentMarker = currentPagePositionMarker(correction.positionMarkers);
     const figureOffset = Number(figureElement.dataset.sourceStart);
     const markerOffset = Number(currentMarker?.dataset.sourceStart);
     const shouldCorrect = Boolean(
@@ -673,21 +673,21 @@ import {
     const adjustAfterDecode = async () => {
       if (settled) return;
       settled = true;
-      if (!shouldCorrect || reactTextScroller !== correction.scroller) return;
+      if (!shouldCorrect || reactPageScroller !== correction.scroller) return;
       try {
         if (typeof image.decode === "function") await image.decode();
       } catch {
       }
-      if (reactTextScroller !== correction.scroller) return;
+      if (reactPageScroller !== correction.scroller) return;
       const applyCorrection = () => {
-        if (reactTextScroller !== correction.scroller) return;
+        if (reactPageScroller !== correction.scroller) return;
         const afterTop = (currentMarker as HTMLElement).getBoundingClientRect().top;
         const delta = afterTop - beforeTop;
         if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
-          reactTextRestoring = true;
+          reactPageRestoring = true;
           correction.scroller.scrollTop += delta;
-          reactTextRestoreScrollTop = correction.scroller.scrollTop;
-          scheduleReactTextRestoreRelease(false);
+          reactPageRestoreScrollTop = correction.scroller.scrollTop;
+          scheduleReactPageRestoreRelease(false);
         }
       };
       if (typeof global.requestAnimationFrame === "function") global.requestAnimationFrame(applyCorrection);
@@ -701,7 +701,7 @@ import {
     if (image.complete && image.naturalWidth > 0) void adjustAfterDecode();
   }
 
-  function currentTextPositionMarker(positionMarkers: HTMLElement[]): HTMLElement | undefined {
+  function currentPagePositionMarker(positionMarkers: HTMLElement[]): HTMLElement | undefined {
     const position = sessionPosition();
     if (position.kind === "figure") {
       return positionMarkers.find((marker) => (
@@ -718,7 +718,7 @@ import {
     ));
   }
 
-  function updateTextPosition(
+  function updatePagePosition(
     scroller: HTMLElement,
     positionMarkers: HTMLElement[],
     preferVisualTop = false,
@@ -729,8 +729,8 @@ import {
     const scrollerRect = scroller.getBoundingClientRect();
     const visibleTop = scrollerRect.top;
     const visibleBottom = scrollerRect.bottom;
-    const readableTop = Math.min(visibleBottom, visibleTop + TEXT_VIEW_READABLE_TOP_PX);
-    const readableBottom = Math.max(readableTop, visibleBottom - TEXT_VIEW_READABLE_BOTTOM_PX);
+    const readableTop = Math.min(visibleBottom, visibleTop + PAGE_VIEW_READABLE_TOP_PX);
+    const readableBottom = Math.max(readableTop, visibleBottom - PAGE_VIEW_READABLE_BOTTOM_PX);
     let firstVisible: HTMLElement | undefined;
     let firstVisibleTop = Number.POSITIVE_INFINITY;
     let firstReadable: HTMLElement | undefined;
@@ -803,27 +803,27 @@ import {
       : { kind: "text", sourceOffset };
     if (syncSession && !applyingSession) {
       dispatchSession({
-        type: sessionMode() === "text" ? "switchToText" : "switchToRsvp",
+        type: sessionMode() === "page" ? "switchToPage" : "switchToSpots",
         position,
       });
     }
     return position;
   }
 
-  function captureTextPosition(
+  function capturePagePosition(
     scroller: HTMLElement,
     positionMarkers: HTMLElement[],
     force = false,
     syncSession = true,
   ): ReaderPosition | null {
-    const restoredScrollTop = reactTextRestoreScrollTop;
+    const restoredScrollTop = reactPageRestoreScrollTop;
     if (!force && (restoredScrollTop === null || Math.abs(scroller.scrollTop - restoredScrollTop) < 1)) return null;
-    const position = updateTextPosition(scroller, positionMarkers, force, syncSession);
-    reactTextRestoreScrollTop = scroller.scrollTop;
+    const position = updatePagePosition(scroller, positionMarkers, force, syncSession);
+    reactPageRestoreScrollTop = scroller.scrollTop;
     return position;
   }
 
-  function restoreTextPosition(scroller: HTMLElement, positionMarkers: HTMLElement[]): void {
+  function restorePagePosition(scroller: HTMLElement, positionMarkers: HTMLElement[]): void {
     const currentPosition = sessionPosition();
     const figureIndex = currentPosition.kind === "figure" ? currentPosition.figureIndex : -1;
     const exactFigure = currentPosition.kind !== "figure"
@@ -853,10 +853,10 @@ import {
     scroller.scrollTop = Math.max(0, targetY - 72);
   }
 
-  function scheduleReactTextRestoreRelease(invalidate = true): void {
-    const generation = invalidate ? ++reactTextRestoreGeneration : reactTextRestoreGeneration;
+  function scheduleReactPageRestoreRelease(invalidate = true): void {
+    const generation = invalidate ? ++reactPageRestoreGeneration : reactPageRestoreGeneration;
     const release = () => {
-      if (generation === reactTextRestoreGeneration && !reactTextRestorePending) reactTextRestoring = false;
+      if (generation === reactPageRestoreGeneration && !reactPageRestorePending) reactPageRestoring = false;
     };
     if (typeof global.requestAnimationFrame === "function") {
       global.requestAnimationFrame(() => global.requestAnimationFrame(release));
@@ -865,15 +865,15 @@ import {
     }
   }
 
-  function scheduleReactTextRestore(element: HTMLElement, positionMarkers: HTMLElement[]): void {
-    const generation = ++reactTextRestoreGeneration;
+  function scheduleReactPageRestore(element: HTMLElement, positionMarkers: HTMLElement[]): void {
+    const generation = ++reactPageRestoreGeneration;
     const apply = () => {
-      if (generation !== reactTextRestoreGeneration || reactTextScroller !== element) return;
-      restoreTextPosition(element, positionMarkers);
-      reactTextRestoreScrollTop = element.scrollTop;
-      reactTextRestorePending = false;
+      if (generation !== reactPageRestoreGeneration || reactPageScroller !== element) return;
+      restorePagePosition(element, positionMarkers);
+      reactPageRestoreScrollTop = element.scrollTop;
+      reactPageRestorePending = false;
       const release = () => {
-        if (generation === reactTextRestoreGeneration && reactTextScroller === element) reactTextRestoring = false;
+        if (generation === reactPageRestoreGeneration && reactPageScroller === element) reactPageRestoring = false;
       };
       if (typeof global.requestAnimationFrame === "function") {
         global.requestAnimationFrame(() => global.requestAnimationFrame(release));
@@ -888,35 +888,35 @@ import {
     }
   }
 
-  function switchMode(nextMode: ReadingMode): void {
+  function switchMode(nextMode: ReaderSessionMode): void {
     const currentMode = sessionMode();
     if (nextMode === currentMode) return;
     const previousFocus = readerActiveElement();
     clearPendingLeftTap();
-    const modeRestorePending = reactTextRestorePending;
-    reactTextRestorePending = nextMode === "text";
+    const modeRestorePending = reactPageRestorePending;
+    reactPageRestorePending = nextMode === "page";
     let capturedPosition = sessionPosition();
-    if (nextMode === "rsvp" && currentMode === "text") {
-      const textScroller = reactTextScroller;
-      const textMarkers = reactTextMarkers;
-      const scrollChanged = textScroller && (reactTextRestoreScrollTop === null || Math.abs(textScroller.scrollTop - reactTextRestoreScrollTop) >= 1);
+    if (nextMode === "spots" && currentMode === "page") {
+      const pageScroller = reactPageScroller;
+      const pageMarkers = reactPageMarkers;
+      const scrollChanged = pageScroller && (reactPageRestoreScrollTop === null || Math.abs(pageScroller.scrollTop - reactPageRestoreScrollTop) >= 1);
       if (!modeRestorePending || scrollChanged) {
-        reactTextRestoring = true;
-        if (textScroller) capturedPosition = captureTextPosition(textScroller, textMarkers, true, false) || capturedPosition;
+        reactPageRestoring = true;
+        if (pageScroller) capturedPosition = capturePagePosition(pageScroller, pageMarkers, true, false) || capturedPosition;
       }
-    } else if (currentMode === "rsvp") {
-      reactTextRestoring = true;
+    } else if (currentMode === "spots") {
+      reactPageRestoring = true;
     }
     invalidateFigureLoad();
     if (!applyingSession) {
       dispatchSession({
-        type: nextMode === "text" ? "switchToText" : "switchToRsvp",
+        type: nextMode === "page" ? "switchToPage" : "switchToSpots",
         position: capturedPosition,
       });
     }
-    if (nextMode === "rsvp") controlsVisible = true;
+    if (nextMode === "spots") controlsVisible = true;
     renderSessionState();
-    if (nextMode === "rsvp") scheduleReactTextRestoreRelease();
+    if (nextMode === "spots") scheduleReactPageRestoreRelease();
     if (!containsReaderElement(previousFocus)) {
       global.requestAnimationFrame(() => findCloseButton()?.focus());
     }
@@ -924,18 +924,18 @@ import {
 
   function reflowForViewport() {
     if (!preparedDocument) return;
-    const layout = currentRsvpFrameLayout();
-    if (Math.abs(layout.maxWidth - rsvpFrameWidth) < 1) {
+    const layout = currentSpotLayout();
+    if (Math.abs(layout.maxWidth - spotWidth) < 1) {
       renderSessionState();
       return;
     }
     const position = sessionPosition();
     preparedDocument = reflowReaderDocument(preparedDocument, global.Engine, layout);
-    rsvpFrameWidth = layout.maxWidth;
+    spotWidth = layout.maxWidth;
     if (readingSessionState() && !applyingSession) {
       dispatchSession({
-        type: "rebuildUnits",
-        units: prepareSession(preparedDocument).units,
+        type: "rebuildSpots",
+        spots: prepareSession(preparedDocument).spots,
         position,
       });
     } else {
@@ -964,7 +964,7 @@ import {
     showTransportControls();
   }
 
-  function handleRsvpPointerUp(event: PointerEvent): void {
+  function handleSpotsPointerUp(event: PointerEvent): void {
     if (isReaderControl(event.target)) return;
     const clientX = Number.isFinite(event.clientX) ? event.clientX : (global.innerWidth || 390) / 2;
     const clientY = Number.isFinite(event.clientY) ? event.clientY : (global.innerHeight || 844) / 2;
@@ -1163,7 +1163,7 @@ import {
       focusable[nextIndex]?.focus();
       return;
     }
-    if (sessionMode() !== "rsvp" || isEditableTarget(event) || isButtonTarget(event)) return;
+    if (sessionMode() !== "spots" || isEditableTarget(event) || isButtonTarget(event)) return;
     if (event.code === "Space" || event.key === " ") {
       event.preventDefault();
       togglePlayback();
@@ -1253,7 +1253,7 @@ import {
     opening = true;
     performanceRenderMarked = false;
     performanceControlsMarked = false;
-    performanceUnitMarked = false;
+    performanceSpotMarked = false;
     mountReactViewer(shadow);
     if (!reactViewMount || !reactViewHost) throw new Error("reader_view_unavailable");
     launchFocus = handle;
@@ -1272,7 +1272,7 @@ import {
     const shouldResume = resumePlaybackOnReopen;
     resumePlaybackOnReopen = false;
     markPerformance("reader:first-feedback");
-    if (shouldResume && sessionMode() === "rsvp") dispatchSession({ type: "play" });
+    if (shouldResume && sessionMode() === "spots") dispatchSession({ type: "play" });
     else renderReader();
     focusCloseButtonAfterPaint(generation);
     if (isCurrentSession(generation)) opening = false;
@@ -1291,12 +1291,12 @@ import {
     rewindFeedbackClearTimer = null;
     rewindFeedback = null;
     invalidateFigureLoad();
-    reactTextScroller = null;
-    reactTextMarkers = [];
-    reactTextRestoreGeneration += 1;
-    reactTextRestoring = false;
-    reactTextRestorePending = false;
-    reactTextRestoreScrollTop = null;
+    reactPageScroller = null;
+    reactPageMarkers = [];
+    reactPageRestoreGeneration += 1;
+    reactPageRestoring = false;
+    reactPageRestorePending = false;
+    reactPageRestoreScrollTop = null;
     unmountReactViewer();
     global.removeEventListener?.("keydown", handleKeyDown);
     opening = false;
@@ -1332,7 +1332,7 @@ import {
     if (rewindFeedbackClearTimer !== null) global.clearTimeout(rewindFeedbackClearTimer);
     rewindFeedbackClearTimer = null;
     preparedDocument = null;
-    rsvpFrameWidth = 0;
+    spotWidth = 0;
     invalidateFigureLoad();
     opening = false;
     controlsVisible = true;
@@ -1348,12 +1348,12 @@ import {
     retainedPageUrl = null;
     sessionDismissed = false;
     resumePlaybackOnReopen = false;
-    reactTextScroller = null;
-    reactTextMarkers = [];
-    reactTextRestoreGeneration += 1;
-    reactTextRestoring = false;
-    reactTextRestorePending = false;
-    reactTextRestoreScrollTop = null;
+    reactPageScroller = null;
+    reactPageMarkers = [];
+    reactPageRestoreGeneration += 1;
+    reactPageRestoring = false;
+    reactPageRestorePending = false;
+    reactPageRestoreScrollTop = null;
     rewindFeedback = null;
   }
 

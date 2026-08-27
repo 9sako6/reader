@@ -58,10 +58,10 @@ module reader_session {
     | Pause
     | Tick({generation: int})
     | PreviousSentence
-    | SwitchToText({position: int})
-    | SwitchToRsvp({position: int})
+    | SwitchToPage({position: int})
+    | SwitchToSpots({position: int})
     | ResumeFromFigure
-    | RebuildUnits({position: int})
+    | RebuildSpots({position: int})
     | VisibilityHidden
     | Close
 
@@ -71,7 +71,7 @@ module reader_session {
   var lastRequest: str
 
   pure def figureIndexForFlow(index: int): int = if (index == 1) 0 else if (index == 2) 1 else -1
-  pure def kindForFlow(index: int): str = if (figureIndexForFlow(index) >= 0) "figure" else "unit"
+  pure def kindForFlow(index: int): str = if (figureIndexForFlow(index) >= 0) "figure" else "spot"
   pure def sentenceHeadForFlow(index: int): int = if (index == 4) 3 else index
   pure def nextGeneration(generation: int): int = generation + 1
   pure def figureVisitIncrement(before: SessionState, after: SessionUpdate, figureIndex: int): int =
@@ -173,11 +173,11 @@ module reader_session {
 
   action init = all {
     session' = {
-      phase: "idle", activeRequest: "", mode: "rsvp", playback: "paused",
+      phase: "idle", activeRequest: "", mode: "spots", playback: "paused",
       flowIndex: 0, flowLength: 0, position: 0, timerGeneration: 0,
       timerPending: false, contentPresent: false,
       previousFlowIndex: 0, previousPosition: 0, previousGeneration: 0, previousActiveRequest: "",
-      previousPhase: "idle", previousMode: "rsvp", previousPlayback: "paused",
+      previousPhase: "idle", previousMode: "spots", previousPlayback: "paused",
       previousFlowLength: 0, previousTimerPending: false, previousContentPresent: false,
       preparationHidden: false, previousPreparationHidden: false,
       figure0Visits: 0, figure1Visits: 0, figure0Consumes: 0, figure1Consumes: 0,
@@ -197,7 +197,7 @@ module reader_session {
       session' = remember(session, updateOf(session))
     } else {
       session' = remember(session, {
-        phase: "preparing", activeRequest: requestId, mode: "rsvp", playback: "paused",
+        phase: "preparing", activeRequest: requestId, mode: "spots", playback: "paused",
         flowIndex: 0, flowLength: 0, position: 0,
         timerGeneration: nextGeneration(session.timerGeneration), timerPending: false, contentPresent: false,
         preparationHidden: false,
@@ -215,7 +215,7 @@ module reader_session {
       session' = remember(session, updateOf(session))
     } else {
       session' = remember(session, {
-        phase: "reading", activeRequest: requestId, mode: "rsvp",
+        phase: "reading", activeRequest: requestId, mode: "spots",
         playback: if (session.preparationHidden) "paused" else "playing",
         flowIndex: 0, flowLength: 5, position: 0,
         timerGeneration: nextGeneration(session.timerGeneration),
@@ -235,7 +235,7 @@ module reader_session {
       session' = remember(session, updateOf(session))
     } else {
       session' = remember(session, {
-        phase: "error", activeRequest: requestId, mode: "rsvp", playback: "paused",
+        phase: "error", activeRequest: requestId, mode: "spots", playback: "paused",
         flowIndex: 0, flowLength: 0, position: 0,
         timerGeneration: nextGeneration(session.timerGeneration), timerPending: false, contentPresent: false,
         preparationHidden: false,
@@ -253,7 +253,7 @@ module reader_session {
       session' = remember(session, updateOf(session))
     } else {
       session' = remember(session, {
-        phase: "idle", activeRequest: "", mode: "rsvp", playback: "paused",
+        phase: "idle", activeRequest: "", mode: "spots", playback: "paused",
         flowIndex: 0, flowLength: 0, position: 0,
         timerGeneration: nextGeneration(session.timerGeneration), timerPending: false, contentPresent: false,
         preparationHidden: false,
@@ -265,8 +265,8 @@ module reader_session {
   }
 
   action play = all {
-    session.phase == "reading", session.mode == "rsvp", session.playback == "paused",
-    kindForFlow(session.flowIndex) == "unit",
+    session.phase == "reading", session.mode == "spots", session.playback == "paused",
+    kindForFlow(session.flowIndex) == "spot",
     session.timerGeneration < 8,
     session' = remember(session, { ...updateOf(session), playback: "playing", timerGeneration: nextGeneration(session.timerGeneration), timerPending: true }),
     actionTaken' = Play,
@@ -296,7 +296,7 @@ module reader_session {
         flowIndex: nextIndex, position: nextIndex,
         playback: if (kindForFlow(nextIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
-        timerPending: kindForFlow(nextIndex) == "unit",
+        timerPending: kindForFlow(nextIndex) == "spot",
       })
     },
     actionTaken' = Tick({generation: generation}),
@@ -310,57 +310,57 @@ module reader_session {
     val targetIndex = 0
     session' = rememberWithFigureEpoch(session, { ...updateOf(session),
       flowIndex: targetIndex, position: targetIndex,
-      playback: if (session.mode == "rsvp" and session.playback == "playing") "playing" else "paused",
+      playback: if (session.mode == "spots" and session.playback == "playing") "playing" else "paused",
       timerGeneration: nextGeneration(session.timerGeneration),
-      timerPending: session.mode == "rsvp" and session.playback == "playing",
+      timerPending: session.mode == "spots" and session.playback == "playing",
     }),
     actionTaken' = PreviousSentence,
     lastAction' = "previousSentence",
     lastRequest' = "",
   }
 
-  action switchToText(position: int): bool = all {
+  action switchToPage(position: int): bool = all {
     session.phase == "reading", position >= 0 and position < session.flowLength,
     session.timerGeneration < 8,
     val targetIndex = position
     session' = rememberWithAnchor(session, { ...updateOf(session),
-      mode: "text", flowIndex: targetIndex, position: position, playback: "paused",
+      mode: "page", flowIndex: targetIndex, position: position, playback: "paused",
       timerGeneration: nextGeneration(session.timerGeneration), timerPending: false,
     }, position),
-    actionTaken' = SwitchToText({position: position}),
-    lastAction' = "switchToText",
+    actionTaken' = SwitchToPage({position: position}),
+    lastAction' = "switchToPage",
     lastRequest' = "",
   }
 
-  action switchToRsvp(position: int): bool = all {
+  action switchToSpots(position: int): bool = all {
     session.phase == "reading", position >= 0 and position < session.flowLength,
-    session.mode != "text" or position == session.modeAnchorPosition,
+    session.mode != "page" or position == session.modeAnchorPosition,
     session.timerGeneration < 8,
     val targetIndex = if (kindForFlow(position) == "figure") position else sentenceHeadForFlow(position)
-    session' = if (session.mode == "text" and session.position == session.modeAnchorPosition and position == session.modeAnchorPosition) {
+    session' = if (session.mode == "page" and session.position == session.modeAnchorPosition and position == session.modeAnchorPosition) {
       rememberWithExistingAnchor(session, { ...updateOf(session),
-        mode: "rsvp", flowIndex: targetIndex, position: targetIndex,
+        mode: "spots", flowIndex: targetIndex, position: targetIndex,
         playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
-        timerPending: kindForFlow(targetIndex) == "unit",
+        timerPending: kindForFlow(targetIndex) == "spot",
       })
     } else if (position < session.flowIndex) {
       rememberWithFigureEpoch(session, { ...updateOf(session),
-        mode: "rsvp", flowIndex: targetIndex, position: targetIndex,
+        mode: "spots", flowIndex: targetIndex, position: targetIndex,
         playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
-        timerPending: kindForFlow(targetIndex) == "unit",
+        timerPending: kindForFlow(targetIndex) == "spot",
       })
     } else {
       remember(session, { ...updateOf(session),
-        mode: "rsvp", flowIndex: targetIndex, position: targetIndex,
+        mode: "spots", flowIndex: targetIndex, position: targetIndex,
         playback: if (kindForFlow(targetIndex) == "figure") "paused" else "playing",
         timerGeneration: nextGeneration(session.timerGeneration),
-        timerPending: kindForFlow(targetIndex) == "unit",
+        timerPending: kindForFlow(targetIndex) == "spot",
       })
     },
-    actionTaken' = SwitchToRsvp({position: position}),
-    lastAction' = "switchToRsvp",
+    actionTaken' = SwitchToSpots({position: position}),
+    lastAction' = "switchToSpots",
     lastRequest' = "",
   }
 
@@ -370,26 +370,26 @@ module reader_session {
     val targetIndex = session.flowIndex + 1
     session' = rememberWithFigureConsumed(session, { ...updateOf(session),
       flowIndex: targetIndex, position: targetIndex,
-      playback: if (session.mode == "rsvp" and kindForFlow(targetIndex) == "unit") "playing" else "paused",
-      timerGeneration: nextGeneration(session.timerGeneration), timerPending: session.mode == "rsvp" and kindForFlow(targetIndex) == "unit",
+      playback: if (session.mode == "spots" and kindForFlow(targetIndex) == "spot") "playing" else "paused",
+      timerGeneration: nextGeneration(session.timerGeneration), timerPending: session.mode == "spots" and kindForFlow(targetIndex) == "spot",
     }),
     actionTaken' = ResumeFromFigure,
     lastAction' = "resumeFromFigure",
     lastRequest' = "",
   }
 
-  action rebuildUnits(position: int): bool = all {
+  action rebuildSpots(position: int): bool = all {
     session.phase == "reading", position >= 0 and position < session.flowLength,
     session.timerGeneration < 8,
     val targetIndex = position
     session' = rememberWithFigureEpoch(session, { ...updateOf(session),
       flowIndex: targetIndex, position: position, flowLength: 5,
-      playback: if (session.mode == "rsvp" and kindForFlow(targetIndex) == "unit") session.playback else "paused",
+      playback: if (session.mode == "spots" and kindForFlow(targetIndex) == "spot") session.playback else "paused",
       timerGeneration: nextGeneration(session.timerGeneration),
-      timerPending: session.mode == "rsvp" and kindForFlow(targetIndex) == "unit" and session.playback == "playing",
+      timerPending: session.mode == "spots" and kindForFlow(targetIndex) == "spot" and session.playback == "playing",
     }),
-    actionTaken' = RebuildUnits({position: position}),
-    lastAction' = "rebuildUnits",
+    actionTaken' = RebuildSpots({position: position}),
+    lastAction' = "rebuildSpots",
     lastRequest' = "",
   }
 
@@ -416,7 +416,7 @@ module reader_session {
       session' = remember(session, updateOf(session))
     } else {
       session' = remember(session, {
-        phase: "ended", activeRequest: "", mode: "rsvp", playback: "paused",
+        phase: "ended", activeRequest: "", mode: "spots", playback: "paused",
         flowIndex: 0, flowLength: 0, position: 0,
         timerGeneration: nextGeneration(session.timerGeneration), timerPending: false, contentPresent: false,
         preparationHidden: false,
@@ -431,15 +431,15 @@ module reader_session {
     open("A"), open("B"), prepareSucceeded("A"), prepareSucceeded("B"),
     prepareFailed("A"), prepareFailed("B"), cancel("A"), cancel("B"), play, pause,
     tick(0), tick(1), tick(2), tick(3), tick(4), tick(5), tick(6), tick(7), tick(8),
-    previousSentence, switchToText(0), switchToText(1), switchToText(2), switchToText(3), switchToText(4),
-    switchToRsvp(0), switchToRsvp(1), switchToRsvp(2), switchToRsvp(3), switchToRsvp(4), resumeFromFigure,
-    rebuildUnits(0), rebuildUnits(1), rebuildUnits(2), rebuildUnits(3), rebuildUnits(4), visibilityHidden, close,
+    previousSentence, switchToPage(0), switchToPage(1), switchToPage(2), switchToPage(3), switchToPage(4),
+    switchToSpots(0), switchToSpots(1), switchToSpots(2), switchToSpots(3), switchToSpots(4), resumeFromFigure,
+    rebuildSpots(0), rebuildSpots(1), rebuildSpots(2), rebuildSpots(3), rebuildSpots(4), visibilityHidden, close,
   }
 
   val endedHasNoContent = session.phase != "ended" or and {
     not(session.contentPresent), session.flowLength == 0, not(session.timerPending),
   }
-  val playingOnlyInRsvp = session.playback != "playing" or and { session.phase == "reading", session.mode == "rsvp" }
+  val playingOnlyInSpots = session.playback != "playing" or and { session.phase == "reading", session.mode == "spots" }
   val figureIsPaused = kindForFlow(session.flowIndex) != "figure" or session.playback == "paused"
   val timerOnlyWhilePlaying = not(session.timerPending) or session.playback == "playing"
   val positionIsInRange = session.flowLength == 0 or and {
@@ -474,7 +474,7 @@ module reader_session {
     session.phase == "ended", not(session.contentPresent), session.flowLength == 0,
     not(session.timerPending), session.activeRequest == "",
   }
-  val noImplicitRewind = session.phase != "reading" or session.flowIndex >= session.previousFlowIndex or lastAction == "previousSentence" or lastAction == "switchToText" or lastAction == "switchToRsvp" or lastAction == "rebuildUnits"
+  val noImplicitRewind = session.phase != "reading" or session.flowIndex >= session.previousFlowIndex or lastAction == "previousSentence" or lastAction == "switchToPage" or lastAction == "switchToSpots" or lastAction == "rebuildSpots"
   val figureConsumedAtMostOnce = and {
     session.figure0Visits >= 0, session.figure1Visits >= 0,
     session.figure0Consumes >= 0, session.figure1Consumes >= 0,
@@ -514,13 +514,13 @@ module reader_session {
     },
     lastAction != "resumeFromFigure" or session.flowIndex == session.previousFlowIndex + 1,
   }
-  val modeRoundTripKeepsLocation = lastAction != "switchToRsvp" or session.previousMode != "text" or not(session.modeAnchorPending) or and {
-    session.mode == "rsvp", session.phase == "reading", session.position == sentenceHeadForFlow(session.previousPosition),
+  val modeRoundTripKeepsLocation = lastAction != "switchToSpots" or session.previousMode != "page" or not(session.modeAnchorPending) or and {
+    session.mode == "spots", session.phase == "reading", session.position == sentenceHeadForFlow(session.previousPosition),
     session.position == sentenceHeadForFlow(session.modeAnchorPosition),
   }
 
   val invariant = and {
-    endedHasNoContent, playingOnlyInRsvp, figureIsPaused, timerOnlyWhilePlaying,
+    endedHasNoContent, playingOnlyInSpots, figureIsPaused, timerOnlyWhilePlaying,
     positionIsInRange, staleTickDoesNotAdvance, stalePreparationDoesNotOpen, hiddenPreparationStartsPaused,
     repeatedPreparationVisibilityIsStable,
     closedSessionCannotRevive,
@@ -540,10 +540,10 @@ module reader_session {
   run pausedTickDoesNotAdvance = init.then(open("A")).then(prepareSucceeded("A")).then(pause).then(tick(2))
   run staleGenerationTickDoesNotAdvance = init.then(open("A")).then(prepareSucceeded("A")).then(tick(1))
   run cancelThenLatePreparationSuccess = init.then(open("A")).then(cancel("A")).then(prepareSucceeded("A"))
-  run switchModeAtFigure = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(switchToText(1)).then(switchToRsvp(1))
-  run switchModeAfterFigure = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(resumeFromFigure).then(resumeFromFigure).then(switchToText(3)).then(switchToRsvp(3))
-  run pausedModeRoundTrip = init.then(open("A")).then(prepareSucceeded("A")).then(pause).then(switchToText(0)).then(switchToRsvp(0))
-  run rebuildUnitsWhilePlaying = init.then(open("A")).then(prepareSucceeded("A")).then(rebuildUnits(0))
+  run switchModeAtFigure = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(switchToPage(1)).then(switchToSpots(1))
+  run switchModeAfterFigure = init.then(open("A")).then(prepareSucceeded("A")).then(tick(2)).then(resumeFromFigure).then(resumeFromFigure).then(switchToPage(3)).then(switchToSpots(3))
+  run pausedModeRoundTrip = init.then(open("A")).then(prepareSucceeded("A")).then(pause).then(switchToPage(0)).then(switchToSpots(0))
+  run rebuildSpotsWhilePlaying = init.then(open("A")).then(prepareSucceeded("A")).then(rebuildSpots(0))
   run visibilityHiddenPauses = init.then(open("A")).then(prepareSucceeded("A")).then(visibilityHidden)
   run visibilityHiddenDuringPreparation = init.then(open("A")).then(visibilityHidden).then(prepareSucceeded("A"))
   run visibilityHiddenDuringPreparationThenFailure = init.then(open("A")).then(visibilityHidden).then(prepareFailed("A"))

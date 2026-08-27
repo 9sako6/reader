@@ -93,8 +93,8 @@ test("Chrome reader stays above hostile page CSS and top-layer UI while its cont
   expect(shell.buttonBoxSizing).toBe("border-box");
   expect(shell.topLayerElementIsReaderHost).toBe(true);
 
-  await reader.getByRole("button", { name: "文章で読む" }).click();
-  await expect(reader.locator("[data-reader-text-shell]")).toBeVisible();
+  await reader.getByRole("button", { name: "Page、文章全体で読む" }).click();
+  await expect(reader.locator("[data-reader-page-shell]")).toBeVisible();
   const image = reader.locator("img").first();
   await expect(image).toBeVisible();
   const imageStyle = await image.evaluate((element) => {
@@ -109,7 +109,7 @@ test("Chrome reader stays above hostile page CSS and top-layer UI while its cont
   await expect(page.locator('[data-reader-owned="true"]')).toHaveCount(0);
 });
 
-test("Chrome text reader allows selecting and copying a paragraph on a page that disables selection", async ({ page }) => {
+test("Chrome Page reader allows selecting and copying a paragraph on a page that disables selection", async ({ page }) => {
   await loadChromeViewer(page);
   await page.evaluate(() => {
     const scope = globalThis as typeof globalThis & { copiedReaderText: string };
@@ -132,7 +132,7 @@ test("Chrome text reader allows selecting and copying a paragraph on a page that
     const view = globalThis.ReaderView;
     if (!view) throw new Error("reader view was not loaded");
     view.mount(mountPoint, { layout: "desktop" }).render({
-      kind: "text",
+      kind: "page",
       language: "ja",
       title: "",
       blocks: [{
@@ -152,8 +152,8 @@ test("Chrome text reader allows selecting and copying a paragraph on a page that
       close() {},
       cancel() {},
       retry() {},
-      switchToText() {},
-      switchToRsvp() {},
+      switchToPage() {},
+      switchToSpots() {},
       previousSentence() {},
       headingSelect() {},
       togglePlayback() {},
@@ -163,8 +163,8 @@ test("Chrome text reader allows selecting and copying a paragraph on a page that
       figureImage() {},
       toggleFigureBrightness() {},
       loadingAnimation() { return undefined; },
-      textScroll() {},
-      textPosition() {},
+      pageScroll() {},
+      pagePosition() {},
     });
   });
 
@@ -185,7 +185,7 @@ test("Chrome reader preserves a page-owned root id and does not duplicate its ho
   await loadChromeViewer(page);
   await page.evaluate(() => {
     const pageElement = document.createElement("div");
-    pageElement.id = "__rsvp-reader-root";
+    pageElement.id = "__reader-root";
     pageElement.textContent = "元ページの要素";
     document.body.prepend(pageElement);
   });
@@ -194,24 +194,24 @@ test("Chrome reader preserves a page-owned root id and does not duplicate its ho
   const reader = page.getByRole("dialog", { name: "reader" });
   await expect(reader).toBeVisible();
   await expect(page.locator('[data-reader-owned="true"]')).toHaveCount(1);
-  await expect(page.locator('[data-reader-owned="true"] [data-reader-unit]')).toHaveCount(1);
+  await expect(page.locator('[data-reader-owned="true"] [data-reader-spot]')).toHaveCount(1);
 
   await reader.getByRole("button", { name: "readerを閉じる" }).click();
   await expect(page.locator('[data-reader-owned="true"]')).toHaveCount(0);
-  await expect(page.locator("#__rsvp-reader-root")).toHaveText("元ページの要素");
+  await expect(page.locator("#__reader-root")).toHaveText("元ページの要素");
 
   await openChromeViewer(page, { paused: true });
   const reopenedReader = page.getByRole("dialog", { name: "reader" });
   await expect(reopenedReader).toBeVisible();
   await expect(page.locator('[data-reader-owned="true"]')).toHaveCount(1);
   await expect(page.locator('[data-reader-owned="true"] dialog')).toHaveCount(1);
-  await expect(page.locator('[data-reader-owned="true"] [data-reader-unit]')).toHaveCount(1);
+  await expect(page.locator('[data-reader-owned="true"] [data-reader-spot]')).toHaveCount(1);
 
-  await reopenedReader.getByRole("button", { name: "文章で読む" }).click();
-  await expect(reopenedReader.locator("[data-reader-text-shell]")).toBeVisible();
+  await reopenedReader.getByRole("button", { name: "Page、文章全体で読む" }).click();
+  await expect(reopenedReader.locator("[data-reader-page-shell]")).toBeVisible();
   await reopenedReader.getByRole("button", { name: "readerを閉じる" }).click();
   await expect(page.locator('[data-reader-owned="true"]')).toHaveCount(0);
-  await expect(page.locator("#__rsvp-reader-root")).toHaveText("元ページの要素");
+  await expect(page.locator("#__reader-root")).toHaveText("元ページの要素");
 });
 
 test("Safari reader isolates hostile page styles and preserves a page-owned host across reopen", async ({ page }) => {
@@ -272,8 +272,8 @@ test("Safari reader isolates hostile page styles and preserves a page-owned host
   expect(isolation.closeButtonHeight).toBeGreaterThanOrEqual(44);
   expect(isolation.pageOwnedHostText).toBe("ページ側の要素");
 
-  await reader.getByRole("button", { name: "文章で読む" }).click();
-  await expect(reader.locator(".text-view")).toBeVisible();
+  await reader.getByRole("button", { name: "Page、文章全体で読む" }).click();
+  await expect(reader.locator(".page-view")).toBeVisible();
   const imageStyle = await reader.locator("img").first().evaluate((element) => {
     const style = getComputedStyle(element);
     return { width: element.getBoundingClientRect().width, filter: style.filter };

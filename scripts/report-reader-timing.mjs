@@ -42,7 +42,7 @@ function activeSectionAt(entry, offset) {
 
 function timingForCorpus(entry) {
   const readerUnits = Engine.segmentText(entry.text, entry.locale);
-  const units = Engine.buildRsvpFrames(readerUnits, {
+  const spots = Engine.buildSpots(readerUnits, {
     locale: entry.locale,
     maxWidth: 12,
     measureText: (text) => graphemeCount(text, entry.locale),
@@ -65,39 +65,39 @@ function timingForCorpus(entry) {
   let clausePauseMs = 0;
   let sentencePauseMs = 0;
   let sectionPauseMs = 0;
-  const durations = units.map((unit, index) => {
-    const nextUnit = units[index + 1];
+  const durations = spots.map((spot, index) => {
+    const nextSpot = spots[index + 1];
     const sectionBreak = Boolean(
-      nextUnit
-      && activeSectionAt(entry, unit.start) !== activeSectionAt(entry, nextUnit.start),
+      nextSpot
+      && activeSectionAt(entry, spot.start) !== activeSectionAt(entry, nextSpot.start),
     );
     if (sectionBreak) sectionBreakCount += 1;
 
-    const rawBaseDuration = Engine.displayDuration(unit, undefined, false, unboundedProfile);
-    const boundedBaseDuration = Engine.displayDuration(unit, undefined, false, zeroPauseProfile);
+    const rawBaseDuration = Engine.displayDuration(spot, undefined, false, unboundedProfile);
+    const boundedBaseDuration = Engine.displayDuration(spot, undefined, false, zeroPauseProfile);
     if (rawBaseDuration < profile.minUnitMs) minClampedCount += 1;
     if (rawBaseDuration > profile.maxUnitMs) maxClampedCount += 1;
 
-    const baseWithoutPauses = Engine.displayDuration(unit, nextUnit, sectionBreak, zeroPauseProfile);
-    const fullDuration = Engine.displayDuration(unit, nextUnit, sectionBreak, profile);
-    const withClause = Engine.displayDuration(unit, { sentenceIndex: unit.sentenceIndex }, false, profile);
+    const baseWithoutPauses = Engine.displayDuration(spot, nextSpot, sectionBreak, zeroPauseProfile);
+    const fullDuration = Engine.displayDuration(spot, nextSpot, sectionBreak, profile);
+    const withClause = Engine.displayDuration(spot, { sentenceIndex: spot.sentenceIndex }, false, profile);
     const withoutClause = Engine.displayDuration(
-      unit,
-      { sentenceIndex: unit.sentenceIndex },
+      spot,
+      { sentenceIndex: spot.sentenceIndex },
       false,
       { ...profile, clausePauseMs: 0 },
     );
-    const withSentence = Engine.displayDuration(unit, nextUnit, false, profile);
+    const withSentence = Engine.displayDuration(spot, nextSpot, false, profile);
     const withoutSentence = Engine.displayDuration(
-      unit,
-      nextUnit,
+      spot,
+      nextSpot,
       false,
       { ...profile, sentencePauseMs: 0 },
     );
-    const withSection = Engine.displayDuration(unit, nextUnit, sectionBreak, profile);
+    const withSection = Engine.displayDuration(spot, nextSpot, sectionBreak, profile);
     const withoutSection = Engine.displayDuration(
-      unit,
-      nextUnit,
+      spot,
+      nextSpot,
       sectionBreak,
       { ...profile, sectionPauseMs: 0 },
     );
@@ -106,10 +106,10 @@ function timingForCorpus(entry) {
     sectionPauseMs += Math.max(0, withSection - withoutSection);
 
     if (fullDuration < baseWithoutPauses) {
-      throw new Error(`duration decreased for ${entry.id} at unit ${index}`);
+      throw new Error(`duration decreased for ${entry.id} at spot ${index}`);
     }
     if (boundedBaseDuration < 1) {
-      throw new Error(`non-positive duration for ${entry.id} at unit ${index}`);
+      throw new Error(`non-positive duration for ${entry.id} at spot ${index}`);
     }
     return fullDuration;
   });
@@ -122,14 +122,14 @@ function timingForCorpus(entry) {
     locale: entry.locale,
     graphemes,
     words,
-    units: units.length,
+    spots: spots.length,
     totalDurationMs,
     charactersPerMinute: minutes > 0 ? graphemes / minutes : 0,
     wordsPerMinute: words === null || minutes <= 0 ? null : words / minutes,
     durationP50Ms: percentile(durations, 0.5),
     durationP90Ms: percentile(durations, 0.9),
-    minClampRate: units.length > 0 ? minClampedCount / units.length : 0,
-    maxClampRate: units.length > 0 ? maxClampedCount / units.length : 0,
+    minClampRate: spots.length > 0 ? minClampedCount / spots.length : 0,
+    maxClampRate: spots.length > 0 ? maxClampedCount / spots.length : 0,
     pauseShare: {
       clause: totalDurationMs > 0 ? clausePauseMs / totalDurationMs : 0,
       sentence: totalDurationMs > 0 ? sentencePauseMs / totalDurationMs : 0,
@@ -148,7 +148,7 @@ const columns = [
   ["id", "id"],
   ["locale", "locale"],
   ["graphemes", "graphemes"],
-  ["units", "units"],
+  ["spots", "spots"],
   ["total(ms)", "totalDurationMs"],
   ["chars/min", "charactersPerMinute"],
   ["words/min", "wordsPerMinute"],

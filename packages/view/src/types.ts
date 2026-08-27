@@ -1,12 +1,12 @@
-import type { ReaderPosition, RsvpFrame, SentenceSpan } from "../../engine/src/types";
+import type { ReaderPosition, SentenceSpan, Spot } from "../../engine/src/types";
 import type { ReaderBlock, ReaderFigure, ReaderHeading } from "../../extractor/src/types";
 
 export type ReaderScreen =
   | LoadingScreen
   | ErrorScreen
-  | TextScreen
-  | RsvpUnitScreen
-  | RsvpFigureScreen;
+  | PageScreen
+  | SpotScreen
+  | SpotFigureScreen;
 
 export type LoadingScreen = {
   kind: "loading";
@@ -20,8 +20,8 @@ export type ErrorScreen = {
   message: string;
 };
 
-export type TextScreen = {
-  kind: "text";
+export type PageScreen = {
+  kind: "page";
   language: string;
   blocks: ReaderViewBlock[];
   figures: ReaderFigure[];
@@ -32,7 +32,7 @@ export type TextScreen = {
   title: string;
 };
 
-type RsvpScreen = {
+type SpotsScreen = {
   progress: number;
   loadingCover: boolean;
   controlsVisible: boolean;
@@ -42,16 +42,16 @@ type RsvpScreen = {
   reducedMotion: boolean;
 };
 
-export type RsvpUnitScreen = RsvpScreen & {
-  kind: "rsvp-unit";
+export type SpotScreen = SpotsScreen & {
+  kind: "spot";
   previous: string;
   next: string;
-  frame: RsvpFrame;
+  spot: Spot;
   playback: "paused" | "playing";
 };
 
-export type RsvpFigureScreen = RsvpScreen & {
-  kind: "rsvp-figure";
+export type SpotFigureScreen = SpotsScreen & {
+  kind: "spot-figure";
   figure: ReaderFigureView;
 };
 
@@ -89,17 +89,17 @@ export interface ReaderFigureHandlers {
   toggleFigureBrightness(figureIndex: number): void;
 }
 
-export interface ReaderTextHandlers {
-  textScroll(element: HTMLElement | null): void;
-  textPosition(element: HTMLElement): void;
+export interface ReaderPageHandlers {
+  pageScroll(element: HTMLElement | null): void;
+  pagePosition(element: HTMLElement): void;
 }
 
-export interface ReaderViewHandlers extends ReaderFigureHandlers, ReaderTextHandlers {
+export interface ReaderViewHandlers extends ReaderFigureHandlers, ReaderPageHandlers {
   close(): void;
   cancel(): void;
   retry(): void;
-  switchToText(): void;
-  switchToRsvp(): void;
+  switchToPage(): void;
+  switchToSpots(): void;
   previousSentence(): void;
   togglePlayback(): void;
   resumeFigure(): void;
@@ -111,7 +111,7 @@ export interface DesktopReaderViewHandlers extends ReaderViewHandlers {
 }
 
 export interface MobileReaderViewHandlers extends ReaderViewHandlers {
-  rsvpPointerUp(event: PointerEvent): void;
+  spotsPointerUp(event: PointerEvent): void;
   rewindFeedbackDone(id: number): void;
   rewindAnimation(
     elements: { firstRing: HTMLElement; secondRing: HTMLElement; icon: SVGElement },

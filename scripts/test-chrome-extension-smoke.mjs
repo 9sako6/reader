@@ -91,15 +91,15 @@ try {
   }, tabId);
   const reader = page.locator('[data-reader-owned="true"]');
   await reader.waitFor({ state: "attached", timeout: 30_000 });
-  const readerUnit = page.locator('[data-reader-unit="true"]');
+  const readerSpot = page.locator('[data-reader-spot="true"]');
   const readerError = page.locator('[data-reader-error="true"]');
-  await readerUnit.or(readerError).first().waitFor({ state: "attached", timeout: 30_000 });
+  await readerSpot.or(readerError).first().waitFor({ state: "attached", timeout: 30_000 });
   const readerErrorCount = await readerError.count();
   if (readerErrorCount > 0) {
     assert.fail(`reader preparation failed: ${await readerError.innerText()}\n${JSON.stringify({ pageConsole, workerConsole })}`);
   }
-  const modeButton = page.getByRole("button", { name: "文章で読む" });
-  const initialSourceStart = await readerUnit.getAttribute("data-source-start");
+  const modeButton = page.getByRole("button", { name: "Page、文章全体で読む" });
+  const initialSourceStart = await readerSpot.getAttribute("data-source-start");
   assert.notEqual(initialSourceStart, null);
   await modeButton.focus();
   await page.keyboard.press("Space");
@@ -108,12 +108,12 @@ try {
 
   await page.keyboard.press("Space");
   await expect(page.getByRole("button", { name: "一時停止" })).toBeVisible();
-  await expect(readerUnit).not.toHaveAttribute("data-source-start", initialSourceStart);
+  await expect(readerSpot).not.toHaveAttribute("data-source-start", initialSourceStart);
   await page.keyboard.press("Space");
   await expect(page.getByRole("button", { name: "再生" })).toBeVisible();
-  const advancedSourceStart = Number(await readerUnit.getAttribute("data-source-start"));
+  const advancedSourceStart = Number(await readerSpot.getAttribute("data-source-start"));
   await page.keyboard.press("ArrowLeft");
-  await expect.poll(async () => Number(await readerUnit.getAttribute("data-source-start"))).toBeLessThan(advancedSourceStart);
+  await expect.poll(async () => Number(await readerSpot.getAttribute("data-source-start"))).toBeLessThan(advancedSourceStart);
 
   const sessionDiagnostics = await worker.evaluate(async (activeTabId) => {
     const [result] = await chrome.scripting.executeScript({
@@ -122,7 +122,7 @@ try {
       func: () => ({
         initialized: typeof globalThis.ReaderSession?.create === "function",
         initializedMark: globalThis.performance.getEntriesByName("reader:session-init-end", "mark").length,
-        firstUnitMark: globalThis.performance.getEntriesByName("reader:first-unit", "mark").length,
+        firstSpotMark: globalThis.performance.getEntriesByName("reader:first-spot", "mark").length,
       }),
     });
     return result.result;
@@ -130,7 +130,7 @@ try {
   assert.deepEqual(sessionDiagnostics, {
     initialized: true,
     initializedMark: 1,
-    firstUnitMark: 1,
+    firstSpotMark: 1,
   });
 
   await page.getByRole("button", { name: "readerを閉じる" }).click();
@@ -139,7 +139,7 @@ try {
     await globalThis.startPreparation(activeTabId, { kind: "page" });
   }, tabId);
   await reader.waitFor({ state: "attached", timeout: 30_000 });
-  await readerUnit.waitFor({ state: "attached", timeout: 30_000 });
+  await readerSpot.waitFor({ state: "attached", timeout: 30_000 });
 } finally {
   if (context) await context.close();
   fixtureServer?.kill();

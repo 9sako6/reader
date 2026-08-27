@@ -9,18 +9,18 @@ const modulePath = "../../../../.build/packages/session/browser/session.js";
 function observable(phase = "idle", generation = 0, requestId = "") {
   return {
     phase,
-    mode: "rsvp",
+    mode: "spots",
     playback: "paused",
     flowIndex: 0,
     flowLength: phase === "reading" ? 1 : 0,
     generation,
     sourceOffset: 0,
-    currentKind: phase === "reading" ? "unit" : "none",
+    currentKind: phase === "reading" ? "spot" : "none",
     requestId,
     timerPending: false,
     contentPresent: phase === "reading",
     position: phase === "reading" ? { kind: "text", sourceOffset: 0 } : null,
-    unitIndex: phase === "reading" ? 0 : null,
+    spotIndex: phase === "reading" ? 0 : null,
     figureIndex: null,
     reason: null,
   };
@@ -78,15 +78,15 @@ test("browser facade queues commands, exposes valid phase states, and destroys i
       requestId: "A",
       flow: {
         textLength: 1_000_000,
-        units: [{ sentenceIndex: 0, kind: "body", start: 0, end: 1_000_000, durationMs: 10 }],
+        spots: [{ sentenceIndex: 0, kind: "body", start: 0, end: 1_000_000, durationMs: 10 }],
         figures: [],
-        flow: [{ kind: "unit", sourceOffset: 0, unitIndex: 0 }],
+        flow: [{ kind: "spot", sourceOffset: 0, spotIndex: 0 }],
       },
     });
     await handle.ready;
 
     assert.equal(handle.state.phase, "reading");
-    assert.equal(handle.state.currentKind, "unit");
+    assert.equal(handle.state.currentKind, "spot");
     assert.equal(JSON.stringify(handle.state).includes("contentPresent"), false);
     assert.ok(JSON.stringify(calls[1]).length > 128);
     assert.deepEqual(observed.map(({ phase }) => phase), ["preparing", "reading"]);

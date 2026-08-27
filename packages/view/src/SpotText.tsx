@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 
-type RsvpUnitProps = {
-  frame: RsvpFrame | null;
+type SpotTextProps = {
+  spot: Spot | null;
 };
 
-export function RsvpUnit({ frame }: RsvpUnitProps): ReactNode {
-  const kind = frame?.kind || "body";
-  const text = frame?.text || "";
+export function SpotText({ spot }: SpotTextProps): ReactNode {
+  const kind = spot?.kind || "body";
+  const text = spot?.text || "";
   if (kind === "code") return (
     <code
       data-reader-inline-code="true"
@@ -19,11 +19,11 @@ export function RsvpUnit({ frame }: RsvpUnitProps): ReactNode {
     <>
       {kind === "body" ? null : (
         <span
-          data-reader-unit-background="true"
+          data-reader-spot-background="true"
           aria-hidden="true"
         />
       )}
-      <span data-reader-unit-text="true">
+      <span data-reader-spot-text="true">
         {text}
       </span>
     </>

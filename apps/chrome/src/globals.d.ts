@@ -5,7 +5,7 @@ import type {
 } from "../../../packages/view/src/types";
 
 declare global {
-  var __rsvpReaderInstalled: boolean;
+  var __readerInstalled: boolean;
 
   type ReaderScreen = ReaderScreenContract;
   type ReaderViewLayout = ReaderViewLayoutContract;

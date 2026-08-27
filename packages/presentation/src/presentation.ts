@@ -4,7 +4,7 @@ import type {
   ReaderPosition,
   ReaderUnit,
   ReaderUnitKind,
-  RsvpFrame,
+  Spot,
 } from "../../engine/src/types";
 import type {
   PreparationFailure,
@@ -24,10 +24,10 @@ import type {
   ReaderViewBlock,
 } from "../../view/src/types";
 
-export const RSVP_FONT_SIZE_PX = 40;
-export const RSVP_FONT = `600 ${RSVP_FONT_SIZE_PX}px -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif`;
+export const SPOT_FONT_SIZE_PX = 40;
+export const SPOT_FONT = `600 ${SPOT_FONT_SIZE_PX}px -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif`;
 
-export interface RsvpFrameLayout {
+export interface SpotLayout {
   maxWidth: number;
   measureText(text: string, kind: ReaderUnitKind): number;
 }
@@ -38,8 +38,8 @@ export interface PreparedReaderDocument {
   title: string;
   blocks: ReaderViewBlock[];
   readerUnits: ReaderUnit[];
-  frames: RsvpFrame[];
-  frameContexts: Array<{ previous: string; next: string }>;
+  spots: Spot[];
+  spotContexts: Array<{ previous: string; next: string }>;
   figures: ReaderFigure[];
   flow: ReaderFlowItem[];
   headings: ReaderHeading[];
@@ -63,19 +63,19 @@ export interface ReaderPresentationUiState {
   figure: ReaderFigureRuntimeState;
 }
 
-export function createRsvpTextMeasurer(sourceDocument: Document): RsvpFrameLayout["measureText"] {
+export function createSpotTextMeasurer(sourceDocument: Document): SpotLayout["measureText"] {
   const canvas = sourceDocument.createElement("canvas");
   const context = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
-  if (context) context.font = RSVP_FONT;
-  return (text) => context?.measureText(text).width ?? estimateRsvpTextWidth(text);
+  if (context) context.font = SPOT_FONT;
+  return (text) => context?.measureText(text).width ?? estimateSpotTextWidth(text);
 }
 
-export function estimateRsvpTextWidth(text: string): number {
+export function estimateSpotTextWidth(text: string): number {
   let width = 0;
   for (const { segment } of new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(text)) {
-    if (/^\s+$/u.test(segment)) width += RSVP_FONT_SIZE_PX * 0.28;
-    else if (/^[\p{ASCII}]+$/u.test(segment)) width += RSVP_FONT_SIZE_PX * 0.58;
-    else width += RSVP_FONT_SIZE_PX;
+    if (/^\s+$/u.test(segment)) width += SPOT_FONT_SIZE_PX * 0.28;
+    else if (/^[\p{ASCII}]+$/u.test(segment)) width += SPOT_FONT_SIZE_PX * 0.58;
+    else width += SPOT_FONT_SIZE_PX;
   }
   return width;
 }
@@ -83,7 +83,7 @@ export function estimateRsvpTextWidth(text: string): number {
 export function prepareReaderDocument(
   content: ReaderContent,
   engine: ReaderEngine,
-  layout: RsvpFrameLayout,
+  layout: SpotLayout,
   fallbackTitle = "",
 ): PreparedReaderDocument {
   const { readingContext } = content;
@@ -118,8 +118,8 @@ export function prepareReaderDocument(
     title: readingContext.title || fallbackTitle,
     blocks,
     readerUnits,
-    frames: [],
-    frameContexts: [],
+    spots: [],
+    spotContexts: [],
     figures,
     flow: [],
     headings: Array.isArray(readingContext.headings) ? [...readingContext.headings] : [],
@@ -135,9 +135,9 @@ export function prepareReaderDocument(
 export function reflowReaderDocument(
   document: PreparedReaderDocument,
   engine: ReaderEngine,
-  layout: RsvpFrameLayout,
+  layout: SpotLayout,
 ): PreparedReaderDocument {
-  const frames = engine.buildRsvpFrames(document.readerUnits, {
+  const spots = engine.buildSpots(document.readerUnits, {
     locale: document.language,
     maxWidth: layout.maxWidth,
     measureText: layout.measureText,
@@ -147,21 +147,21 @@ export function reflowReaderDocument(
   });
   return {
     ...document,
-    frames,
-    frameContexts: frames.map((_frame, index) => engine.surroundingSentences(frames, index)),
-    flow: engine.buildReadingFlow(frames, document.figures),
+    spots,
+    spotContexts: spots.map((_spot, index) => engine.surroundingSentences(spots, index)),
+    flow: engine.buildReadingFlow(spots, document.figures),
   };
 }
 
 export function sessionPreparation(document: PreparedReaderDocument): ReaderSessionPreparation {
   return {
     textLength: document.text.length,
-    units: document.frames.map((frame) => ({
-      sentenceIndex: frame.sentenceIndex,
-      kind: frame.kind,
-      start: frame.start,
-      end: frame.end,
-      durationMs: frame.durationMs,
+    spots: document.spots.map((spot) => ({
+      sentenceIndex: spot.sentenceIndex,
+      kind: spot.kind,
+      start: spot.start,
+      end: spot.end,
+      durationMs: spot.durationMs,
     })),
     figures: document.figures.map((figure) => ({
       sourceOffset: figure.sourceOffset,
@@ -196,10 +196,10 @@ export function presentReader(
     position.sourceOffset,
     document.initialHeadingIndex,
   );
-  if (session.mode === "text") {
+  if (session.mode === "page") {
     const title = document.title.trim();
     return {
-      kind: "text",
+      kind: "page",
       language: document.language,
       blocks: document.blocks,
       figures: document.figures,
@@ -211,11 +211,11 @@ export function presentReader(
     };
   }
   const item = document.flow[session.flowIndex];
-  const frame = item?.kind === "unit" && session.unitIndex !== null
-    ? document.frames[session.unitIndex]
+  const spot = item?.kind === "spot" && session.spotIndex !== null
+    ? document.spots[session.spotIndex]
     : undefined;
   const progress = readingProgress(
-    progressSourceOffset(document, position, frame),
+    progressSourceOffset(document, position, spot),
     document.text.length,
   );
   const common = {
@@ -229,18 +229,18 @@ export function presentReader(
   };
   if (item?.kind === "figure") {
     return {
-      kind: "rsvp-figure",
+      kind: "spot-figure",
       figure: presentFigure(document, item.figureIndex, ui.figure),
       ...common,
     };
   }
-  if (!frame) throw new Error("reader_frame_unavailable");
-  const context = document.frameContexts[session.unitIndex ?? 0] ?? { previous: "", next: "" };
+  if (!spot) throw new Error("reader_spot_unavailable");
+  const context = document.spotContexts[session.spotIndex ?? 0] ?? { previous: "", next: "" };
   return {
-    kind: "rsvp-unit",
+    kind: "spot",
     previous: context.previous,
     next: context.next,
-    frame,
+    spot,
     playback: session.playback,
     ...common,
   };
@@ -298,14 +298,14 @@ function fallbackBlocks(text: string): ReaderViewBlock[] {
 function progressSourceOffset(
   document: PreparedReaderDocument,
   position: ReaderPosition,
-  frame: RsvpFrame | undefined,
+  spot: Spot | undefined,
 ): number {
   if (position.kind === "figure") return position.sourceOffset;
-  const currentFrame = frame || document.frames[0];
-  const finalTextFrame = currentFrame
-    && document.frames.at(-1) === currentFrame
-    && !document.figures.some((figure) => figure.sourceOffset >= currentFrame.end);
-  return finalTextFrame ? document.text.length : position.sourceOffset;
+  const currentSpot = spot || document.spots[0];
+  const finalTextSpot = currentSpot
+    && document.spots.at(-1) === currentSpot
+    && !document.figures.some((figure) => figure.sourceOffset >= currentSpot.end);
+  return finalTextSpot ? document.text.length : position.sourceOffset;
 }
 
 function presentFigure(

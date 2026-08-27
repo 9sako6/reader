@@ -18,7 +18,7 @@ function createSessionStub(commands, options: {
   let lastHandle = null;
   const initialState = () => ({
     phase: "idle",
-    mode: "rsvp",
+    mode: "spots",
     playback: "paused",
     flowIndex: 0,
     flowLength: 0,
@@ -37,19 +37,19 @@ function createSessionStub(commands, options: {
       ? { kind: "figure", sourceOffset: item.sourceOffset, figureIndex: item.figureIndex }
       : {
         kind: "text",
-        sourceOffset: flow.units[item.unitIndex]?.start ?? item.sourceOffset,
+        sourceOffset: flow.spots[item.spotIndex]?.start ?? item.sourceOffset,
       };
     return {
       ...state,
       phase: "reading",
-      mode: state.mode || "rsvp",
+      mode: state.mode || "spots",
       playback,
       flowIndex: index,
       flowLength: flow.flow.length,
       sourceOffset: position.sourceOffset,
       currentKind: item.kind,
       position,
-      unitIndex: item.kind === "unit" ? item.unitIndex : undefined,
+      spotIndex: item.kind === "spot" ? item.spotIndex : undefined,
       figureIndex: item.kind === "figure" ? item.figureIndex : undefined,
       timerPending: playback === "playing",
       contentPresent: true,
@@ -59,8 +59,8 @@ function createSessionStub(commands, options: {
     if (position.kind === "figure") {
       return flow.flow.findIndex((item) => item.kind === "figure" && item.figureIndex === position.figureIndex);
     }
-    const unitIndex = flow.units.findIndex((unit) => unit.start <= position.sourceOffset && position.sourceOffset < unit.end);
-    return flow.flow.findIndex((item) => item.kind === "unit" && item.unitIndex === Math.max(0, unitIndex));
+    const spotIndex = flow.spots.findIndex((unit) => unit.start <= position.sourceOffset && position.sourceOffset < unit.end);
+    return flow.flow.findIndex((item) => item.kind === "spot" && item.spotIndex === Math.max(0, spotIndex));
   };
   const api = {
     create(onStateChange = () => {}) {
@@ -95,7 +95,7 @@ function createSessionStub(commands, options: {
           const playback = previous.preparationHidden ? "paused" : "playing";
           state = stateForFlow({ ...previous, generation: previous.generation + 1, preparationHidden: false }, command.flow, 0, playback);
           effects = playback === "playing"
-            ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.units[command.flow.flow[0]?.unitIndex || 0]?.durationMs || 1 }]
+            ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.spots[command.flow.flow[0]?.spotIndex || 0]?.durationMs || 1 }]
             : [{ type: "cancelTimer" }];
         }
       } else if (command.type === "prepareFailed") {
@@ -111,9 +111,9 @@ function createSessionStub(commands, options: {
       } else if (command.type === "close") {
         state = { ...initialState(), phase: "ended", generation: previous.generation + 1 };
         effects = [{ type: "cancelTimer" }];
-      } else if (command.type === "play" && previous.phase === "reading" && previous.currentKind === "unit") {
+      } else if (command.type === "play" && previous.phase === "reading" && previous.currentKind === "spot") {
         state = { ...previous, playback: "playing", timerPending: true, generation: previous.generation + 1 };
-        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[previous.unitIndex]?.durationMs || 1 }];
+        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.spots[previous.spotIndex]?.durationMs || 1 }];
       } else if (command.type === "pause" && previous.phase === "reading") {
         state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
         effects = [{ type: "cancelTimer" }];
@@ -127,38 +127,38 @@ function createSessionStub(commands, options: {
           state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, nextItem.kind === "figure" ? "paused" : "playing");
           effects = nextItem.kind === "figure"
             ? [{ type: "cancelTimer" }]
-            : [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[nextItem.unitIndex]?.durationMs || 1 }];
+            : [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.spots[nextItem.spotIndex]?.durationMs || 1 }];
         }
       } else if (command.type === "previousSentence" && previous.phase === "reading") {
-        const target = handle.flow.flow.findIndex((item) => item.kind === "unit");
+        const target = handle.flow.flow.findIndex((item) => item.kind === "spot");
         const playback = previous.playback === "playing" ? "playing" : "paused";
         state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, Math.max(0, target), playback);
         effects = [{ type: "cancelTimer" }];
-        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
-      } else if ((command.type === "switchToText" || command.type === "switchToRsvp") && previous.phase === "reading") {
+        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.spots[state.spotIndex]?.durationMs || 1 });
+      } else if ((command.type === "switchToPage" || command.type === "switchToSpots") && previous.phase === "reading") {
         const index = flowIndexForPosition(handle.flow, command.position);
         const target = Math.max(0, index);
-        const playback = command.type === "switchToText"
+        const playback = command.type === "switchToPage"
           ? "paused"
           : handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
-        state = stateForFlow({ ...previous, mode: command.type === "switchToText" ? "text" : "rsvp", generation: previous.generation + 1 }, handle.flow, target, playback);
-        state = { ...state, mode: command.type === "switchToText" ? "text" : "rsvp", position: command.position, sourceOffset: command.position.sourceOffset };
+        state = stateForFlow({ ...previous, mode: command.type === "switchToPage" ? "page" : "spots", generation: previous.generation + 1 }, handle.flow, target, playback);
+        state = { ...state, mode: command.type === "switchToPage" ? "page" : "spots", position: command.position, sourceOffset: command.position.sourceOffset };
         effects = [{ type: "cancelTimer" }];
-        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
+        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.spots[state.spotIndex]?.durationMs || 1 });
       } else if (command.type === "resumeFromFigure" && previous.phase === "reading" && previous.currentKind === "figure") {
         const nextIndex = previous.flowIndex + 1;
         const nextItem = handle.flow.flow[nextIndex];
         const playback = nextItem?.kind === "figure" ? "paused" : "playing";
         state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, playback);
         effects = playback === "playing"
-          ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }]
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.spots[state.spotIndex]?.durationMs || 1 }]
           : [{ type: "cancelTimer" }];
-      } else if (command.type === "rebuildUnits" && previous.phase === "reading") {
-        handle.flow = { ...handle.flow, units: command.units };
+      } else if (command.type === "rebuildSpots" && previous.phase === "reading") {
+        handle.flow = { ...handle.flow, spots: command.spots };
         const playback = previous.playback;
         state = { ...previous, generation: previous.generation + 1 };
         effects = playback === "playing"
-          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.units[state.unitIndex]?.durationMs || 1 }]
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.spots[state.spotIndex]?.durationMs || 1 }]
           : [{ type: "cancelTimer" }];
       } else if (command.type === "visibilityHidden" && previous.phase === "preparing" && !previous.preparationHidden) {
         state = { ...previous, preparationHidden: true, generation: previous.generation + 1 };
@@ -758,7 +758,7 @@ test("Safari reader marks startup phases without including page content", async 
     "reader:extraction-end",
     "reader:segmentation-end",
     "reader:controls-ready",
-    "reader:first-unit",
+    "reader:first-spot",
     "reader:first-render",
     "reader:session-init-end",
     "reader:wasm-init-end",
@@ -782,7 +782,7 @@ test("Safari attaches visibility lifecycle only while a session is active", asyn
   assert.equal(harness.sessionCommands().length, commandCountAfterClose);
 });
 
-test("Safari uses heading transitions when scheduling the first unit", async () => {
+test("Safari uses heading transitions when scheduling the first Spot", async () => {
   const harness = createSafariReaderHarness();
   const text = "短い、次です。";
   harness.setActiveContent({
@@ -832,7 +832,7 @@ const safariLateTimerScenarios = [
   {
     name: "mode switch",
     operate(harness) {
-      findElement(harness.documentElement, (element) => element.textContent === "文章で読む")
+      findElement(harness.documentElement, (element) => element.textContent === "Page")
         .dispatchEvent({ type: "click" });
     },
   },
@@ -891,7 +891,7 @@ for (const scenario of safariLateTimerScenarios) {
   });
 }
 
-test("Safari reader reframes the current RSVP phrase without changing its source position", async () => {
+test("Safari reader reframes the current Spots phrase without changing its source position", async () => {
   const harness = createSafariReaderHarness();
   const text = "意味のまとまりです。次です。";
   harness.setActiveContent({
@@ -905,7 +905,7 @@ test("Safari reader reframes the current RSVP phrase without changing its source
   await harness.context.MobileViewer.open();
   const unit = findElement(
     harness.documentElement,
-    (element) => element.className.startsWith("rsvp-unit"),
+    (element) => element.attributes["data-reader-spot"] === "true",
   );
   assert.equal(unit.textContent, "意味のまとまり");
   assert.equal(unit.dataset.sourceStart, "0");
@@ -923,7 +923,7 @@ test("Safari reader acknowledges the tap at the page edge before 200ms", async (
   const harness = createSafariReaderHarness();
   const { context, createdElements } = harness;
   const readerStyle = createdElements.find((element) => element.tagName === "STYLE");
-  assert.match(readerStyle.textContent, /\.rsvp-unit \{[^}]*display: grid;[^}]*place-items: center;/u);
+  assert.match(readerStyle.textContent, /\.spot \{[^}]*display: grid;[^}]*place-items: center;/u);
   await context.MobileViewer.open();
 
   const launchFeedbackDuringExtraction = harness.launchFeedbackDuringExtraction();
@@ -965,8 +965,8 @@ test("Safari reader keeps a short inline code background close to the centered t
   const harness = createSafariReaderHarness();
   const readerStyle = harness.createdElements.find((element) => element.tagName === "STYLE");
 
-  assert.match(readerStyle.textContent, /\.rsvp-unit\.code \{[^}]*text-align: center;/u);
-  assert.match(readerStyle.textContent, /\.rsvp-unit\.code code \{[^}]*display: inline-block;[^}]*width: max-content;[^}]*max-width: 100%;[^}]*min-width: 0;/u);
+  assert.match(readerStyle.textContent, /\.spot\.code \{[^}]*text-align: center;/u);
+  assert.match(readerStyle.textContent, /\.spot\.code code \{[^}]*display: inline-block;[^}]*width: max-content;[^}]*max-width: 100%;[^}]*min-width: 0;/u);
 });
 
 test("Safari reader shows only the thin progress bar from 200ms", async () => {
@@ -995,11 +995,12 @@ test("Safari reader shows only the thin progress bar from 200ms", async () => {
   ), null);
 });
 
-test("Safari reader starts with RSVP controls visible and toggles them from the reading surface", async () => {
+test("Safari reader starts with Spots controls visible and toggles them from the reading surface", async () => {
   const { context, documentElement, timers } = createSafariReaderHarness();
   await context.MobileViewer.open();
 
-  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  const pageModeButton = findElement(documentElement, (element) => element.textContent === "Page");
+  const spotsModeButton = findElement(documentElement, (element) => element.textContent === "Spots");
   const backButton = findElement(
     documentElement,
     (element) => element.attributes["aria-label"] === "1文戻る",
@@ -1008,9 +1009,17 @@ test("Safari reader starts with RSVP controls visible and toggles them from the 
     documentElement,
     (element) => element.attributes["aria-label"] === "一時停止",
   );
-  const rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
-  assert.equal(modeButton.parent.className, "controlbar");
-  assert.equal(modeButton.hidden, false);
+  const spotsView = findElement(documentElement, (element) => element.className === "spots-view");
+  const modeSelector = spotsModeButton.parent;
+  const modeButtons = findElements(
+    modeSelector,
+    (element) => element.attributes["data-reader-mode-button"] === "true",
+  );
+  assert.equal(modeSelector.parent.className, "controlbar");
+  assert.deepEqual(modeButtons.map((button) => button.textContent), ["Spots", "Page"]);
+  assert.deepEqual(modeButtons.map((button) => button.attributes["aria-pressed"]), ["true", "false"]);
+  assert.equal(spotsModeButton.hidden, false);
+  assert.equal(pageModeButton.hidden, false);
   assert.equal(backButton.parent.hidden, false);
   assert.equal(initialPlayButton.parent.hidden, false);
   assert.equal(initialPlayButton.attributes["aria-pressed"], "true");
@@ -1020,9 +1029,9 @@ test("Safari reader starts with RSVP controls visible and toggles them from the 
   assert.equal(nextContext.animations[0].keyframes[1].opacity, 0.26);
   assert.equal(nextContext.animations[0].options.duration, 120);
 
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1000 });
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1000 });
   assert.equal(findElement(documentElement, (element) => element.className === "control-dock").hidden, true);
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1400 });
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 1400 });
   assert.equal(findElement(documentElement, (element) => element.className === "control-dock").hidden, false);
   const playButton = findElement(
     documentElement,
@@ -1034,10 +1043,10 @@ test("Safari reader starts with RSVP controls visible and toggles them from the 
   assert.equal(playButton.attributes["aria-pressed"], "false");
   assert.equal(findElement(documentElement, (element) => element.className === "control-dock").hidden, false);
 
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
   fireTimerWithDelay(timers, 260);
   assert.equal(findElement(documentElement, (element) => element.className === "control-dock").hidden, true);
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 2400 });
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 2400 });
   assert.equal(findElement(documentElement, (element) => element.className === "control-dock").hidden, false);
 });
 
@@ -1079,36 +1088,44 @@ test("Safari reader applies queued mode changes after session initialization", a
 
   await harness.context.MobileViewer.open();
   const { documentElement } = harness;
-  assert.equal(findElement(documentElement, (element) => element.textContent === "文章で読む"), null);
+  assert.equal(findElement(documentElement, (element) => element.textContent === "Page"), null);
   resolveInit();
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
 
-  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  const modeButton = findElement(documentElement, (element) => element.textContent === "Page");
   assert.ok(modeButton);
   modeButton.dispatchEvent({ type: "click" });
-  const resolvedModeButton = findElement(documentElement, (element) => element.className === "mode-button");
-  assert.equal(resolvedModeButton.textContent, "RSVPで読む");
-  assert.ok(findElement(documentElement, (element) => element.className === "text-view"));
+  const resolvedModeSelector = findElement(
+    documentElement,
+    (element) => element.attributes["data-reader-mode-selector"] === "true",
+  );
+  const resolvedModeButtons = findElements(
+    resolvedModeSelector,
+    (element) => element.attributes["data-reader-mode-button"] === "true",
+  );
+  assert.deepEqual(resolvedModeButtons.map((button) => button.textContent), ["Spots", "Page"]);
+  assert.deepEqual(resolvedModeButtons.map((button) => button.attributes["aria-pressed"]), ["false", "true"]);
+  assert.ok(findElement(documentElement, (element) => element.className === "page-view"));
   assert.deepEqual(harness.sessionCommands().map(({ type }) => type), [
     "open",
     "prepareSucceeded",
-    "switchToText",
+    "switchToPage",
   ]);
 });
 
-test("Safari reader starts playback when switching from text mode to RSVP", async () => {
+test("Safari reader starts playback when switching from Page mode to Spots", async () => {
   const { context, documentElement, timers } = createSafariReaderHarness();
   await context.MobileViewer.open();
 
   findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止")
     .dispatchEvent({ type: "click" });
-  findElement(documentElement, (element) => element.textContent === "文章で読む")
+  findElement(documentElement, (element) => element.textContent === "Page")
     .dispatchEvent({ type: "click" });
-  const rsvpModeButton = findElement(documentElement, (element) => element.textContent === "RSVPで読む");
-  assert.ok(rsvpModeButton);
-  rsvpModeButton.dispatchEvent({ type: "click" });
+  const spotsModeButton = findElement(documentElement, (element) => element.textContent === "Spots");
+  assert.ok(spotsModeButton);
+  spotsModeButton.dispatchEvent({ type: "click" });
 
   assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.equal(timers.size, 1);
@@ -1182,7 +1199,7 @@ test("Safari reader exposes modal semantics, traps keyboard actions, and restore
   await context.MobileViewer.open();
 
   const reader = findElement(documentElement, (element) => element.className === "reader");
-  const unit = findElement(documentElement, (element) => element.attributes["data-reader-unit"] === "true");
+  const unit = findElement(documentElement, (element) => element.attributes["data-reader-spot"] === "true");
   const closeButton = findElement(documentElement, (element) => element.attributes["aria-label"] === "readerを閉じる");
   const playButton = findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止");
 
@@ -1225,7 +1242,7 @@ test("Safari reader exposes modal semantics, traps keyboard actions, and restore
 test("Safari reader shows rewind feedback without changing pause state", async () => {
   const { context, documentElement, timers } = createSafariReaderHarness();
   await context.MobileViewer.open();
-  const rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
+  const spotsView = findElement(documentElement, (element) => element.className === "spots-view");
   const backButton = findElement(
     documentElement,
     (element) => element.attributes["aria-label"] === "1文戻る",
@@ -1236,8 +1253,8 @@ test("Safari reader shows rewind feedback without changing pause state", async (
   );
   playButton.dispatchEvent({ type: "click" });
 
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
   const pausedFeedback = findElement(
     documentElement,
     (element) => element.className === "rewind-feedback",
@@ -1261,12 +1278,12 @@ test("Safari reader shows rewind feedback without changing pause state", async (
   playButton.dispatchEvent({ type: "click" });
   assert.equal(playButton.attributes["aria-label"], "一時停止");
   assert.equal(backButton.parent.hidden, false);
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 2600 });
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 2600 });
   assert.equal(backButton.parent.hidden, true);
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 2800 });
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 300, clientY: 240, timeStamp: 2800 });
   assert.equal(backButton.parent.hidden, false);
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 3000 });
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 3180 });
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 3000 });
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 3180 });
   assert.equal(backButton.parent.hidden, false);
   assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "一時停止"));
   assert.equal(timers.size, 1);
@@ -1290,30 +1307,33 @@ test("Safari React rewind feedback keeps a newer animation after a stale complet
     context = harness.context;
     const { documentElement, timers } = harness;
     await context.MobileViewer.open();
-    let rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
-    rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
-    rsvpView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
+    let spotsView = findElement(documentElement, (element) => element.className === "spots-view");
+    spotsView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+    spotsView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
     const firstFeedback = findElement(documentElement, (element) => element.className === "rewind-feedback");
     assert.ok(firstFeedback);
     assert.equal(finishers.length, 3);
 
-    rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
-    rsvpView.dispatchEvent({ type: "pointerup", clientX: 62, clientY: 250, timeStamp: 3000 });
-    rsvpView.dispatchEvent({ type: "pointerup", clientX: 64, clientY: 252, timeStamp: 3200 });
+    spotsView = findElement(documentElement, (element) => element.className === "spots-view");
+    spotsView.dispatchEvent({ type: "pointerup", clientX: 62, clientY: 250, timeStamp: 3000 });
+    spotsView.dispatchEvent({ type: "pointerup", clientX: 64, clientY: 252, timeStamp: 3200 });
     const secondFeedback = findElement(documentElement, (element) => element.className === "rewind-feedback");
     assert.ok(secondFeedback);
-    assert.notEqual(secondFeedback, firstFeedback);
+    assert.equal(secondFeedback.style.left, "64px");
+    assert.equal(secondFeedback.style.top, "252px");
     assert.equal(finishers.length, 6);
 
     finishers.slice(0, 3).forEach((finish) => finish());
     await Promise.resolve();
     await Promise.resolve();
-    assert.equal(findElement(documentElement, (element) => element.className === "rewind-feedback"), secondFeedback);
+    const feedbackAfterStaleCompletion = findElement(documentElement, (element) => element.className === "rewind-feedback");
+    assert.equal(feedbackAfterStaleCompletion.style.left, "64px");
+    assert.equal(feedbackAfterStaleCompletion.style.top, "252px");
 
     finishers.slice(3).forEach((finish) => finish());
     await new Promise<void>((resolve) => setImmediate(resolve));
     fireTimerWithDelay(timers, 0);
-    assert.equal(findElement(documentElement, (element) => element.className === "rewind-feedback"), null);
+    assert.equal(Boolean(findElement(documentElement, (element) => element.className === "rewind-feedback")), false);
   } finally {
     context?.MobileViewer.close();
     FakeElement.prototype.animate = originalAnimate;
@@ -1338,16 +1358,16 @@ test("Safari React rewind feedback ignores an unfinished animation after close",
     context = harness.context;
     const { documentElement } = harness;
     await context.MobileViewer.open();
-    const rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
-    rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
-    rsvpView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
+    const spotsView = findElement(documentElement, (element) => element.className === "spots-view");
+    spotsView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+    spotsView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
     assert.equal(finishers.length, 3);
     context.MobileViewer.close();
-    assert.equal(findElement(documentElement, (element) => element.className === "rewind-feedback"), null);
+    assert.equal(Boolean(findElement(documentElement, (element) => element.className === "rewind-feedback")), false);
     finishers.forEach((finish) => finish());
     await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
-    assert.equal(findElement(documentElement, (element) => element.className === "rewind-feedback"), null);
+    assert.equal(Boolean(findElement(documentElement, (element) => element.className === "reader")), false);
+    assert.equal(Boolean(findElement(documentElement, (element) => element.className === "rewind-feedback")), false);
   } finally {
     context?.MobileViewer.close();
     FakeElement.prototype.animate = originalAnimate;
@@ -1359,9 +1379,9 @@ test("Safari React rewind feedback keeps the reduced-motion animation contract",
   const { context, documentElement, timers } = harness;
   try {
     await context.MobileViewer.open();
-    const rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
-    rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
-    rsvpView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
+    const spotsView = findElement(documentElement, (element) => element.className === "spots-view");
+    spotsView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+    spotsView.dispatchEvent({ type: "pointerup", clientX: 54, clientY: 242, timeStamp: 2200 });
     const feedback = findElement(documentElement, (element) => element.className === "rewind-feedback");
     const firstRingAnimation = feedback.children[0].animations[0];
     const secondRingAnimation = feedback.children[1].animations[0];
@@ -1374,7 +1394,7 @@ test("Safari React rewind feedback keeps the reduced-motion animation contract",
     assert.equal(iconAnimation.keyframes.at(-1).transform, undefined);
     await new Promise<void>((resolve) => setImmediate(resolve));
     fireTimerWithDelay(timers, 0);
-    assert.equal(findElement(documentElement, (element) => element.className === "rewind-feedback"), null);
+    assert.equal(Boolean(findElement(documentElement, (element) => element.className === "rewind-feedback")), false);
   } finally {
     context.MobileViewer.close();
   }
@@ -1426,10 +1446,11 @@ test("Safari figure surface is keyboard accessible and keeps a failed image reco
   const { context, documentElement, timers } = createSafariReaderHarness();
   await context.MobileViewer.open();
   let figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
-  while (!figurePanel) {
+  for (let attempt = 0; !figurePanel && attempt < 20; attempt += 1) {
     fireNextTimer(timers);
     figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
   }
+  assert.ok(figurePanel);
 
   const surface = findElement(figurePanel, (element) => element.attributes["data-reader-image-surface"] === "true");
   const veil = findElement(figurePanel, (element) => element.attributes["data-reader-image-veil"] === "true");
@@ -1449,7 +1470,7 @@ test("Safari figure surface is keyboard accessible and keeps a failed image reco
   const resume = findElement(documentElement, (element) => element.attributes["aria-label"] === "続きを読む");
   assert.ok(resume);
   resume.dispatchEvent({ type: "click" });
-  assert.match(findElement(documentElement, (element) => element.className.startsWith("rsvp-unit")).textContent, /画像の後/u);
+  assert.match(findElement(documentElement, (element) => element.attributes["data-reader-spot"] === "true").textContent, /画像の後/u);
 });
 
 test("Safari ignores a stale figure completion after switching modes", async () => {
@@ -1458,14 +1479,15 @@ test("Safari ignores a stale figure completion after switching modes", async () 
   try {
     await context.MobileViewer.open();
     let oldPanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
-    while (!oldPanel) {
+    for (let attempt = 0; !oldPanel && attempt < 20; attempt += 1) {
       fireNextTimer(timers);
       oldPanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
     }
+    assert.ok(oldPanel);
     const oldImage = findElement(oldPanel, (element) => element.tagName === "IMG");
-    const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+    const modeButton = findElement(documentElement, (element) => element.textContent === "Page");
     modeButton.dispatchEvent({ type: "click" });
-    findElement(documentElement, (element) => element.textContent === "RSVPで読む").dispatchEvent({ type: "click" });
+    findElement(documentElement, (element) => element.textContent === "Spots").dispatchEvent({ type: "click" });
     const currentPanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
     const currentStatus = findElement(currentPanel, (element) => element.attributes["data-reader-figure-status"] === "true");
     oldImage.dispatchEvent({ type: "load" });
@@ -1477,10 +1499,11 @@ test("Safari ignores a stale figure completion after switching modes", async () 
   }
 });
 
-test("Safari reader maps text viewport positions back to RSVP content", async () => {
+test("Safari reader maps Page viewport positions back to Spots content", async () => {
   const { context, documentElement, timers, createdElements } = createSafariReaderHarness();
   await context.MobileViewer.open();
-  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  const pageModeButton = findElement(documentElement, (element) => element.textContent === "Page");
+  const spotsModeButton = findElement(documentElement, (element) => element.textContent === "Spots");
   fireNextTimer(timers);
   fireNextTimer(timers);
   fireNextTimer(timers);
@@ -1491,31 +1514,31 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
     (element) => element.attributes["aria-label"] === "本文画像",
   ));
 
-  modeButton.dispatchEvent({ type: "click" });
-  const scroller = findElement(documentElement, (element) => element.className === "text-view");
+  pageModeButton.dispatchEvent({ type: "click" });
+  const scroller = findElement(documentElement, (element) => element.className === "page-view");
   const anchors = findElements(
     scroller,
     (element) => element.attributes["data-reader-text-anchor"] === "true",
   );
-  assert.equal(modeButton.textContent, "RSVPで読む");
-  assert.equal(modeButton.hidden, false);
+  assert.equal(pageModeButton.attributes["aria-pressed"], "true");
+  assert.equal(spotsModeButton.attributes["aria-pressed"], "false");
   assert.equal(anchors.length, 3);
   scroller.rect = { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
   anchors[0].rect = { top: -120, bottom: -20, left: 20, right: 370, width: 350, height: 100 };
   anchors[1].rect = { top: 520, bottom: 620, left: 20, right: 370, width: 350, height: 100 };
   anchors[2].rect = { top: 640, bottom: 740, left: 20, right: 370, width: 350, height: 100 };
-  const textFigure = findElement(scroller, (element) => element.className === "article-figure");
-  assert.ok(textFigure);
-  textFigure.rect = { top: -24, bottom: 276, left: 20, right: 370, width: 350, height: 300 };
-  const imageCountBeforeRsvp = createdElements.filter((element) => element.tagName === "IMG" && element.src === "https://example.com/figure.png").length;
+  const pageFigure = findElement(scroller, (element) => element.className === "article-figure");
+  assert.ok(pageFigure);
+  pageFigure.rect = { top: -24, bottom: 276, left: 20, right: 370, width: 350, height: 300 };
+  const imageCountBeforeSpots = createdElements.filter((element) => element.tagName === "IMG" && element.src === "https://example.com/figure.png").length;
   scroller.dispatchEvent({ type: "pointerdown" });
-  modeButton.dispatchEvent({ type: "click" });
+  spotsModeButton.dispatchEvent({ type: "click" });
   assert.ok(findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像"));
   assert.equal(
     createdElements.filter((element) => element.tagName === "IMG" && element.src === "https://example.com/figure.png").length,
-    imageCountBeforeRsvp + 1,
+    imageCountBeforeSpots + 1,
   );
-  assert.equal(findElements(documentElement, (element) => element.className === "rsvp-figure").length, 1);
+  assert.equal(findElements(documentElement, (element) => element.className === "spot-figure").length, 1);
 
   const imagePlayButton = findElement(
     documentElement,
@@ -1523,11 +1546,11 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   );
   assert.ok(imagePlayButton);
   imagePlayButton.dispatchEvent({ type: "click" });
-  const unitAfterImage = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
-  assert.match(unitAfterImage.textContent, /画像の後/u);
+  const spotAfterImage = findElement(documentElement, (element) => element.attributes["data-reader-spot"] === "true");
+  assert.match(spotAfterImage.textContent, /画像の後/u);
 
-  modeButton.dispatchEvent({ type: "click" });
-  const roundTripScroller = findElement(documentElement, (element) => element.className === "text-view");
+  pageModeButton.dispatchEvent({ type: "click" });
+  const roundTripScroller = findElement(documentElement, (element) => element.className === "page-view");
   const roundTripAnchors = findElements(
     roundTripScroller,
     (element) => element.attributes["data-reader-text-anchor"] === "true",
@@ -1538,12 +1561,12 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   roundTripAnchors[2].rect = { top: 520, bottom: 620, left: 20, right: 370, width: 350, height: 100 };
   const roundTripFigure = findElement(roundTripScroller, (element) => element.className === "article-figure");
   roundTripFigure.rect = { top: 520, bottom: 820, left: 20, right: 370, width: 350, height: 300 };
-  modeButton.dispatchEvent({ type: "click" });
-  const unitAfterRoundTrip = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
-  assert.match(unitAfterRoundTrip.textContent, /画像の後/u);
+  spotsModeButton.dispatchEvent({ type: "click" });
+  const spotAfterRoundTrip = findElement(documentElement, (element) => element.attributes["data-reader-spot"] === "true");
+  assert.match(spotAfterRoundTrip.textContent, /画像の後/u);
 
-  modeButton.dispatchEvent({ type: "click" });
-  const resumedScroller = findElement(documentElement, (element) => element.className === "text-view");
+  pageModeButton.dispatchEvent({ type: "click" });
+  const resumedScroller = findElement(documentElement, (element) => element.className === "page-view");
   const resumedAnchors = findElements(
     resumedScroller,
     (element) => element.attributes["data-reader-text-anchor"] === "true",
@@ -1555,14 +1578,14 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   const resumedFigure = findElement(resumedScroller, (element) => element.className === "article-figure");
   resumedFigure.rect = { top: 520, bottom: 820, left: 20, right: 370, width: 350, height: 300 };
   resumedScroller.dispatchEvent({ type: "pointerdown" });
-  modeButton.dispatchEvent({ type: "click" });
-  const resumedUnit = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
-  assert.match(resumedUnit.textContent, /画像の後/u);
-  assert.equal(modeButton.textContent, "文章で読む");
-  assert.equal(modeButton.hidden, false);
+  spotsModeButton.dispatchEvent({ type: "click" });
+  const resumedSpot = findElement(documentElement, (element) => element.attributes["data-reader-spot"] === "true");
+  assert.match(resumedSpot.textContent, /画像の後/u);
+  assert.equal(pageModeButton.attributes["aria-pressed"], "false");
+  assert.equal(spotsModeButton.attributes["aria-pressed"], "true");
 
-  modeButton.dispatchEvent({ type: "click" });
-  const laterScroller = findElement(documentElement, (element) => element.className === "text-view");
+  pageModeButton.dispatchEvent({ type: "click" });
+  const laterScroller = findElement(documentElement, (element) => element.className === "page-view");
   const laterAnchors = findElements(
     laterScroller,
     (element) => element.attributes["data-reader-text-anchor"] === "true",
@@ -1574,12 +1597,12 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   laterAnchors[2].rect = { top: -24, bottom: 76, left: 20, right: 370, width: 350, height: 100 };
   const laterFigure = findElement(laterScroller, (element) => element.className === "article-figure");
   laterFigure.rect = { top: -500, bottom: -200, left: 20, right: 370, width: 350, height: 300 };
-  modeButton.dispatchEvent({ type: "click" });
-  const laterUnit = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
-  assert.match(laterUnit.textContent, /さらに後/u);
+  spotsModeButton.dispatchEvent({ type: "click" });
+  const laterSpot = findElement(documentElement, (element) => element.attributes["data-reader-spot"] === "true");
+  assert.match(laterSpot.textContent, /さらに後/u);
 
-  modeButton.dispatchEvent({ type: "click" });
-  const completeSentenceScroller = findElement(documentElement, (element) => element.className === "text-view");
+  pageModeButton.dispatchEvent({ type: "click" });
+  const completeSentenceScroller = findElement(documentElement, (element) => element.className === "page-view");
   const completeSentenceAnchors = findElements(
     completeSentenceScroller,
     (element) => element.attributes["data-reader-text-anchor"] === "true",
@@ -1590,18 +1613,19 @@ test("Safari reader maps text viewport positions back to RSVP content", async ()
   completeSentenceAnchors[2].rect = { top: 112, bottom: 212, left: 20, right: 370, width: 350, height: 100 };
   const completeSentenceFigure = findElement(completeSentenceScroller, (element) => element.className === "article-figure");
   completeSentenceFigure.rect = { top: 640, bottom: 940, left: 20, right: 370, width: 350, height: 300 };
-  modeButton.dispatchEvent({ type: "click" });
-  const firstCompleteUnit = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
-  assert.match(firstCompleteUnit.textContent, /さらに後/u);
+  spotsModeButton.dispatchEvent({ type: "click" });
+  const firstCompleteSpot = findElement(documentElement, (element) => element.attributes["data-reader-spot"] === "true");
+  assert.match(firstCompleteSpot.textContent, /さらに後/u);
 });
 
-test("Safari reader uses shared text and figure position markers", async () => {
+test("Safari reader uses shared Page and figure position markers", async () => {
   const { context, documentElement } = createSafariReaderHarness();
   await context.MobileViewer.open();
-  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
-  modeButton.dispatchEvent({ type: "click" });
+  const pageModeButton = findElement(documentElement, (element) => element.textContent === "Page");
+  const spotsModeButton = findElement(documentElement, (element) => element.textContent === "Spots");
+  pageModeButton.dispatchEvent({ type: "click" });
 
-  const scroller = findElement(documentElement, (element) => element.className === "text-view");
+  const scroller = findElement(documentElement, (element) => element.className === "page-view");
   const anchors = findElements(scroller, (element) => element.attributes["data-reader-text-anchor"] === "true");
   const figureMarker = findElement(scroller, (element) => element.dataset.readerPositionKind === "figure");
   assert.equal(anchors.length, 3);
@@ -1616,7 +1640,7 @@ test("Safari reader uses shared text and figure position markers", async () => {
   anchors[2].rect = { top: 280, bottom: 380, left: 20, right: 370, width: 350, height: 100 };
   scroller.scrollTop = 120;
   scroller.dispatchEvent({ type: "scroll" });
-  modeButton.dispatchEvent({ type: "click" });
+  spotsModeButton.dispatchEvent({ type: "click" });
 
   const figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
   assert.ok(figurePanel);
@@ -1624,7 +1648,7 @@ test("Safari reader uses shared text and figure position markers", async () => {
   assert.equal(figurePanel.dataset.sourceStart, "27");
 });
 
-test("Safari reader preserves the text marker when an earlier responsive text image changes layout", async () => {
+test("Safari reader preserves the text marker when an earlier responsive Page image changes layout", async () => {
   const { context, documentElement, timers } = createSafariReaderHarness();
   await context.MobileViewer.open();
   let figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
@@ -1635,19 +1659,19 @@ test("Safari reader preserves the text marker when an earlier responsive text im
   const figureImage = findElement(figurePanel, (element) => element.tagName === "IMG");
   figureImage.dispatchEvent({ type: "error" });
   findElement(documentElement, (element) => element.attributes["aria-label"] === "続きを読む").dispatchEvent({ type: "click" });
-  findElement(documentElement, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
+  findElement(documentElement, (element) => element.textContent === "Page").dispatchEvent({ type: "click" });
 
-  const scroller = findElement(documentElement, (element) => element.className === "text-view");
+  const scroller = findElement(documentElement, (element) => element.className === "page-view");
   const afterImageMarker = findElement(
     scroller,
     (element) => element.dataset.readerPositionKind === "text"
       && Number(element.dataset.sourceStart) > 27,
   );
-  const textFigure = findElement(scroller, (element) => element.className === "article-figure");
-  const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
-  assert.ok(scroller && afterImageMarker && textImage);
-  assert.equal(textImage.srcset, "https://example.com/figure@1x.png 1x, https://example.com/figure@2x.png 2x");
-  assert.equal(textImage.sizes, "100vw");
+  const pageFigure = findElement(scroller, (element) => element.className === "article-figure");
+  const pageImage = findElement(pageFigure, (element) => element.tagName === "IMG");
+  assert.ok(scroller && afterImageMarker && pageImage);
+  assert.equal(pageImage.srcset, "https://example.com/figure@1x.png 1x, https://example.com/figure@2x.png 2x");
+  assert.equal(pageImage.sizes, "100vw");
   const initialScrollTop = scroller.scrollTop;
   let adjustedScrollTop = initialScrollTop;
   Object.defineProperty(scroller, "scrollTop", {
@@ -1667,32 +1691,33 @@ test("Safari reader preserves the text marker when an earlier responsive text im
     },
   });
   afterImageMarker.rect = { top: 100, bottom: 200, left: 0, right: 390, width: 390, height: 100 };
-  textImage.dispatchEvent({ type: "load" });
+  pageImage.dispatchEvent({ type: "load" });
 
   assert.equal(afterImageMarker.getBoundingClientRect().top, 0);
   assert.equal(scroller.scrollTop, initialScrollTop + 100);
 });
 
-test("Safari reader leaves scroll position unchanged for a text image below the marker", async () => {
+test("Safari reader leaves scroll position unchanged for a Page image below the marker", async () => {
   const { context, documentElement } = createSafariReaderHarness();
   await context.MobileViewer.open();
-  findElement(documentElement, (element) => element.textContent === "文章で読む").dispatchEvent({ type: "click" });
-  const scroller = findElement(documentElement, (element) => element.className === "text-view");
-  const textFigure = findElement(scroller, (element) => element.className === "article-figure");
-  const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
-  assert.ok(scroller && textImage);
+  findElement(documentElement, (element) => element.textContent === "Page").dispatchEvent({ type: "click" });
+  const scroller = findElement(documentElement, (element) => element.className === "page-view");
+  const pageFigure = findElement(scroller, (element) => element.className === "article-figure");
+  const pageImage = findElement(pageFigure, (element) => element.tagName === "IMG");
+  assert.ok(scroller && pageImage);
   const initialScrollTop = scroller.scrollTop;
-  textImage.dispatchEvent({ type: "load" });
+  pageImage.dispatchEvent({ type: "load" });
   assert.equal(scroller.scrollTop, initialScrollTop);
 });
 
 test("Safari reader ignores a clipped figure even when its center is readable", async () => {
   const { context, documentElement } = createSafariReaderHarness();
   await context.MobileViewer.open();
-  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
-  modeButton.dispatchEvent({ type: "click" });
+  const pageModeButton = findElement(documentElement, (element) => element.textContent === "Page");
+  const spotsModeButton = findElement(documentElement, (element) => element.textContent === "Spots");
+  pageModeButton.dispatchEvent({ type: "click" });
 
-  const scroller = findElement(documentElement, (element) => element.className === "text-view");
+  const scroller = findElement(documentElement, (element) => element.className === "page-view");
   const anchors = findElements(scroller, (element) => element.attributes["data-reader-text-anchor"] === "true");
   const figureMarker = findElement(scroller, (element) => element.className === "article-figure");
   scroller.rect = { top: 0, bottom: 500, left: 20, right: 370, width: 350, height: 500 };
@@ -1702,11 +1727,11 @@ test("Safari reader ignores a clipped figure even when its center is readable", 
   anchors[2].rect = { top: 540, bottom: 640, left: 20, right: 370, width: 350, height: 100 };
   scroller.scrollTop = 120;
   scroller.dispatchEvent({ type: "scroll" });
-  modeButton.dispatchEvent({ type: "click" });
+  spotsModeButton.dispatchEvent({ type: "click" });
 
   const figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
-  const unit = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
-  assert.equal(figurePanel, null);
+  const unit = findElement(documentElement, (element) => element.attributes["data-reader-spot"] === "true");
+  assert.equal(Boolean(figurePanel), false);
   assert.equal(unit.dataset.readerPositionKind, "text");
   assert.equal(unit.dataset.sourceStart, "30");
 });
@@ -1737,11 +1762,11 @@ test("Safari reader reopens the same page without extracting the article again",
   });
   await context.MobileViewer.open();
   assert.equal(harness.extractionCount(), 1);
-  const reopenedUnit = findElement(
+  const reopenedSpot = findElement(
     documentElement,
-    (element) => element.className.startsWith("rsvp-unit"),
+    (element) => element.attributes["data-reader-spot"] === "true",
   );
-  assert.match(reopenedUnit.textContent, /画像より前/u);
+  assert.match(reopenedSpot.textContent, /画像より前/u);
 });
 
 test("Safari reader extracts a fresh article after the page URL changes", async () => {
@@ -1768,7 +1793,7 @@ test("Safari reader extracts a fresh article after the page URL changes", async 
   assert.equal(harness.extractionCount(), 2);
   assert.match(findElement(
     documentElement,
-    (element) => element.className.startsWith("rsvp-unit"),
+    (element) => element.attributes["data-reader-spot"] === "true",
   ).textContent, /別の記事/u);
 });
 
@@ -1794,7 +1819,7 @@ test("Safari reader ignores a saved playback timer after close and reopen", asyn
 
   context.MobileViewer.close();
   await context.MobileViewer.open();
-  const unit = findElement(documentElement, (element) => element.className.startsWith("rsvp-unit"));
+  const unit = findElement(documentElement, (element) => element.attributes["data-reader-spot"] === "true");
   const progress = findElement(documentElement, (element) => element.className === "progress");
   const unitText = unit.textContent;
   const progressText = progress.textContent;
@@ -1807,11 +1832,11 @@ test("Safari reader ignores a saved playback timer after close and reopen", asyn
   assert.equal(timers.size, 0);
 });
 
-test("Safari reader ignores a saved text restore frame after close", async () => {
+test("Safari reader ignores a saved Page restore spot after close", async () => {
   const harness = createSafariReaderHarness();
   const { context, documentElement, animationFrames } = harness;
   await context.MobileViewer.open();
-  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  const modeButton = findElement(documentElement, (element) => element.textContent === "Page");
   modeButton.dispatchEvent({ type: "click" });
   const savedRestoreFrame = animationFrames.at(-1);
 
@@ -1853,25 +1878,25 @@ test("Safari reader pauses without destroying its session in the background", as
   assert.ok(findElement(documentElement, (element) => element.className === "reader"));
 });
 
-test("Safari reader preserves paused text mode while dismissed", async () => {
+test("Safari reader preserves paused Page mode while dismissed", async () => {
   const harness = createSafariReaderHarness();
   const { context, documentElement, timers } = harness;
   await context.MobileViewer.open();
-  const modeButton = findElement(documentElement, (element) => element.textContent === "文章で読む");
+  const modeButton = findElement(documentElement, (element) => element.textContent === "Page");
   modeButton.dispatchEvent({ type: "click" });
 
-  assert.ok(findElement(documentElement, (element) => element.className === "text-view"));
+  assert.ok(findElement(documentElement, (element) => element.className === "page-view"));
   assert.equal(timers.size, 0);
   context.MobileViewer.close();
 
   assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
   assert.equal(findElement(documentElement, (element) => element.className === "entry").hidden, false);
   await context.MobileViewer.open();
-  assert.ok(findElement(documentElement, (element) => element.className === "text-view"));
+  assert.ok(findElement(documentElement, (element) => element.className === "page-view"));
   assert.equal(timers.size, 0);
 });
 
-test("Safari keeps one timer and ends paused after a 30-minute-equivalent RSVP flow", async () => {
+test("Safari keeps one timer and ends paused after a 30-minute-equivalent Spots flow", async () => {
   const longText = Array.from(
     { length: 1_550 },
     () => "これは三十分相当の長文を検証する文です。",
@@ -1914,7 +1939,7 @@ test("Safari keeps one timer and ends paused after a 30-minute-equivalent RSVP f
   assert.equal(finalState.playback, "paused");
   assert.equal(finalState.timerPending, false);
   assert.equal(finalState.flowIndex, finalState.flowLength - 1);
-  assert.equal(finalState.currentKind, "unit");
+  assert.equal(finalState.currentKind, "spot");
   assert.equal(finalState.position.kind, "text");
   assert.equal(finalState.sourceOffset, finalState.position.sourceOffset);
   assert.ok(finalState.sourceOffset > 0 && finalState.sourceOffset < longText.length);
@@ -1930,11 +1955,11 @@ test("Safari reader destroys figure state when closed", async () => {
   fireNextTimer(timers);
   fireNextTimer(timers);
 
-  assert.ok(findElement(documentElement, (element) => element.className === "rsvp-figure"));
+  assert.ok(findElement(documentElement, (element) => element.className === "spot-figure"));
   context.MobileViewer.close();
 
   assert.equal(findElement(documentElement, (element) => element.className === "reader"), null);
-  assert.equal(findElement(documentElement, (element) => element.className === "rsvp-figure"), null);
+  assert.equal(findElement(documentElement, (element) => element.className === "spot-figure"), null);
   assert.equal(timers.size, 0);
 });
 
@@ -1942,8 +1967,8 @@ test("Safari reader destroys pending double tap state when closed", async () => 
   const harness = createSafariReaderHarness();
   const { context, documentElement, timers } = harness;
   await context.MobileViewer.open();
-  const rsvpView = findElement(documentElement, (element) => element.className === "rsvp-view");
-  rsvpView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
+  const spotsView = findElement(documentElement, (element) => element.className === "spots-view");
+  spotsView.dispatchEvent({ type: "pointerup", clientX: 52, clientY: 240, timeStamp: 2000 });
 
   assert.equal(timers.size, 2);
   context.MobileViewer.close();

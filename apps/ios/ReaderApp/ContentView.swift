@@ -8,9 +8,6 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 28) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Image(systemName: "text.viewfinder")
-                        .font(.system(size: 44, weight: .semibold))
-                        .foregroundStyle(.cyan)
                     Text("reader")
                         .font(.largeTitle.bold())
                     Text("Safariで開いている文章を、その場で読みやすい表示へ切り替えます。")

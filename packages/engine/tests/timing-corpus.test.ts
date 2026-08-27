@@ -7,14 +7,14 @@ function graphemeCount(text: string, locale: string): number {
   return [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(text)].length;
 }
 
-function rsvpFrames(entry: {
+function spots(entry: {
   locale: string;
   text: string;
   initialHeadingIndex: number;
   sectionTransitions: Array<{ offset: number; headingIndex: number }>;
 }, timingProfile = Engine.DEFAULT_TIMING_PROFILE) {
   const units = Engine.segmentText(entry.text, entry.locale);
-  return Engine.buildRsvpFrames(units, {
+  return Engine.buildSpots(units, {
     locale: entry.locale,
     maxWidth: 12,
     measureText: (text: string) => graphemeCount(text, entry.locale),
@@ -23,8 +23,8 @@ function rsvpFrames(entry: {
   });
 }
 
-function durationSequence(entry: Parameters<typeof rsvpFrames>[0]): number[] {
-  return rsvpFrames(entry).map(({ durationMs }: { durationMs: number }) => durationMs);
+function durationSequence(entry: Parameters<typeof spots>[0]): number[] {
+  return spots(entry).map(({ durationMs }: { durationMs: number }) => durationMs);
 }
 
 test("timing corpus stays repository-owned, categorized, and bounded", () => {
@@ -53,17 +53,17 @@ test("Japanese general baseline stays near the calibrated reading speed", () => 
   assert.ok(speed >= 925 && speed <= 950, `expected 925–950 graphemes/min, received ${speed}`);
 });
 
-test("final frame timing adds section pauses at the owned transition boundaries", () => {
+test("final spot timing adds section pauses at the owned transition boundaries", () => {
   const entry = timingCorpus.find(({ id }) => id === "ja-technical");
   assert.ok(entry);
   assert.equal(entry.sectionTransitions.length, 4);
-  const withPauses = rsvpFrames(entry);
-  const withoutPauses = rsvpFrames(entry, {
+  const withPauses = spots(entry);
+  const withoutPauses = spots(entry, {
     ...Engine.DEFAULT_TIMING_PROFILE,
     sectionPauseMs: 0,
   });
-  const deltas = withPauses.map((frame: { durationMs: number }, index: number) => (
-    frame.durationMs - withoutPauses[index].durationMs
+  const deltas = withPauses.map((spot: { durationMs: number }, index: number) => (
+    spot.durationMs - withoutPauses[index].durationMs
   ));
   assert.equal(deltas.filter((delta: number) => delta > 0).length, entry.sectionTransitions.length);
   assert.ok(deltas.every((delta: number) => delta === 0 || delta === Engine.DEFAULT_TIMING_PROFILE.sectionPauseMs));

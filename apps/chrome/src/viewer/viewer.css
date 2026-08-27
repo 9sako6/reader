@@ -41,11 +41,11 @@ dialog.reader-dialog {
 
 dialog.reader-dialog::backdrop { background: transparent; }
 nav::-webkit-scrollbar { display: none; }
-[data-reader-text-scroller] { overscroll-behavior: contain; }
+[data-reader-page-scroller] { overscroll-behavior: contain; }
 nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-offset: -2px; }
-[data-reader-icon-button]:hover,
+[data-reader-icon-button][data-reader-icon-name="previous"]:hover,
 [data-reader-topbar] button:hover,
-[data-reader-mode-button]:hover { background-color: rgba(9,9,9,0.90) !important; color: rgba(255,255,255,0.94) !important; }
+[data-reader-mode-button]:not([aria-pressed="true"]):hover { background-color: rgba(255,255,255,0.10) !important; color: rgba(255,255,255,0.94) !important; }
 [data-reader-icon-button]:active,
 [data-reader-topbar] button:active,
 [data-reader-mode-button]:active { transform: scale(0.96); }
@@ -63,8 +63,8 @@ nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-of
 }
 @media (max-width: 720px) {
   [data-reader-stage] { width: 100% !important; height: 100% !important; }
-  [data-reader-text-shell] { width: 100% !important; height: 100% !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
-  [data-reader-text-scroller] { padding: 64px 20px 96px !important; }
+  [data-reader-page-shell] { width: 100% !important; height: 100% !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
+  [data-reader-page-scroller] { padding: 64px 20px 96px !important; }
 }
 @media (prefers-contrast: more) {
   :host {
@@ -80,11 +80,16 @@ nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-of
     border: 1px solid var(--reader-contrast-text) !important;
   }
 
-  [data-reader-stage] [data-reader-mode-button],
-  [data-reader-stage] [data-reader-mode-button]:hover,
-  [data-reader-stage] [data-reader-mode-button]:active {
+  [data-reader-stage] [data-reader-mode-button][aria-pressed="true"],
+  [data-reader-stage] [data-reader-mode-button][aria-pressed="true"]:hover,
+  [data-reader-stage] [data-reader-mode-button][aria-pressed="true"]:active {
     background: var(--reader-contrast-text) !important;
     color: var(--reader-contrast-background) !important;
+  }
+
+  [data-reader-stage] [data-reader-mode-button][aria-pressed="false"] {
+    background: var(--reader-contrast-background) !important;
+    color: var(--reader-contrast-text) !important;
   }
 
   [data-reader-stage] [aria-label="1文戻る"],
@@ -105,7 +110,7 @@ nav button:focus-visible { outline: 1px solid rgba(255,255,255,0.72); outline-of
   [data-reader-stage] [data-reader-context-previous],
   [data-reader-stage] [data-reader-context-next],
   [data-reader-progress],
-  [data-reader-text-shell] .article {
+  [data-reader-page-shell] .article {
     color: var(--reader-contrast-text) !important;
     opacity: 1 !important;
   }

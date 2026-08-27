@@ -238,15 +238,15 @@ class FakeElement {
   }
 }
 
-function installTextFigureGeometry() {
+function installPageFigureGeometry() {
   const original = FakeElement.prototype.getBoundingClientRect;
   FakeElement.prototype.getBoundingClientRect = function () {
-    if (this.attributes["data-reader-text-scroller"] === "true") {
+    if (this.attributes["data-reader-page-scroller"] === "true") {
       return { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
     }
-    if (this.attributes["data-reader-text-figure"] === "true") {
+    if (this.attributes["data-reader-page-figure"] === "true") {
       let scroller = this.parent;
-      while (scroller && scroller.attributes["data-reader-text-scroller"] !== "true") scroller = scroller.parent;
+      while (scroller && scroller.attributes["data-reader-page-scroller"] !== "true") scroller = scroller.parent;
       const scrollTop = scroller?.scrollTop || 0;
       return { top: 420 - scrollTop, bottom: 540 - scrollTop, left: 0, right: 300, width: 300, height: 120 };
     }
@@ -305,8 +305,8 @@ function findElements(root, predicate) {
   return matches;
 }
 
-function isRsvpDisplay(element) {
-  return element.attributes["data-reader-unit"] === "true";
+function isSpotsDisplay(element) {
+  return element.attributes["data-reader-spot"] === "true";
 }
 
 function loadReaderView(context, document) {
@@ -384,7 +384,7 @@ function createSessionStub(commands, options: {
   const handles = new Set();
   const initialState = () => ({
     phase: "idle",
-    mode: "rsvp",
+    mode: "spots",
     playback: "paused",
     flowIndex: 0,
     flowLength: 0,
@@ -401,7 +401,7 @@ function createSessionStub(commands, options: {
     if (!item) return { ...state, flowIndex: index, currentKind: "none", playback, timerPending: false };
     const position = item.kind === "figure"
       ? { kind: "figure", sourceOffset: item.sourceOffset, figureIndex: item.figureIndex }
-      : { kind: "text", sourceOffset: flow.units[item.unitIndex]?.start ?? item.sourceOffset };
+      : { kind: "text", sourceOffset: flow.spots[item.spotIndex]?.start ?? item.sourceOffset };
     return {
       ...state,
       phase: "reading",
@@ -411,7 +411,7 @@ function createSessionStub(commands, options: {
       sourceOffset: position.sourceOffset,
       currentKind: item.kind,
       position,
-      unitIndex: item.kind === "unit" ? item.unitIndex : undefined,
+      spotIndex: item.kind === "spot" ? item.spotIndex : undefined,
       figureIndex: item.kind === "figure" ? item.figureIndex : undefined,
       timerPending: playback === "playing",
       contentPresent: true,
@@ -419,8 +419,8 @@ function createSessionStub(commands, options: {
   };
   const flowIndexForPosition = (flow, position) => {
     if (position.kind === "figure") return flow.flow.findIndex((item) => item.kind === "figure" && item.figureIndex === position.figureIndex);
-    const unitIndex = flow.units.findIndex((unit) => unit.start <= position.sourceOffset && position.sourceOffset < unit.end);
-    return flow.flow.findIndex((item) => item.kind === "unit" && item.unitIndex === Math.max(0, unitIndex));
+    const spotIndex = flow.spots.findIndex((unit) => unit.start <= position.sourceOffset && position.sourceOffset < unit.end);
+    return flow.flow.findIndex((item) => item.kind === "spot" && item.spotIndex === Math.max(0, spotIndex));
   };
   const api = {
     create(onStateChange = () => {}) {
@@ -445,7 +445,7 @@ function createSessionStub(commands, options: {
         const playback = previous.preparationHidden ? "paused" : "playing";
         state = stateForFlow({ ...previous, generation: previous.generation + 1, preparationHidden: false }, command.flow, 0, playback);
         effects = playback === "playing"
-          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.units[command.flow.flow[0]?.unitIndex || 0]?.durationMs || 1 }]
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.flow.spots[command.flow.flow[0]?.spotIndex || 0]?.durationMs || 1 }]
           : [{ type: "cancelTimer" }];
       } else if (command.type === "prepareFailed" && previous.phase === "preparing" && previous.requestId === command.requestId) {
         state = { ...previous, phase: "error", reason: command.reason, generation: previous.generation + 1 };
@@ -456,9 +456,9 @@ function createSessionStub(commands, options: {
       } else if (command.type === "close") {
         state = { ...initialState(), phase: "ended", generation: previous.generation + 1 };
         effects = [{ type: "cancelTimer" }];
-      } else if (command.type === "play" && previous.phase === "reading" && previous.currentKind === "unit") {
+      } else if (command.type === "play" && previous.phase === "reading" && previous.currentKind === "spot") {
         state = { ...previous, playback: "playing", timerPending: true, generation: previous.generation + 1 };
-        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[previous.unitIndex]?.durationMs || 1 }];
+        effects = [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.spots[previous.spotIndex]?.durationMs || 1 }];
       } else if (command.type === "pause" && previous.phase === "reading") {
         state = { ...previous, playback: "paused", timerPending: false, generation: previous.generation + 1 };
         effects = [{ type: "cancelTimer" }];
@@ -472,38 +472,38 @@ function createSessionStub(commands, options: {
           state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, nextItem.kind === "figure" ? "paused" : "playing");
           effects = nextItem.kind === "figure"
             ? [{ type: "cancelTimer" }]
-            : [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[nextItem.unitIndex]?.durationMs || 1 }];
+            : [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.spots[nextItem.spotIndex]?.durationMs || 1 }];
         }
       } else if (command.type === "previousSentence" && previous.phase === "reading") {
-        const target = handle.flow.flow.findIndex((item) => item.kind === "unit");
+        const target = handle.flow.flow.findIndex((item) => item.kind === "spot");
         const playback = previous.playback === "playing" ? "playing" : "paused";
         state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, Math.max(0, target), playback);
         effects = [{ type: "cancelTimer" }];
-        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
-      } else if ((command.type === "switchToText" || command.type === "switchToRsvp") && previous.phase === "reading") {
+        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.spots[state.spotIndex]?.durationMs || 1 });
+      } else if ((command.type === "switchToPage" || command.type === "switchToSpots") && previous.phase === "reading") {
         const index = flowIndexForPosition(handle.flow, command.position);
         const target = Math.max(0, index);
-        const playback = command.type === "switchToText"
+        const playback = command.type === "switchToPage"
           ? "paused"
           : handle.flow.flow[target]?.kind === "figure" ? "paused" : "playing";
         state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, target, playback);
-        state = { ...state, mode: command.type === "switchToText" ? "text" : "rsvp", position: command.position, sourceOffset: command.position.sourceOffset };
+        state = { ...state, mode: command.type === "switchToPage" ? "page" : "spots", position: command.position, sourceOffset: command.position.sourceOffset };
         effects = [{ type: "cancelTimer" }];
-        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 });
+        if (playback === "playing") effects.push({ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.spots[state.spotIndex]?.durationMs || 1 });
       } else if (command.type === "resumeFromFigure" && previous.phase === "reading" && previous.currentKind === "figure") {
         const nextIndex = previous.flowIndex + 1;
         const nextItem = handle.flow.flow[nextIndex];
         const playback = nextItem?.kind === "figure" ? "paused" : "playing";
         state = stateForFlow({ ...previous, generation: previous.generation + 1 }, handle.flow, nextIndex, playback);
         effects = playback === "playing"
-          ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.units[state.unitIndex]?.durationMs || 1 }]
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: handle.flow.spots[state.spotIndex]?.durationMs || 1 }]
           : [{ type: "cancelTimer" }];
-      } else if (command.type === "rebuildUnits" && previous.phase === "reading") {
-        handle.flow = { ...handle.flow, units: command.units };
+      } else if (command.type === "rebuildSpots" && previous.phase === "reading") {
+        handle.flow = { ...handle.flow, spots: command.spots };
         const playback = previous.playback;
         state = { ...previous, generation: previous.generation + 1 };
         effects = playback === "playing"
-          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.units[state.unitIndex]?.durationMs || 1 }]
+          ? [{ type: "scheduleTick", generation: state.generation, delayMs: command.spots[state.spotIndex]?.durationMs || 1 }]
           : [{ type: "cancelTimer" }];
       } else if (command.type === "visibilityHidden" && previous.phase === "preparing" && !previous.preparationHidden) {
         state = { ...previous, preparationHidden: true, generation: previous.generation + 1 };
@@ -829,12 +829,12 @@ test("Chrome viewer leaves rendering to ReaderView", () => {
     "createMinimap",
     "createButton",
     "createTextBlock",
-    "createTextFigure",
+    "createPageFigure",
     "createVeiledImageSurface",
     "createFigureStatus",
     "scheduleFigureLoadingIndicator",
-    "renderCurrentUnit",
-    "applyUnitStyle",
+    "renderCurrentSpot",
+    "applySpotStyle",
     "updateMinimap",
     "fadeContext",
     "renderCurrentFlowItem",
@@ -842,7 +842,7 @@ test("Chrome viewer leaves rendering to ReaderView", () => {
     "loadingLayer",
     "progressLabel",
     "playbackState",
-    "currentUnitIndex",
+    "currentSpotIndex",
     "nextFigureIndex",
   ]) {
     assert.equal(source.includes(symbol), false, `obsolete Chrome renderer symbol: ${symbol}`);
@@ -853,14 +853,14 @@ test("reader replaces loading only for the matching request", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "request-1" });
-  assert.equal(document.getElementById("__rsvp-reader-root"), null);
-  messageListener({ type: "START_RSVP", text: "最初の節です。次の節です。", requestId: "stale-request" });
-  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "request-1" });
+  assert.equal(document.getElementById("__reader-root"), null);
+  messageListener({ type: "START_READER", text: "最初の節です。次の節です。", requestId: "stale-request" });
+  assert.equal(document.getElementById("__reader-root"), null);
   revealLoading(timers);
-  const loadingOverlay = document.getElementById("__rsvp-reader-root");
+  const loadingOverlay = document.getElementById("__reader-root");
   assert.ok(findElement(loadingOverlay, (element) => element.attributes["data-reader-loading-bar"] === "true"));
-  messageListener({ type: "START_RSVP", text: "最初の節です。次の節です。", requestId: "request-1" });
+  messageListener({ type: "START_READER", text: "最初の節です。次の節です。", requestId: "request-1" });
   assert.ok(findElement(loadingOverlay, (element) => element.attributes["data-reader-stage"] === "true"));
 });
 
@@ -868,10 +868,10 @@ test("reader omits loading and cover transition when preparation finishes at 0ms
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "zero-ms-request" });
-  messageListener({ type: "START_RSVP", text: "0msの本文です。", requestId: "zero-ms-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "zero-ms-request" });
+  messageListener({ type: "START_READER", text: "0msの本文です。", requestId: "zero-ms-request" });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
   assert.equal(stage.animations.length, 0);
   assert.equal(findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true"), null);
@@ -881,11 +881,11 @@ test("reader omits loading and cover transition when preparation finishes at 199
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "one-hundred-ninety-nine-ms-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "one-hundred-ninety-nine-ms-request" });
   harness.advanceTime(199);
-  messageListener({ type: "START_RSVP", text: "199msの本文です。", requestId: "one-hundred-ninety-nine-ms-request" });
+  messageListener({ type: "START_READER", text: "199msの本文です。", requestId: "one-hundred-ninety-nine-ms-request" });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
   assert.equal(stage.animations.length, 0);
   assert.equal(findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true"), null);
@@ -895,14 +895,14 @@ test("reader removes the revealed bar before showing content when preparation fi
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "two-hundred-ms-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "two-hundred-ms-request" });
   harness.advanceTime(200);
   revealLoading(timers);
-  const loadingOverlay = document.getElementById("__rsvp-reader-root");
+  const loadingOverlay = document.getElementById("__reader-root");
   assert.ok(findElement(loadingOverlay, (element) => element.attributes["data-reader-loading-bar"] === "true"));
-  messageListener({ type: "START_RSVP", text: "200msの本文です。", requestId: "two-hundred-ms-request" });
+  messageListener({ type: "START_READER", text: "200msの本文です。", requestId: "two-hundred-ms-request" });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const bar = findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true");
   const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
   assert.equal(bar, null);
@@ -913,11 +913,11 @@ test("reader removes the bar before showing content when preparation finishes at
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "twelve-hundred-ms-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "twelve-hundred-ms-request" });
   harness.advanceTime(1200);
-  messageListener({ type: "START_RSVP", text: "1200msの本文です。", requestId: "twelve-hundred-ms-request" });
+  messageListener({ type: "START_READER", text: "1200msの本文です。", requestId: "twelve-hundred-ms-request" });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   assert.equal(findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true"), null);
   const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
   assert.equal(stage.animations.at(-1).options.duration, 220);
@@ -927,9 +927,9 @@ test("reader keeps the 200ms loading state to an indeterminate bar", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "bar-only-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "bar-only-request" });
   revealLoading(timers);
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
 
   assert.ok(findElement(overlay, (element) => element.attributes["data-reader-loading-bar"] === "true"));
   assert.equal(findElement(overlay, (element) => element.attributes["data-reader-loading-label"] === "true"), null);
@@ -940,14 +940,14 @@ test("reader adds slow preparation status and a cancel action at 400ms", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "slow-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "slow-request" });
   revealLoading(timers);
   const slowTimer = [...timers.entries()].find(([, timer]) => timer.delay === 400);
   assert.ok(slowTimer);
   timers.delete(slowTimer[0]);
   slowTimer[1].callback();
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   assert.equal(
     findElement(overlay, (element) => element.attributes["data-reader-loading-label"] === "true").textContent,
     "文章を準備しています",
@@ -959,18 +959,18 @@ test("reader cancel closes loading and sends the request id to the service worke
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers, runtimeMessages, sessionCommands } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "cancel-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "cancel-request" });
   revealLoading(timers);
   const slowTimer = [...timers.entries()].find(([, timer]) => timer.delay === 400);
   timers.delete(slowTimer[0]);
   slowTimer[1].callback();
-  findElementByText(document.getElementById("__rsvp-reader-root"), "中止").dispatchEvent({ type: "click" });
+  findElementByText(document.getElementById("__reader-root"), "中止").dispatchEvent({ type: "click" });
 
   assert.equal(runtimeMessages.length, 1);
-  assert.equal(runtimeMessages[0].type, "CANCEL_RSVP");
+  assert.equal(runtimeMessages[0].type, "CANCEL_READER");
   assert.equal(runtimeMessages[0].requestId, "cancel-request");
   assert.deepEqual(sessionCommands.map(({ type }) => type), ["open", "cancel", "close"]);
-  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(document.getElementById("__reader-root"), null);
 });
 
 test("reader locks the source page during loading and restores overflow after cancel", () => {
@@ -980,7 +980,7 @@ test("reader locks the source page during loading and restores overflow after ca
   body.style.overflow = "auto";
   harness.setScrollPosition(16, 480);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "loading-scroll-lock" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "loading-scroll-lock" });
 
   assert.equal(documentElement.style.overflow, "hidden");
   assert.equal(body.style.overflow, "hidden");
@@ -991,7 +991,7 @@ test("reader locks the source page during loading and restores overflow after ca
   assert.ok(slowTimer);
   timers.delete(slowTimer[0]);
   slowTimer[1].callback();
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "中止")
+  findElement(document.getElementById("__reader-root"), (element) => element.textContent === "中止")
     .dispatchEvent({ type: "click" });
 
   assert.equal(documentElement.style.overflow, "scroll");
@@ -1006,14 +1006,14 @@ test("reader locks the source page while ready and restores inline overflow and 
   body.style.overflow = "auto";
   harness.setScrollPosition(24, 640);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ready-scroll-lock" });
-  messageListener({ type: "START_RSVP", text: "表示中も元ページを固定します。", requestId: "ready-scroll-lock" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "ready-scroll-lock" });
+  messageListener({ type: "START_READER", text: "表示中も元ページを固定します。", requestId: "ready-scroll-lock" });
 
   assert.equal(documentElement.style.overflow, "hidden");
   assert.equal(body.style.overflow, "hidden");
   assert.deepEqual(harness.scrollPosition(), { left: 24, top: 640 });
 
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
     .dispatchEvent({ type: "click" });
 
   assert.equal(documentElement.style.overflow, "scroll");
@@ -1026,13 +1026,13 @@ test("reader locks the source page on an error and restores empty inline overflo
   const { document, documentElement, body, messageListener } = harness;
   harness.setScrollPosition(0, 320);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "error-scroll-lock" });
-  messageListener({ type: "RSVP_ERROR", requestId: "error-scroll-lock", reason: "unsupported_page" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "error-scroll-lock" });
+  messageListener({ type: "READER_ERROR", requestId: "error-scroll-lock", reason: "unsupported_page" });
 
   assert.equal(documentElement.style.overflow, "hidden");
   assert.equal(body.style.overflow, "hidden");
 
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.textContent === "元に戻る")
+  findElement(document.getElementById("__reader-root"), (element) => element.textContent === "元に戻る")
     .dispatchEvent({ type: "click" });
 
   assert.equal(documentElement.style.overflow, undefined);
@@ -1047,16 +1047,16 @@ test("reader preserves one source lock when a ready request is replaced and then
   body.style.overflow = "clip";
   harness.setScrollPosition(32, 720);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "first-scroll-lock" });
-  messageListener({ type: "START_RSVP", text: "最初の表示です。", requestId: "first-scroll-lock" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "first-scroll-lock" });
+  messageListener({ type: "START_READER", text: "最初の表示です。", requestId: "first-scroll-lock" });
   assert.equal(documentElement.style.overflow, "hidden");
   assert.equal(body.style.overflow, "hidden");
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "second-scroll-lock" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "second-scroll-lock" });
   assert.equal(documentElement.style.overflow, "hidden");
   assert.equal(body.style.overflow, "hidden");
-  messageListener({ type: "START_RSVP", text: "次の表示です。", requestId: "second-scroll-lock" });
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+  messageListener({ type: "START_READER", text: "次の表示です。", requestId: "second-scroll-lock" });
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
     .dispatchEvent({ type: "click" });
 
   assert.equal(documentElement.style.overflow, "overlay");
@@ -1071,11 +1071,11 @@ test("reader restores the source lock when close cleanup throws", () => {
   body.style.overflow = "auto";
   harness.setScrollPosition(40, 560);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "exception-scroll-lock" });
-  messageListener({ type: "START_RSVP", text: "終了処理で例外が起きます。", requestId: "exception-scroll-lock" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "exception-scroll-lock" });
+  messageListener({ type: "START_READER", text: "終了処理で例外が起きます。", requestId: "exception-scroll-lock" });
 
   assert.throws(
-    () => messageListener({ type: "SHOW_RSVP_LOADING", requestId: "exception-replacement" }),
+    () => messageListener({ type: "SHOW_READER_LOADING", requestId: "exception-replacement" }),
     /reader_view_unmount_failed/,
   );
   assert.equal(documentElement.style.overflow, "scroll");
@@ -1089,9 +1089,9 @@ test("reader attaches visibility lifecycle only while a session is active", () =
 
   assert.equal(harness.listenerCount("visibilitychange"), 0);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "lifecycle-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "lifecycle-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の本文です。次の文です。",
     requestId: "lifecycle-request",
   });
@@ -1115,9 +1115,9 @@ test("reader attaches visibility lifecycle only while a session is active", () =
 
 test("reader stays paused at the same position after visibility returns", () => {
   const harness = createOutlineReaderHarness();
-  harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "visibility-round-trip" });
+  harness.messageListener({ type: "SHOW_READER_LOADING", requestId: "visibility-round-trip" });
   harness.messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "可視性が変わっても現在位置を維持します。次の文です。",
     requestId: "visibility-round-trip",
   });
@@ -1146,8 +1146,8 @@ const chromeLateTimerScenarios = [
     name: "pause",
     createHarness: () => createOutlineReaderHarness(),
     start(harness) {
-      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-pause" });
-      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-pause" });
+      harness.messageListener({ type: "SHOW_READER_LOADING", requestId: "late-pause" });
+      harness.messageListener({ type: "START_READER", text: "最初の本文です。次の文です。", requestId: "late-pause" });
     },
     capture(harness) {
       const entry = [...harness.timers.entries()][0];
@@ -1156,7 +1156,7 @@ const chromeLateTimerScenarios = [
       return entry[1].callback;
     },
     operate(harness) {
-      const overlay = harness.document.getElementById("__rsvp-reader-root");
+      const overlay = harness.document.getElementById("__reader-root");
       findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止")
         .dispatchEvent({ type: "click" });
     },
@@ -1165,8 +1165,8 @@ const chromeLateTimerScenarios = [
     name: "mode switch",
     createHarness: () => createOutlineReaderHarness(),
     start(harness) {
-      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-mode" });
-      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-mode" });
+      harness.messageListener({ type: "SHOW_READER_LOADING", requestId: "late-mode" });
+      harness.messageListener({ type: "START_READER", text: "最初の本文です。次の文です。", requestId: "late-mode" });
     },
     capture(harness) {
       const entry = [...harness.timers.entries()][0];
@@ -1175,8 +1175,8 @@ const chromeLateTimerScenarios = [
       return entry[1].callback;
     },
     operate(harness) {
-      const overlay = harness.document.getElementById("__rsvp-reader-root");
-      findElementByText(overlay, "文章で読む")
+      const overlay = harness.document.getElementById("__reader-root");
+      findElementByText(overlay, "Page")
         .dispatchEvent({ type: "click" });
     },
   },
@@ -1185,9 +1185,9 @@ const chromeLateTimerScenarios = [
     createHarness: () => createFigureReaderHarness(),
     start(harness) {
       const text = "結果を図1に示します。\n図1\n次の説明です。";
-      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-figure" });
+      harness.messageListener({ type: "SHOW_READER_LOADING", requestId: "late-figure" });
       harness.messageListener({
-        type: "START_RSVP",
+        type: "START_READER",
         text,
         requestId: "late-figure",
         readingContext: {
@@ -1229,8 +1229,8 @@ const chromeLateTimerScenarios = [
     name: "close",
     createHarness: () => createOutlineReaderHarness(),
     start(harness) {
-      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-close" });
-      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-close" });
+      harness.messageListener({ type: "SHOW_READER_LOADING", requestId: "late-close" });
+      harness.messageListener({ type: "START_READER", text: "最初の本文です。次の文です。", requestId: "late-close" });
     },
     capture(harness) {
       const entry = [...harness.timers.entries()][0];
@@ -1239,7 +1239,7 @@ const chromeLateTimerScenarios = [
       return entry[1].callback;
     },
     operate(harness) {
-      const overlay = harness.document.getElementById("__rsvp-reader-root");
+      const overlay = harness.document.getElementById("__reader-root");
       findElement(overlay, (element) => element.attributes["aria-label"] === "readerを閉じる")
         .dispatchEvent({ type: "click" });
     },
@@ -1248,8 +1248,8 @@ const chromeLateTimerScenarios = [
     name: "hidden",
     createHarness: () => createOutlineReaderHarness(),
     start(harness) {
-      harness.messageListener({ type: "SHOW_RSVP_LOADING", requestId: "late-hidden" });
-      harness.messageListener({ type: "START_RSVP", text: "最初の本文です。次の文です。", requestId: "late-hidden" });
+      harness.messageListener({ type: "SHOW_READER_LOADING", requestId: "late-hidden" });
+      harness.messageListener({ type: "START_READER", text: "最初の本文です。次の文です。", requestId: "late-hidden" });
     },
     capture(harness) {
       const entry = [...harness.timers.entries()][0];
@@ -1283,10 +1283,10 @@ test("reader renders content-not-found errors with retry and return actions", ()
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "error-request" });
-  messageListener({ type: "RSVP_ERROR", requestId: "error-request", reason: "content_not_found" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "error-request" });
+  messageListener({ type: "READER_ERROR", requestId: "error-request", reason: "content_not_found" });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   assert.ok(findElementByText(overlay, "文章を読み取れませんでした"));
   const retry = findElementByText(overlay, "やり直す");
   const returnButton = findElementByText(overlay, "元に戻る");
@@ -1298,10 +1298,10 @@ test("reader renders unsupported-page errors with retry and return actions", () 
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "unsupported-request" });
-  messageListener({ type: "RSVP_ERROR", requestId: "unsupported-request", reason: "unsupported_page" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "unsupported-request" });
+  messageListener({ type: "READER_ERROR", requestId: "unsupported-request", reason: "unsupported_page" });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   assert.ok(findElementByText(overlay, "このページはまだ開けません"));
   assert.ok(findElementByText(overlay, "やり直す"));
   assert.ok(findElementByText(overlay, "元に戻る"));
@@ -1311,10 +1311,10 @@ test("reader renders extraction-failed errors with retry and return actions", ()
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "extraction-request" });
-  messageListener({ type: "RSVP_ERROR", requestId: "extraction-request", reason: "extraction_failed" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "extraction-request" });
+  messageListener({ type: "READER_ERROR", requestId: "extraction-request", reason: "extraction_failed" });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   assert.ok(findElementByText(overlay, "文章を準備できませんでした"));
   assert.ok(findElementByText(overlay, "やり直す"));
   assert.ok(findElementByText(overlay, "元に戻る"));
@@ -1324,14 +1324,14 @@ test("reader rejects a delayed start after session initialization fails", async 
   const harness = createOutlineReaderHarness({ initFails: true });
   const { document, messageListener } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "failed-session-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "failed-session-request" });
   await Promise.resolve();
   await Promise.resolve();
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   assert.ok(findElementByText(overlay, "文章を準備できませんでした"));
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "遅延して届いた本文です。",
     requestId: "failed-session-request",
   });
@@ -1348,14 +1348,14 @@ test("reader retries a classified error without replacing its launch focus", () 
   documentElement.append(launchButton);
   launchButton.focus();
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "error-request" });
-  messageListener({ type: "RSVP_ERROR", requestId: "error-request", reason: "unsupported_page" });
-  findElementByText(document.getElementById("__rsvp-reader-root"), "やり直す").dispatchEvent({ type: "click" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "error-request" });
+  messageListener({ type: "READER_ERROR", requestId: "error-request", reason: "unsupported_page" });
+  findElementByText(document.getElementById("__reader-root"), "やり直す").dispatchEvent({ type: "click" });
 
-  assert.equal(runtimeMessages[0].type, "RETRY_RSVP");
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "retry-request" });
-  messageListener({ type: "START_RSVP", text: "再試行後の本文です。", requestId: "retry-request" });
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+  assert.equal(runtimeMessages[0].type, "RETRY_READER");
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "retry-request" });
+  messageListener({ type: "START_READER", text: "再試行後の本文です。", requestId: "retry-request" });
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
 
   assert.equal(document.activeElement, launchButton);
 });
@@ -1369,7 +1369,7 @@ test("reader preserves launch focus and source scroll when request B replaces pr
   launchButton.focus();
   harness.setScrollPosition(12, 320);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "preparing-request-a" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "preparing-request-a" });
   revealLoading(timers);
   const slowTimer = [...timers.entries()].find(([, timer]) => timer.delay === 400);
   assert.ok(slowTimer);
@@ -1377,9 +1377,9 @@ test("reader preserves launch focus and source scroll when request B replaces pr
   slowTimer[1].callback();
   assert.equal(document.activeElement.textContent, "中止");
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "preparing-request-b" });
-  messageListener({ type: "START_RSVP", text: "Bの本文です。", requestId: "preparing-request-b" });
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "preparing-request-b" });
+  messageListener({ type: "START_READER", text: "Bの本文です。", requestId: "preparing-request-b" });
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
 
   assert.equal(document.activeElement, launchButton);
   assert.deepEqual(harness.scrollPosition(), { left: 12, top: 320 });
@@ -1394,14 +1394,14 @@ test("reader preserves launch focus and source scroll when ready request A is re
   launchButton.focus();
   harness.setScrollPosition(24, 640);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ready-request-a" });
-  messageListener({ type: "START_RSVP", text: "Aの本文です。", requestId: "ready-request-a" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "ready-request-a" });
+  messageListener({ type: "START_READER", text: "Aの本文です。", requestId: "ready-request-a" });
   assert.equal(document.activeElement.tagName, "DIALOG");
   assert.equal(document.activeElement.attributes["aria-label"], "reader");
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ready-request-b" });
-  messageListener({ type: "START_RSVP", text: "Bの本文です。", requestId: "ready-request-b" });
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "ready-request-b" });
+  messageListener({ type: "START_READER", text: "Bの本文です。", requestId: "ready-request-b" });
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
 
   assert.equal(document.activeElement, launchButton);
   assert.deepEqual(harness.scrollPosition(), { left: 24, top: 640 });
@@ -1411,18 +1411,18 @@ test("reader shows the article outline beside the focal point", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers } = harness;
   const text = "最初の節です。次の節です。";
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "request-1" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "request-1" });
   revealLoading(timers);
-  messageListener({ type: "START_RSVP", text, requestId: "request-1" });
+  messageListener({ type: "START_READER", text, requestId: "request-1" });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const minimap = findElement(overlay, (element) => element.tagName === "ASIDE");
   const stage = findElement(overlay, (element) => element.attributes["data-reader-stage"] === "true");
   const activeMarker = findElement(minimap, (element) => element.attributes["aria-current"] === "location");
   const outline = findElement(minimap, (element) => element.attributes["aria-label"] === "記事の構成");
   const display = findElement(
     overlay,
-    isRsvpDisplay,
+    isSpotsDisplay,
   );
   const previousContext = findElement(
     overlay,
@@ -1447,24 +1447,24 @@ test("reader shows the article outline beside the focal point", () => {
   assert.match(outline.attributes.class, /reader-minimap-list/u);
   assert.ok(activeMarker);
   assert.match(activeMarker.attributes.class, /reader-minimap-item/u);
-  assert.match(display.attributes.class, /reader-unit/u);
+  assert.match(display.attributes.class, /reader-spot/u);
   assert.equal(previousContext.textContent, "");
   assert.equal(nextContext.textContent, "次の節です。");
   assert.equal(nextContext.animations.length, 0);
 });
 
-test("reader keeps the fixed RSVP font size when the available width changes", () => {
+test("reader keeps the fixed Spots font size when the available width changes", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resize-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "resize-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "resize-request",
   });
   const display = findElement(
-    document.getElementById("__rsvp-reader-root"),
-    isRsvpDisplay,
+    document.getElementById("__reader-root"),
+    isSpotsDisplay,
   );
 
   const initialClassName = display.attributes.class;
@@ -1473,27 +1473,34 @@ test("reader keeps the fixed RSVP font size when the available width changes", (
   harness.resizeDisplay();
   assert.equal(display.attributes.class, initialClassName);
   assert.equal(display.textContent, initialText);
-  assert.match(ReaderViewStyles, /\.reader-unit \{[^}]*font-size: 40px/su);
-  assert.match(ReaderViewStyles, /\[data-reader-unit-text\] \{[^}]*width: max-content[^}]*white-space: nowrap/su);
+  assert.match(ReaderViewStyles, /\.reader-spot \{[^}]*font-size: 40px/su);
+  assert.match(ReaderViewStyles, /\[data-reader-spot-text\] \{[^}]*width: max-content[^}]*white-space: nowrap/su);
   assert.equal(display.style.fontSize, undefined);
-  assert.match(display.attributes.class, /reader-unit/u);
+  assert.match(display.attributes.class, /reader-spot/u);
 });
 
 test("reader renders controls with their literal dimensions", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "controls-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "controls-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "controls-request",
   });
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
 
   const playPauseButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
   const backButton = findElement(overlay, (element) => element.attributes["aria-label"] === "1文戻る");
   const closeButton = findElement(overlay, (element) => element.attributes["aria-label"] === "readerを閉じる");
-  const modeButton = findElementByText(overlay, "文章で読む");
+  const modeSelector = findElement(
+    overlay,
+    (element) => element.attributes["data-reader-mode-selector"] === "true",
+  );
+  const modeButtons = findElements(
+    modeSelector,
+    (element) => element.attributes["data-reader-mode-button"] === "true",
+  );
   const transport = playPauseButton.parent;
   assert.equal(transport.attributes["data-reader-control-dock"], "true");
   assert.match(ReaderViewStyles, /\[data-reader-control-dock\] \{[^}]*width: min\(100% - 32px, 260px\)[^}]*grid-template-columns: 1fr 64px 1fr/su);
@@ -1503,23 +1510,25 @@ test("reader renders controls with their literal dimensions", () => {
   assert.equal(playPauseButton.children[0].tagName, "SVG");
   assert.match(closeButton.attributes.class, /reader-button-close/u);
   assert.equal(closeButton.children[0].tagName, "SVG");
-  assert.match(modeButton.attributes.class, /reader-button-mode/u);
-  assert.match(modeButton.parent.attributes.class, /reader-mode-position-rsvp/u);
+  assert.deepEqual(modeButtons.map((button) => button.textContent), ["Spots", "Page"]);
+  assert.deepEqual(modeButtons.map((button) => button.attributes["aria-pressed"]), ["true", "false"]);
+  assert.match(modeButtons[0].attributes.class, /reader-mode-option/u);
+  assert.match(modeSelector.parent.attributes.class, /reader-mode-position-spots/u);
 });
 
-test("reader marks the dialog and RSVP unit for assistive technology", () => {
+test("reader marks the dialog and Spot for assistive technology", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "semantics-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "semantics-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "semantics-request",
   });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const dialog = findElement(overlay, (element) => element.attributes.role === "dialog");
-  const unit = findElement(overlay, (element) => element.attributes["data-reader-unit"] === "true");
+  const unit = findElement(overlay, (element) => element.attributes["data-reader-spot"] === "true");
   const previous = findElement(overlay, (element) => element.attributes["data-reader-context-previous"] === "true");
   assert.equal(dialog.attributes["aria-modal"], "true");
   assert.equal(dialog.attributes["aria-label"], "reader");
@@ -1532,14 +1541,14 @@ test("reader owns an open shadow root and presents its internal dialog in the to
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "shadow-dialog-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "shadow-dialog-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "Shadow DOM内の本文です。",
     requestId: "shadow-dialog-request",
   });
 
-  const host = document.getElementById("__rsvp-reader-root");
+  const host = document.getElementById("__reader-root");
   assert.ok(host);
   assert.equal(host.dataset.readerOwned, "true");
   assert.ok(host.shadowRoot);
@@ -1561,13 +1570,13 @@ test("reader cleanup removes only its owned host when the page already uses the 
   const { document, documentElement, messageListener } = harness;
   const pageElement = new FakeElement("div");
   pageElement.ownerDocument = document;
-  pageElement.id = "__rsvp-reader-root";
+  pageElement.id = "__reader-root";
   pageElement.textContent = "元ページの要素";
   documentElement.append(pageElement);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "same-id-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "same-id-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "同名IDがあってもReaderを閉じられます。",
     requestId: "same-id-request",
   });
@@ -1586,14 +1595,14 @@ test("reader cancel closes the dialog once and remains safe when Escape follows"
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "cancel-dialog-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "cancel-dialog-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "cancelイベントの本文です。",
     requestId: "cancel-dialog-request",
   });
 
-  const host = document.getElementById("__rsvp-reader-root");
+  const host = document.getElementById("__reader-root");
   const dialog = findElement(host, (element) => element.tagName === "DIALOG");
   let prevented = false;
   dialog.dispatchEvent({
@@ -1615,14 +1624,14 @@ test("reader removes its focus listener when the dialog closes", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "focus-cleanup-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "focus-cleanup-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "focus listenerのcleanupを確認します。",
     requestId: "focus-cleanup-request",
   });
 
-  const host = document.getElementById("__rsvp-reader-root");
+  const host = document.getElementById("__reader-root");
   const dialog = findElement(host, (element) => element.tagName === "DIALOG");
   assert.equal(dialog.listeners.get("focusin")?.length, 1);
 
@@ -1635,15 +1644,15 @@ test("reader does not scale controls when reduced motion is enabled", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
   harness.enableReducedMotion();
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "reduced-control-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "reduced-control-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "reduced-control-request",
   });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
-  const modeButton = findElementByText(overlay, "文章で読む");
+  const overlay = document.getElementById("__reader-root");
+  const modeButton = findElementByText(overlay, "Page");
   const playButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
   modeButton.dispatchEvent({ type: "pointerdown" });
   playButton.dispatchEvent({ type: "pointerdown" });
@@ -1665,9 +1674,9 @@ test("reader restores background inert state and launch focus after Escape", () 
   documentElement.append(body, head, launchButton);
   launchButton.focus();
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "modal-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "modal-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "modal-request",
   });
@@ -1682,7 +1691,7 @@ test("reader restores background inert state and launch focus after Escape", () 
     target: documentElement,
     preventDefault() {},
   });
-  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(document.getElementById("__reader-root"), null);
   assert.equal(body.inert, false);
   assert.equal(head.inert, true);
   assert.equal(document.activeElement, launchButton);
@@ -1701,10 +1710,10 @@ test("reader keeps a fast error dialog focused and restores inert state after Es
   documentElement.append(body, head, launchButton);
   launchButton.focus();
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "fast-error-request" });
-  messageListener({ type: "RSVP_ERROR", requestId: "fast-error-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "fast-error-request" });
+  messageListener({ type: "READER_ERROR", requestId: "fast-error-request" });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const closeButton = findElementByText(overlay, "元に戻る");
   assert.equal(document.activeElement, closeButton);
   assert.equal(body.inert, true);
@@ -1741,7 +1750,7 @@ test("reader keeps a fast error dialog focused and restores inert state after Es
     target: closeButton,
     preventDefault() {},
   });
-  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(document.getElementById("__reader-root"), null);
   assert.equal(body.inert, false);
   assert.equal(head.inert, true);
   assert.equal(document.activeElement, launchButton);
@@ -1751,16 +1760,16 @@ test("reader does not resurrect a fast error after the stale loading reveal call
   const harness = createOutlineReaderHarness();
   const { document, documentElement, messageListener, timers } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "stale-error-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "stale-error-request" });
   const revealTimer = [...timers.values()].find((timer) => timer.delay === 200);
   assert.ok(revealTimer);
-  messageListener({ type: "RSVP_ERROR", requestId: "stale-error-request" });
-  const errorOverlay = document.getElementById("__rsvp-reader-root");
+  messageListener({ type: "READER_ERROR", requestId: "stale-error-request" });
+  const errorOverlay = document.getElementById("__reader-root");
   assert.ok(errorOverlay);
 
   revealTimer.callback();
-  assert.equal(document.getElementById("__rsvp-reader-root"), errorOverlay);
-  assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 1);
+  assert.equal(document.getElementById("__reader-root"), errorOverlay);
+  assert.equal(documentElement.children.filter((element) => element.id === "__reader-root").length, 1);
 });
 
 test("reader removes a failed React mount before reopening", () => {
@@ -1771,21 +1780,21 @@ test("reader removes a failed React mount before reopening", () => {
     (element) => element.attributes["data-reader-react-root"] === "true",
   );
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mount-failure-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "mount-failure-request" });
   const revealTimer = [...timers.values()].find((timer) => timer.delay === 200);
   assert.ok(revealTimer);
   assert.throws(() => revealTimer.callback(), /reader_view_mount_failed/u);
-  assert.equal(document.getElementById("__rsvp-reader-root"), null);
-  assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 0);
+  assert.equal(document.getElementById("__reader-root"), null);
+  assert.equal(documentElement.children.filter((element) => element.id === "__reader-root").length, 0);
   assert.equal(reactRoots().length, 0);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mount-reopen-request" });
-  messageListener({ type: "START_RSVP", text: "再開後の本文です。", requestId: "mount-reopen-request" });
-  assert.ok(document.getElementById("__rsvp-reader-root"));
-  assert.equal(documentElement.children.filter((element) => element.id === "__rsvp-reader-root").length, 1);
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "mount-reopen-request" });
+  messageListener({ type: "START_READER", text: "再開後の本文です。", requestId: "mount-reopen-request" });
+  assert.ok(document.getElementById("__reader-root"));
+  assert.equal(documentElement.children.filter((element) => element.id === "__reader-root").length, 1);
   assert.equal(reactRoots().length, 1);
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
-  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる").dispatchEvent({ type: "click" });
+  assert.equal(document.getElementById("__reader-root"), null);
   assert.equal(reactRoots().length, 0);
 });
 
@@ -1801,25 +1810,25 @@ test("reader releases the Session handle with each React mount", () => {
   assert.equal(harness.reactMountCount(), 0);
   assert.equal(harness.reactUnmountCount(), 0);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resource-first" });
-  messageListener({ type: "START_RSVP", text: "一回目の本文です。", requestId: "resource-first" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "resource-first" });
+  messageListener({ type: "START_READER", text: "一回目の本文です。", requestId: "resource-first" });
   assert.equal(harness.liveHandleCount(), 1);
   assert.equal(harness.reactMountCount(), 1);
   assert.equal(reactRoots().length, 1);
 
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
     .dispatchEvent({ type: "click" });
   assert.equal(harness.liveHandleCount(), 0);
   assert.equal(harness.reactMountCount(), harness.reactUnmountCount());
   assert.equal(reactRoots().length, 0);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resource-second" });
-  messageListener({ type: "START_RSVP", text: "二回目の本文です。", requestId: "resource-second" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "resource-second" });
+  messageListener({ type: "START_READER", text: "二回目の本文です。", requestId: "resource-second" });
   assert.equal(harness.liveHandleCount(), 1);
   assert.equal(harness.reactMountCount(), 2);
   assert.equal(reactRoots().length, 1);
 
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
     .dispatchEvent({ type: "click" });
   assert.equal(harness.liveHandleCount(), 0);
   assert.equal(harness.reactMountCount(), harness.reactUnmountCount());
@@ -1831,18 +1840,18 @@ test("reader disconnects its ResizeObserver across close and reopen", () => {
   const { document, messageListener } = harness;
 
   assert.equal(harness.resizeObserverLiveCount(), 0);
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resize-resource-first" });
-  messageListener({ type: "START_RSVP", text: "サイズを監視する本文です。", requestId: "resize-resource-first" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "resize-resource-first" });
+  messageListener({ type: "START_READER", text: "サイズを監視する本文です。", requestId: "resize-resource-first" });
   assert.equal(harness.resizeObserverLiveCount(), 1);
 
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
     .dispatchEvent({ type: "click" });
   assert.equal(harness.resizeObserverLiveCount(), 0);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "resize-resource-second" });
-  messageListener({ type: "START_RSVP", text: "再開後も一つだけ監視します。", requestId: "resize-resource-second" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "resize-resource-second" });
+  messageListener({ type: "START_READER", text: "再開後も一つだけ監視します。", requestId: "resize-resource-second" });
   assert.equal(harness.resizeObserverLiveCount(), 1);
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
     .dispatchEvent({ type: "click" });
   assert.equal(harness.resizeObserverLiveCount(), 0);
 });
@@ -1856,17 +1865,17 @@ test("reader restores document listeners without multiplying them on reopen", ()
   });
 
   assert.deepEqual(listenerCounts(), { visibility: 0, keydown: 0 });
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "listener-resource-first" });
-  messageListener({ type: "START_RSVP", text: "リスナーを確認する本文です。", requestId: "listener-resource-first" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "listener-resource-first" });
+  messageListener({ type: "START_READER", text: "リスナーを確認する本文です。", requestId: "listener-resource-first" });
   assert.deepEqual(listenerCounts(), { visibility: 1, keydown: 1 });
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
     .dispatchEvent({ type: "click" });
   assert.deepEqual(listenerCounts(), { visibility: 0, keydown: 0 });
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "listener-resource-second" });
-  messageListener({ type: "START_RSVP", text: "再開後のリスナーです。", requestId: "listener-resource-second" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "listener-resource-second" });
+  messageListener({ type: "START_READER", text: "再開後のリスナーです。", requestId: "listener-resource-second" });
   assert.deepEqual(listenerCounts(), { visibility: 1, keydown: 1 });
-  findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+  findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
     .dispatchEvent({ type: "click" });
   assert.deepEqual(listenerCounts(), { visibility: 0, keydown: 0 });
 });
@@ -1882,28 +1891,28 @@ test("reader ignores a pending animation completion after close", async () => {
   try {
     const harness = createOutlineReaderHarness();
     const { document, documentElement, messageListener, timers } = harness;
-    messageListener({ type: "SHOW_RSVP_LOADING", requestId: "animation-resource" });
+    messageListener({ type: "SHOW_READER_LOADING", requestId: "animation-resource" });
     revealLoading(timers);
     const slowEntry = [...timers.entries()].find(([, timer]) => timer.delay === 400);
     assert.ok(slowEntry);
     timers.delete(slowEntry[0]);
     slowEntry[1].callback();
     assert.ok(finishers.length > 0);
-    findElement(document.getElementById("__rsvp-reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
+    findElement(document.getElementById("__reader-root"), (element) => element.attributes["aria-label"] === "readerを閉じる")
       .dispatchEvent({ type: "click" });
     assert.equal(harness.liveHandleCount(), 0);
     finishers.forEach((finish) => finish());
     await Promise.resolve();
     await Promise.resolve();
     assert.equal(findElement(documentElement, (element) => element.attributes["data-reader-react-root"] === "true"), null);
-    assert.equal(document.getElementById("__rsvp-reader-root"), null);
+    assert.equal(document.getElementById("__reader-root"), null);
     assert.equal(harness.liveHandleCount(), 0);
   } finally {
     FakeElement.prototype.animate = originalAnimate;
   }
 });
 
-test("reader keeps keyboard focus trapped after switching to text mode", () => {
+test("reader keeps keyboard focus trapped after switching to Page mode", () => {
   const harness = createOutlineReaderHarness();
   const { document, documentElement, messageListener } = harness;
   const body = new FakeElement("body");
@@ -1916,37 +1925,36 @@ test("reader keeps keyboard focus trapped after switching to text mode", () => {
   documentElement.append(body, head, launchButton);
   launchButton.focus();
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-modal-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "text-modal-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "text-modal-request",
   });
 
-  const rsvpOverlay = document.getElementById("__rsvp-reader-root");
-  const textModeButton = findElementByText(rsvpOverlay, "文章で読む");
-  textModeButton.focus();
-  textModeButton.dispatchEvent({ type: "click" });
+  const spotsOverlay = document.getElementById("__reader-root");
+  const pageModeButton = findElementByText(spotsOverlay, "Page");
+  pageModeButton.focus();
+  pageModeButton.dispatchEvent({ type: "click" });
 
-  const textOverlay = document.getElementById("__rsvp-reader-root");
-  const textShell = findElement(
+  const textOverlay = document.getElementById("__reader-root");
+  const pageShell = findElement(
     textOverlay,
-    (element) => element.attributes["data-reader-text-shell"] === "true",
+    (element) => element.attributes["data-reader-page-shell"] === "true",
   );
-  const closeButton = findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる");
-  const rsvpModeButton = findElement(
-    textShell,
-    (element) => element.attributes["data-reader-mode-button"] === "true",
-  );
-  assert.ok(textShell);
-  assert.equal(document.activeElement?.attributes?.["data-reader-mode-button"], "true");
+  const closeButton = findElement(pageShell, (element) => element.attributes["aria-label"] === "readerを閉じる");
+  const spotsModeButton = findElementByText(pageShell, "Spots");
+  const pageModeButtonAfterSwitch = findElementByText(pageShell, "Page");
+  assert.ok(pageShell);
+  assert.equal(document.activeElement?.attributes?.["data-reader-mode"], "page");
+  assert.equal(spotsModeButton.attributes["aria-pressed"], "false");
+  assert.equal(pageModeButtonAfterSwitch.attributes["aria-pressed"], "true");
 
-  rsvpModeButton.focus();
+  pageModeButtonAfterSwitch.focus();
   document.dispatchEvent({
     type: "keydown",
     key: "Tab",
-    shiftKey: true,
-    target: rsvpModeButton,
+    target: pageModeButtonAfterSwitch,
     preventDefault() {},
   });
   assert.equal(document.activeElement, closeButton);
@@ -1954,51 +1962,53 @@ test("reader keeps keyboard focus trapped after switching to text mode", () => {
   document.dispatchEvent({
     type: "keydown",
     key: "Tab",
+    shiftKey: true,
     target: closeButton,
     preventDefault() {},
   });
-  assert.equal(document.activeElement, rsvpModeButton);
+  assert.equal(document.activeElement, pageModeButtonAfterSwitch);
 
   document.dispatchEvent({
     type: "keydown",
     key: "Escape",
-    target: rsvpModeButton,
+    target: spotsModeButton,
     preventDefault() {},
   });
-  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(document.getElementById("__reader-root"), null);
   assert.equal(body.inert, false);
   assert.equal(head.inert, true);
   assert.equal(document.activeElement, launchButton);
 });
 
-test("reader restores the RSVP mode control and follows session autoplay", () => {
+test("reader keeps focus on the selected Spots control and follows session autoplay", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, sessionCommands } = harness;
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mode-focus-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "mode-focus-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "mode-focus-request",
   });
-  const overlay = document.getElementById("__rsvp-reader-root");
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textOverlay = document.getElementById("__rsvp-reader-root");
-  const textModeButton = findElementByText(textOverlay, "RSVPで読む");
-  textModeButton.focus();
-  textModeButton.dispatchEvent({ type: "click" });
+  const overlay = document.getElementById("__reader-root");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const textOverlay = document.getElementById("__reader-root");
+  const pageModeButton = findElementByText(textOverlay, "Spots");
+  pageModeButton.focus();
+  pageModeButton.dispatchEvent({ type: "click" });
 
-  const rsvpModeButton = findElementByText(document.getElementById("__rsvp-reader-root"), "文章で読む");
-  assert.equal(document.activeElement, rsvpModeButton);
+  const spotsModeButton = findElementByText(document.getElementById("__reader-root"), "Spots");
+  assert.equal(document.activeElement, spotsModeButton);
+  assert.equal(spotsModeButton.attributes["aria-pressed"], "true");
   assert.deepEqual(
     sessionCommands
-      .filter(({ type }) => type === "switchToText" || type === "switchToRsvp" || type === "pause")
+      .filter(({ type }) => type === "switchToPage" || type === "switchToSpots" || type === "pause")
       .map(({ type }) => type),
-    ["switchToText", "switchToRsvp"],
+    ["switchToPage", "switchToSpots"],
   );
   assert.equal(sessionCommands.filter(({ type }) => type === "play").length, 0);
   assert.equal(findElement(
-    document.getElementById("__rsvp-reader-root"),
+    document.getElementById("__reader-root"),
     (element) => element.attributes["aria-label"] === "一時停止",
   ).attributes["aria-pressed"], "true");
 });
@@ -2006,16 +2016,16 @@ test("reader restores the RSVP mode control and follows session autoplay", () =>
 test("reader keyboard shortcuts control playback while a reader button has focus", () => {
   const harness = createOutlineReaderHarness();
   const { document, timers, messageListener } = harness;
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "keyboard-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "keyboard-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "keyboard-request",
   });
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const display = findElement(
     overlay,
-    isRsvpDisplay,
+    isSpotsDisplay,
   );
   const previousContext = findElement(
     overlay,
@@ -2074,13 +2084,13 @@ test("reader keyboard shortcuts control playback while a reader button has focus
 test("reader keyboard shortcuts do not capture editable or modified key presses", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, sessionCommands } = harness;
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "keyboard-safety-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "keyboard-safety-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "keyboard-safety-request",
   });
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const playPauseButton = findElement(overlay, (element) => element.attributes["aria-label"] === "一時停止");
   playPauseButton.dispatchEvent({ type: "click" });
   const input = new FakeElement("input");
@@ -2128,28 +2138,28 @@ test("reader keyboard shortcuts do not capture editable or modified key presses"
   assert.equal(sessionCommands.filter(({ type }) => type === "play" || type === "previousSentence").length, 0);
 });
 
-test("reader text mode leaves Space and ArrowLeft to the browser", () => {
+test("reader Page mode leaves Space and ArrowLeft to the browser", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, sessionCommands } = harness;
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-keyboard-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "text-keyboard-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "text-keyboard-request",
   });
-  const overlay = document.getElementById("__rsvp-reader-root");
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textOverlay = document.getElementById("__rsvp-reader-root");
-  const textScroller = findElement(
+  const overlay = document.getElementById("__reader-root");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const textOverlay = document.getElementById("__reader-root");
+  const pageScroller = findElement(
     textOverlay,
-    (element) => element.attributes["data-reader-text-scroller"] === "true",
+    (element) => element.attributes["data-reader-page-scroller"] === "true",
   );
 
   let prevented = false;
   document.dispatchEvent({
     type: "keydown",
     code: "Space",
-    target: textScroller,
+    target: pageScroller,
     preventDefault() {
       prevented = true;
     },
@@ -2157,7 +2167,7 @@ test("reader text mode leaves Space and ArrowLeft to the browser", () => {
   document.dispatchEvent({
     type: "keydown",
     code: "ArrowLeft",
-    target: textScroller,
+    target: pageScroller,
     preventDefault() {
       prevented = true;
     },
@@ -2167,7 +2177,7 @@ test("reader text mode leaves Space and ArrowLeft to the browser", () => {
   assert.equal(sessionCommands.filter(({ type }) => type === "play" || type === "previousSentence").length, 0);
 });
 
-test("reader follows page headings and switches to text mode", () => {
+test("reader follows page headings and switches to Page mode", () => {
   const harness = createOutlineReaderHarness();
   const { document, documentElement, selection, messageListener } = harness;
   const text = "最初の節です。次の節です。";
@@ -2184,22 +2194,22 @@ test("reader follows page headings and switches to text mode", () => {
     ],
     initialHeadingIndex: -1,
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "request-2" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "request-2" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text,
     requestId: "request-2",
     readingContext: pageReadingContext,
   });
 
-  const pageOverlay = document.getElementById("__rsvp-reader-root");
+  const pageOverlay = document.getElementById("__reader-root");
   const pageOutline = findElement(
     pageOverlay,
     (element) => element.attributes["aria-label"] === "記事の構成",
   );
   const pageDisplay = findElement(
     pageOverlay,
-    isRsvpDisplay,
+    isSpotsDisplay,
   );
   assert.equal(pageOutline.children[0].textContent, "ページタイトル");
   assert.equal(pageOutline.children[1].style.paddingLeft, "19px");
@@ -2217,37 +2227,37 @@ test("reader follows page headings and switches to text mode", () => {
   assert.equal(pageOutline.children[1].attributes["aria-current"], "location");
   assert.match(pageDisplay.textContent, /次の節/);
 
-  const pageModeButton = findElementByText(pageOverlay, "文章で読む");
+  const pageModeButton = findElementByText(pageOverlay, "Page");
   pageModeButton.dispatchEvent({ type: "click" });
-  const textShell = findElement(
-    document.getElementById("__rsvp-reader-root"),
-    (element) => element.attributes["data-reader-text-shell"] === "true",
+  const pageShell = findElement(
+    document.getElementById("__reader-root"),
+    (element) => element.attributes["data-reader-page-shell"] === "true",
   );
-  assert.ok(textShell);
-  const textScroller = findElement(
-    textShell,
-    (element) => element.attributes["data-reader-text-scroller"] === "true",
+  assert.ok(pageShell);
+  const pageScroller = findElement(
+    pageShell,
+    (element) => element.attributes["data-reader-page-scroller"] === "true",
   );
-  const rsvpModeButton = findElementByText(textShell, "RSVPで読む");
+  const spotsModeButton = findElementByText(pageShell, "Spots");
   const textOutline = findElement(
-    textShell,
+    pageShell,
     (element) => element.attributes["aria-label"] === "記事の構成",
   );
-  assert.ok(textScroller);
+  assert.ok(pageScroller);
   assert.equal(textOutline.children[0].textContent, "ページタイトル");
   assert.equal(textOutline.children[1].textContent, "概要");
   assert.equal(textOutline.children[1].attributes["aria-current"], "location");
-  assert.match(rsvpModeButton.parent.attributes.class, /reader-mode-position-text/u);
-  assert.ok(findElement(textShell, (element) => element.attributes["aria-label"] === "readerを閉じる"));
+  assert.match(spotsModeButton.parent.parent.attributes.class, /reader-mode-position-page/u);
+  assert.ok(findElement(pageShell, (element) => element.attributes["aria-label"] === "readerを閉じる"));
 });
 
-test("reader updates the text outline from the first visible sentence", () => {
+test("reader updates the Page outline from the first visible sentence", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
   const text = "最初の節です。次の節です。";
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-outline-scroll" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "text-outline-scroll" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text,
     requestId: "text-outline-scroll",
     readingContext: {
@@ -2263,25 +2273,25 @@ test("reader updates the text outline from the first visible sentence", () => {
     },
   });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
-  const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
+  const overlay = document.getElementById("__reader-root");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+  const scroller = findElement(pageShell, (element) => element.attributes["data-reader-page-scroller"] === "true");
+  const pageMarkers = findElements(pageShell, (element) => element.dataset.readerPositionKind === "text");
   scroller.rect = { top: 0, bottom: 500, left: 0, right: 1280, width: 1280, height: 500 };
   scroller.scrollTop = 120;
-  textMarkers[0].rect = { top: -120, bottom: -20, left: 304, right: 976, width: 672, height: 100 };
-  textMarkers[1].rect = { top: 100, bottom: 200, left: 304, right: 976, width: 672, height: 100 };
+  pageMarkers[0].rect = { top: -120, bottom: -20, left: 304, right: 976, width: 672, height: 100 };
+  pageMarkers[1].rect = { top: 100, bottom: 200, left: 304, right: 976, width: 672, height: 100 };
   scroller.dispatchEvent({ type: "scroll" });
 
-  const updatedTextShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const updatedPageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
   const updatedOutline = findElement(
-    updatedTextShell,
+    updatedPageShell,
     (element) => element.attributes["aria-label"] === "記事の構成",
   );
   assert.equal(updatedOutline.children[0].attributes["aria-current"], "false");
   assert.equal(updatedOutline.children[1].attributes["aria-current"], "location");
-  assert.ok(findElementByText(updatedTextShell, "RSVPで読む"));
+  assert.ok(findElementByText(updatedPageShell, "Spots"));
 });
 
 test("reader uses sentence and figure markers to preserve a shared position", () => {
@@ -2309,28 +2319,28 @@ test("reader uses sentence and figure markers to preserve a shared position", ()
       sourceEnd: figureOffset + 2,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "position-request" });
-  messageListener({ type: "START_RSVP", text, requestId: "position-request", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "position-request" });
+  messageListener({ type: "START_READER", text, requestId: "position-request", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
-  const modeButton = findElementByText(overlay, "文章で読む");
+  const overlay = document.getElementById("__reader-root");
+  const modeButton = findElementByText(overlay, "Page");
   modeButton.dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
-  const figureMarker = findElement(textShell, (element) => element.dataset.readerPositionKind === "figure");
-  const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
-  const textModeButton = findElementByText(textShell, "RSVPで読む");
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+  const pageMarkers = findElements(pageShell, (element) => element.dataset.readerPositionKind === "text");
+  const figureMarker = findElement(pageShell, (element) => element.dataset.readerPositionKind === "figure");
+  const scroller = findElement(pageShell, (element) => element.attributes["data-reader-page-scroller"] === "true");
+  const pageModeButton = findElementByText(pageShell, "Spots");
 
-  assert.equal(textMarkers.length, 3);
+  assert.equal(pageMarkers.length, 3);
   assert.equal(figureMarker.dataset.figureIndex, "0");
   assert.equal(figureMarker.dataset.sourceStart, String(figureOffset));
   scroller.rect = { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
-  textMarkers[0].rect = { top: -120, bottom: -20, left: 0, right: 300, width: 300, height: 100 };
-  textMarkers[1].rect = { top: -80, bottom: 20, left: 0, right: 300, width: 300, height: 100 };
+  pageMarkers[0].rect = { top: -120, bottom: -20, left: 0, right: 300, width: 300, height: 100 };
+  pageMarkers[1].rect = { top: -80, bottom: 20, left: 0, right: 300, width: 300, height: 100 };
   figureMarker.rect = { top: 120, bottom: 260, left: 0, right: 300, width: 300, height: 140 };
-  textMarkers[2].rect = { top: 280, bottom: 380, left: 0, right: 300, width: 300, height: 100 };
+  pageMarkers[2].rect = { top: 280, bottom: 380, left: 0, right: 300, width: 300, height: 100 };
   scroller.dispatchEvent({ type: "scroll" });
-  textModeButton.dispatchEvent({ type: "click" });
+  pageModeButton.dispatchEvent({ type: "click" });
 
   const figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   assert.ok(figurePanel);
@@ -2360,9 +2370,9 @@ test("reader keeps the current figure anchor ahead of earlier readable text", ()
       sourceEnd: 9,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-anchor-request" });
-  messageListener({ type: "START_RSVP", text, requestId: "figure-anchor-request", readingContext });
-  const overlay = document.getElementById("__rsvp-reader-root");
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "figure-anchor-request" });
+  messageListener({ type: "START_READER", text, requestId: "figure-anchor-request", readingContext });
+  const overlay = document.getElementById("__reader-root");
   while (!findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像")) {
     const entry = [...timers.entries()][0];
     assert.ok(entry);
@@ -2370,17 +2380,17 @@ test("reader keeps the current figure anchor ahead of earlier readable text", ()
     entry[1].callback();
   }
 
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
-  const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
-  const figureMarker = findElement(textShell, (element) => element.dataset.readerPositionKind === "figure");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+  const scroller = findElement(pageShell, (element) => element.attributes["data-reader-page-scroller"] === "true");
+  const pageMarkers = findElements(pageShell, (element) => element.dataset.readerPositionKind === "text");
+  const figureMarker = findElement(pageShell, (element) => element.dataset.readerPositionKind === "figure");
   scroller.rect = { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
-  textMarkers[0].rect = { top: 80, bottom: 120, left: 0, right: 300, width: 300, height: 40 };
+  pageMarkers[0].rect = { top: 80, bottom: 120, left: 0, right: 300, width: 300, height: 40 };
   figureMarker.rect = { top: 180, bottom: 320, left: 0, right: 300, width: 300, height: 140 };
-  textMarkers[1].rect = { top: 360, bottom: 400, left: 0, right: 300, width: 300, height: 40 };
+  pageMarkers[1].rect = { top: 360, bottom: 400, left: 0, right: 300, width: 300, height: 40 };
 
-  findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
+  findElementByText(pageShell, "Spots").dispatchEvent({ type: "click" });
 
   const figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   assert.ok(figurePanel);
@@ -2413,30 +2423,30 @@ test("reader ignores a clipped figure even when its center is readable", () => {
       sourceEnd: figureOffset + 2,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "clipped-figure-request" });
-  messageListener({ type: "START_RSVP", text, requestId: "clipped-figure-request", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "clipped-figure-request" });
+  messageListener({ type: "START_READER", text, requestId: "clipped-figure-request", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const textMarkers = findElements(textShell, (element) => element.dataset.readerPositionKind === "text");
-  const figureMarker = findElement(textShell, (element) => element.dataset.readerPositionKind === "figure");
-  const scroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
-  const textModeButton = findElementByText(textShell, "RSVPで読む");
+  const overlay = document.getElementById("__reader-root");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+  const pageMarkers = findElements(pageShell, (element) => element.dataset.readerPositionKind === "text");
+  const figureMarker = findElement(pageShell, (element) => element.dataset.readerPositionKind === "figure");
+  const scroller = findElement(pageShell, (element) => element.attributes["data-reader-page-scroller"] === "true");
+  const pageModeButton = findElementByText(pageShell, "Spots");
 
   scroller.rect = { top: 0, bottom: 500, left: 0, right: 390, width: 390, height: 500 };
-  textMarkers[0].rect = { top: -160, bottom: -60, left: 0, right: 300, width: 300, height: 100 };
-  textMarkers[1].rect = { top: -120, bottom: -20, left: 0, right: 300, width: 300, height: 100 };
+  pageMarkers[0].rect = { top: -160, bottom: -60, left: 0, right: 300, width: 300, height: 100 };
+  pageMarkers[1].rect = { top: -120, bottom: -20, left: 0, right: 300, width: 300, height: 100 };
   figureMarker.rect = { top: 20, bottom: 220, left: 0, right: 300, width: 300, height: 200 };
-  textMarkers[2].rect = { top: 280, bottom: 380, left: 0, right: 300, width: 300, height: 100 };
+  pageMarkers[2].rect = { top: 280, bottom: 380, left: 0, right: 300, width: 300, height: 100 };
   scroller.scrollTop = 120;
   scroller.dispatchEvent({ type: "scroll" });
-  textModeButton.dispatchEvent({ type: "click" });
+  pageModeButton.dispatchEvent({ type: "click" });
 
   const figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   const display = findElement(
     overlay,
-    isRsvpDisplay,
+    isSpotsDisplay,
   );
   assert.equal(figurePanel, null);
   assert.equal(display.dataset.readerPositionKind, "text");
@@ -2459,22 +2469,22 @@ test("reader disables loading and stage animations for reduced motion", () => {
   };
 
   harness.enableReducedMotion();
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "reduced-motion-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "reduced-motion-request" });
   revealLoading(harness.timers);
-  const reducedLoadingOverlay = document.getElementById("__rsvp-reader-root");
+  const reducedLoadingOverlay = document.getElementById("__reader-root");
   const reducedIndicator = findElement(
     reducedLoadingOverlay,
     (element) => element.attributes["data-reader-loading-indicator"] === "true",
   );
   assert.equal(reducedIndicator.animations.length, 0);
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の節です。次の節です。",
     requestId: "reduced-motion-request",
     readingContext: pageReadingContext,
   });
   const reducedStage = findElement(
-    document.getElementById("__rsvp-reader-root"),
+    document.getElementById("__reader-root"),
     (element) => element.attributes["data-reader-stage"] === "true",
   );
   assert.equal(reducedStage.animations.length, 0);
@@ -2573,13 +2583,13 @@ test("reader varies timing for punctuation and phrase length", () => {
     initialHeadingIndex: -1,
     figures: [],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "timing-request" });
-  messageListener({ type: "START_RSVP", text, requestId: "timing-request", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "timing-request" });
+  messageListener({ type: "START_READER", text, requestId: "timing-request", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const display = findElement(
     overlay,
-    isRsvpDisplay,
+    isSpotsDisplay,
   );
   assert.equal(display.textContent, "短い、");
   const [firstTimerId, firstTimer] = [...timers.entries()][0];
@@ -2607,8 +2617,8 @@ test("Chrome schedules the shared heading-transition durations", () => {
     initialHeadingIndex: -1,
     figures: [],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "parity-request" });
-  messageListener({ type: "START_RSVP", text, requestId: "parity-request", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "parity-request" });
+  messageListener({ type: "START_READER", text, requestId: "parity-request", readingContext });
 
   const [firstTimerId, firstTimer] = [...timers.entries()][0];
   assert.equal(firstTimer.delay, 612);
@@ -2636,9 +2646,9 @@ test("Chrome viewer segments with the ReaderContent language", () => {
     figures: [],
   };
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "locale-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "locale-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "First sentence. Next sentence.",
     requestId: "locale-request",
     readingContext,
@@ -2669,23 +2679,23 @@ test("reader preserves the literal baseline effective reading rate", () => {
     initialHeadingIndex: -1,
     figures: [],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "baseline-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "baseline-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: baselineText,
     requestId: "baseline-request",
     readingContext: baselineContext,
   });
 
   let elapsedMs = 0;
-  let scheduledUnitCount = 0;
+  let scheduledSpotCount = 0;
   while (timers.size > 0) {
     const [timerId, timer] = [...timers.entries()][0];
     timers.delete(timerId);
     elapsedMs += timer.delay;
-    scheduledUnitCount += 1;
+    scheduledSpotCount += 1;
     timer.callback();
-    assert.ok(scheduledUnitCount < 100);
+    assert.ok(scheduledSpotCount < 100);
   }
 
   const graphemeCount = [
@@ -2697,14 +2707,14 @@ test("reader preserves the literal baseline effective reading rate", () => {
   assert.ok(equivalentWordsPerMinute >= 380 && equivalentWordsPerMinute <= 395);
 });
 
-test("reader keeps one timer and ends paused after a 30-minute-equivalent RSVP flow", () => {
+test("reader keeps one timer and ends paused after a 30-minute-equivalent Spots flow", () => {
   const longText = Array.from(
     { length: 1_550 },
     () => "これは三十分相当の長文を検証する文です。",
   ).join("");
   const { messageListener, timers, sessionState } = createOutlineReaderHarness();
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "long-flow-request" });
-  messageListener({ type: "START_RSVP", text: longText, requestId: "long-flow-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "long-flow-request" });
+  messageListener({ type: "START_READER", text: longText, requestId: "long-flow-request" });
 
   let elapsedMs = 0;
   let firedTimerCount = 0;
@@ -2728,22 +2738,22 @@ test("reader keeps one timer and ends paused after a 30-minute-equivalent RSVP f
   assert.equal(finalState.playback, "paused");
   assert.equal(finalState.timerPending, false);
   assert.equal(finalState.flowIndex, finalState.flowLength - 1);
-  assert.equal(finalState.currentKind, "unit");
+  assert.equal(finalState.currentKind, "spot");
   assert.equal(finalState.position.kind, "text");
   assert.equal(finalState.sourceOffset, finalState.position.sourceOffset);
   assert.ok(finalState.sourceOffset > 0 && finalState.sourceOffset < longText.length);
 });
 
-test("reader progress reaches 100% when the final RSVP unit completes", () => {
+test("reader progress reaches 100% when the final Spot completes", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers } = harness;
   const articleText = "これは文です。これは文です。これは文です。";
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "progress-final-unit" });
-  messageListener({ type: "START_RSVP", text: articleText, requestId: "progress-final-unit" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "progress-final-spot" });
+  messageListener({ type: "START_READER", text: articleText, requestId: "progress-final-spot" });
 
   const progress = findElements(
-    document.getElementById("__rsvp-reader-root"),
+    document.getElementById("__reader-root"),
     (element) => element.attributes["data-reader-progress"] === "true",
   )[0];
   assert.ok(progress, "the reader shows one bottom-right progress meter");
@@ -2763,30 +2773,30 @@ test("reader progress reaches 100% when the final RSVP unit completes", () => {
   assert.equal(progress.textContent, "100%");
 });
 
-test("reader keeps progress for the same source position across RSVP and text modes", () => {
+test("reader keeps progress for the same source position across Spots and Page modes", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener } = harness;
   const articleText = "これは文です。これは文です。これは文です。";
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "progress-mode-switch" });
-  messageListener({ type: "START_RSVP", text: articleText, requestId: "progress-mode-switch" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "progress-mode-switch" });
+  messageListener({ type: "START_READER", text: articleText, requestId: "progress-mode-switch" });
 
-  const rsvpProgress = findElements(
-    document.getElementById("__rsvp-reader-root"),
+  const spotsProgress = findElements(
+    document.getElementById("__reader-root"),
     (element) => element.attributes["data-reader-progress"] === "true",
   )[0];
-  assert.equal(rsvpProgress.textContent, "0%");
-  findElementByText(document.getElementById("__rsvp-reader-root"), "文章で読む")
+  assert.equal(spotsProgress.textContent, "0%");
+  findElementByText(document.getElementById("__reader-root"), "Page")
     .dispatchEvent({ type: "click" });
   assert.equal(findElements(
-    document.getElementById("__rsvp-reader-root"),
+    document.getElementById("__reader-root"),
     (element) => element.attributes["data-reader-progress"] === "true",
   )[0].textContent, "0%");
 
-  findElementByText(document.getElementById("__rsvp-reader-root"), "RSVPで読む")
+  findElementByText(document.getElementById("__reader-root"), "Spots")
     .dispatchEvent({ type: "click" });
   assert.equal(findElements(
-    document.getElementById("__rsvp-reader-root"),
+    document.getElementById("__reader-root"),
     (element) => element.attributes["data-reader-progress"] === "true",
   )[0].textContent, "0%");
 });
@@ -2917,10 +2927,10 @@ test("reader pauses on an article image and exposes its context", () => {
       },
     ],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-request" });
-  messageListener({ type: "START_RSVP", text, requestId: "figure-request", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "figure-request" });
+  messageListener({ type: "START_READER", text, requestId: "figure-request", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const [firstTimerId, firstTimer] = [...timers.entries()][0];
   timers.delete(firstTimerId);
   firstTimer.callback();
@@ -2935,7 +2945,7 @@ test("reader pauses on an article image and exposes its context", () => {
   const image = findElement(figurePanel, (element) => element.tagName === "IMG");
   const display = findElement(
     overlay,
-    isRsvpDisplay,
+    isSpotsDisplay,
   );
   const resumeButton = findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む");
   const progress = findElements(
@@ -2998,10 +3008,10 @@ test("reader pauses on a code block and keeps it once in the article flow", () =
       sourceEnd: sourceOffset + code.length,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "code-block" });
-  messageListener({ type: "START_RSVP", text, requestId: "code-block", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "code-block" });
+  messageListener({ type: "START_READER", text, requestId: "code-block", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   let codePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "コードブロック");
   for (let step = 0; !codePanel && step < 10; step += 1) {
     const [timerId, timer] = [...timers.entries()][0];
@@ -3019,9 +3029,9 @@ test("reader pauses on a code block and keeps it once in the article flow", () =
   assert.equal(findElementByText(codePanel, "const").attributes["data-reader-syntax-token"], "keyword");
   assert.ok(findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む"));
 
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const articleCodeBlocks = findElements(textShell, (element) => element.attributes["data-reader-code-block"] === "true");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+  const articleCodeBlocks = findElements(pageShell, (element) => element.attributes["data-reader-code-block"] === "true");
   assert.equal(articleCodeBlocks.length, 1);
   assert.equal(articleCodeBlocks[0].textContent, code);
 });
@@ -3049,10 +3059,10 @@ test("reader shows the original Mermaid source when its rendered diagram fails",
       sourceEnd: mermaid.length,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "mermaid-fallback" });
-  messageListener({ type: "START_RSVP", text, requestId: "mermaid-fallback", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "mermaid-fallback" });
+  messageListener({ type: "START_READER", text, requestId: "mermaid-fallback", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const mermaidPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "Mermaid図");
   const image = findElement(mermaidPanel, (element) => element.tagName === "IMG");
   image.dispatchEvent({ type: "error" });
@@ -3062,7 +3072,7 @@ test("reader shows the original Mermaid source when its rendered diagram fails",
   assert.ok(findElementByText(overlay, "Mermaid図を表示できなかったため、元のコードを表示しています"));
 });
 
-test("reader keeps a long inline code expression atomic in RSVP and marks it in article text", () => {
+test("reader keeps a long inline code expression atomic in Spots and marks it in article text", () => {
   const { document, messageListener, timers, sessionState } = createFigureReaderHarness();
   const code = "extraordinarily_long_identifier.withNamespace()";
   const text = `Use ${code} before continuing.`;
@@ -3081,28 +3091,28 @@ test("reader keeps a long inline code expression atomic in RSVP and marks it in 
     initialHeadingIndex: -1,
     figures: [],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "inline-code" });
-  messageListener({ type: "START_RSVP", text, requestId: "inline-code", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "inline-code" });
+  messageListener({ type: "START_READER", text, requestId: "inline-code", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
-  let codeUnit = findElement(overlay, (element) => element.attributes["data-reader-unit-kind"] === "code");
-  for (let step = 0; !codeUnit && step < 10; step += 1) {
+  const overlay = document.getElementById("__reader-root");
+  let codeSpot = findElement(overlay, (element) => element.attributes["data-reader-spot-kind"] === "code");
+  for (let step = 0; !codeSpot && step < 10; step += 1) {
     const [timerId, timer] = [...timers.entries()][0];
     assert.ok(timer, "the inline code is reached before playback timers end");
     timers.delete(timerId);
     timer.callback();
-    codeUnit = findElement(overlay, (element) => element.attributes["data-reader-unit-kind"] === "code");
+    codeSpot = findElement(overlay, (element) => element.attributes["data-reader-spot-kind"] === "code");
   }
 
-  assert.ok(codeUnit);
-  assert.equal(codeUnit.textContent, code);
+  assert.ok(codeSpot);
+  assert.equal(codeSpot.textContent, code);
   assert.equal(sessionState().playback, "playing");
-  const scrollableCode = findElement(codeUnit, (element) => element.attributes["data-reader-inline-code"] === "true");
+  const scrollableCode = findElement(codeSpot, (element) => element.attributes["data-reader-inline-code"] === "true");
   assert.match(ReaderViewStyles, /\[data-reader-inline-code\] \{[^}]*overflow-x: auto[^}]*white-space: nowrap/su);
 
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const inlineCode = findElement(textShell, (element) => element.attributes["data-reader-inline-code"] === "true");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+  const inlineCode = findElement(pageShell, (element) => element.attributes["data-reader-inline-code"] === "true");
   assert.equal(inlineCode.textContent, code);
 });
 
@@ -3126,9 +3136,9 @@ test("reader reveals figure loading feedback after 100ms and resumes after a loa
       sourceEnd: 9,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-delay" });
-  messageListener({ type: "START_RSVP", text, requestId: "figure-delay", readingContext });
-  const overlay = document.getElementById("__rsvp-reader-root");
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "figure-delay" });
+  messageListener({ type: "START_READER", text, requestId: "figure-delay", readingContext });
+  const overlay = document.getElementById("__reader-root");
   let figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   while (!figurePanel) {
     const [timerId, timer] = [...timers.entries()][0];
@@ -3154,7 +3164,7 @@ test("reader reveals figure loading feedback after 100ms and resumes after a loa
   assert.ok(resumeButton);
   resumeButton.dispatchEvent({ type: "click" });
   assert.equal(findElement(overlay, (element) => element.attributes["data-reader-position-kind"] === "figure"), null);
-  assert.match(findElement(overlay, (element) => element.attributes["data-reader-unit"] === "true").textContent, /後の文/u);
+  assert.match(findElement(overlay, (element) => element.attributes["data-reader-spot"] === "true").textContent, /後の文/u);
 });
 
 test("reader ignores a stale figure completion after switching modes", async () => {
@@ -3177,9 +3187,9 @@ test("reader ignores a stale figure completion after switching modes", async () 
       sourceEnd: 9,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-stale" });
-  messageListener({ type: "START_RSVP", text, requestId: "figure-stale", readingContext });
-  const overlay = document.getElementById("__rsvp-reader-root");
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "figure-stale" });
+  messageListener({ type: "START_READER", text, requestId: "figure-stale", readingContext });
+  const overlay = document.getElementById("__reader-root");
   let oldPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   while (!oldPanel) {
     const [timerId, timer] = [...timers.entries()][0];
@@ -3188,9 +3198,9 @@ test("reader ignores a stale figure completion after switching modes", async () 
     oldPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   }
   const oldImage = findElement(oldPanel, (element) => element.tagName === "IMG");
-  const modeButton = findElementByText(overlay, "文章で読む");
+  const modeButton = findElementByText(overlay, "Page");
   modeButton.dispatchEvent({ type: "click" });
-  findElementByText(overlay, "RSVPで読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "Spots").dispatchEvent({ type: "click" });
   const currentPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   const currentStatus = findElement(currentPanel, (element) => element.attributes["data-reader-figure-status"] === "true");
   oldImage.dispatchEvent({ type: "load" });
@@ -3215,9 +3225,9 @@ test("reader preserves the order of figures that share one source offset", () =>
       { src: "https://example.com/two.png", alt: "二枚目", caption: "図B", sourceOffset: 7, sourceEnd: 8 },
     ],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-same-offset" });
-  messageListener({ type: "START_RSVP", text, requestId: "figure-same-offset", readingContext });
-  const overlay = document.getElementById("__rsvp-reader-root");
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "figure-same-offset" });
+  messageListener({ type: "START_READER", text, requestId: "figure-same-offset", readingContext });
+  const overlay = document.getElementById("__reader-root");
   let firstPanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   while (!firstPanel) {
     const [timerId, timer] = [...timers.entries()][0];
@@ -3232,7 +3242,7 @@ test("reader preserves the order of figures that share one source offset", () =>
   assert.ok(findElementByText(secondPanel, "図B"));
 });
 
-test("reader preserves same-offset figure order in text mode", () => {
+test("reader preserves same-offset figure order in Page mode", () => {
   const { document, messageListener } = createFigureReaderHarness();
   const text = "前の文です。図図図後の文です。";
   const readingContext = {
@@ -3249,14 +3259,14 @@ test("reader preserves same-offset figure order in text mode", () => {
       { src: "https://example.com/three.png", alt: "三枚目", caption: "図C", sourceOffset: 7, sourceEnd: 8 },
     ],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-same-offset-figures" });
-  messageListener({ type: "START_RSVP", text, requestId: "text-same-offset-figures", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "text-same-offset-figures" });
+  messageListener({ type: "START_READER", text, requestId: "text-same-offset-figures", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const overlay = document.getElementById("__reader-root");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
   const figureMarkers = findElements(
-    textShell,
+    pageShell,
     (element) => element.dataset.readerPositionKind === "figure",
   );
 
@@ -3276,19 +3286,19 @@ test("reader shows an extracted title before a different first block", () => {
     initialHeadingIndex: -1,
     figures: [],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "title-different-block" });
-  messageListener({ type: "START_RSVP", text, requestId: "title-different-block", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "title-different-block" });
+  messageListener({ type: "START_READER", text, requestId: "title-different-block", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const titleHeadings = findElements(textShell, (element) => element.tagName === "H1");
-  const article = findElement(textShell, (element) => element.tagName === "ARTICLE");
+  const overlay = document.getElementById("__reader-root");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+  const titleHeadings = findElements(pageShell, (element) => element.tagName === "H1");
+  const article = findElement(pageShell, (element) => element.tagName === "ARTICLE");
 
   assert.equal(titleHeadings.length, 1);
   assert.equal(titleHeadings[0].textContent, title);
   assert.deepEqual(article.children.map((element) => element.tagName), ["H1", "P"]);
-  assert.equal(findElement(textShell, (element) => element.tagName === "P").children.length, 2);
+  assert.equal(findElement(pageShell, (element) => element.tagName === "P").children.length, 2);
 });
 
 test("reader does not duplicate an extracted title already present in the first h1 block", () => {
@@ -3307,13 +3317,13 @@ test("reader does not duplicate an extracted title already present in the first 
     initialHeadingIndex: 0,
     figures: [],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "title-existing-heading" });
-  messageListener({ type: "START_RSVP", text, requestId: "title-existing-heading", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "title-existing-heading" });
+  messageListener({ type: "START_READER", text, requestId: "title-existing-heading", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const titleHeadings = findElements(textShell, (element) => element.tagName === "H1");
+  const overlay = document.getElementById("__reader-root");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+  const titleHeadings = findElements(pageShell, (element) => element.tagName === "H1");
 
   assert.equal(titleHeadings.length, 1);
 });
@@ -3330,15 +3340,15 @@ test("reader omits an empty extracted title", () => {
     initialHeadingIndex: -1,
     figures: [],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "title-empty" });
-  messageListener({ type: "START_RSVP", text, requestId: "title-empty", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "title-empty" });
+  messageListener({ type: "START_READER", text, requestId: "title-empty", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const overlay = document.getElementById("__reader-root");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
 
-  assert.equal(findElements(textShell, (element) => element.tagName === "H1").length, 0);
-  assert.ok(findElement(textShell, (element) => element.tagName === "P"));
+  assert.equal(findElements(pageShell, (element) => element.tagName === "H1").length, 0);
+  assert.ok(findElement(pageShell, (element) => element.tagName === "P"));
 });
 
 test("reader omits an empty title for a selection range", () => {
@@ -3353,15 +3363,15 @@ test("reader omits an empty title for a selection range", () => {
     initialHeadingIndex: -1,
     figures: [],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "selection-title-empty" });
-  messageListener({ type: "START_RSVP", text, requestId: "selection-title-empty", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "selection-title-empty" });
+  messageListener({ type: "START_READER", text, requestId: "selection-title-empty", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
+  const overlay = document.getElementById("__reader-root");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
 
-  assert.equal(findElements(textShell, (element) => element.tagName === "H1").length, 0);
-  assert.ok(findElement(textShell, (element) => element.tagName === "P"));
+  assert.equal(findElements(pageShell, (element) => element.tagName === "H1").length, 0);
+  assert.ok(findElement(pageShell, (element) => element.tagName === "P"));
 });
 
 test("reader keeps source position and progress unchanged when adding an extracted title", () => {
@@ -3377,34 +3387,34 @@ test("reader keeps source position and progress unchanged when adding an extract
     initialHeadingIndex: -1,
     figures: [],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "title-position" });
-  messageListener({ type: "START_RSVP", text, requestId: "title-position", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "title-position" });
+  messageListener({ type: "START_READER", text, requestId: "title-position", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const initialState = sessionState();
   const initialProgress = findElement(overlay, (element) => element.attributes["data-reader-progress"] === "true").textContent;
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-  const titleHeading = findElement(textShell, (element) => element.tagName === "H1");
-  const textProgress = findElement(textShell, (element) => element.attributes["data-reader-progress"] === "true");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+  const titleHeading = findElement(pageShell, (element) => element.tagName === "H1");
+  const pageProgress = findElement(pageShell, (element) => element.attributes["data-reader-progress"] === "true");
 
   assert.ok(titleHeading);
   assert.equal(titleHeading.textContent, title);
   assert.equal(titleHeading.attributes["data-reader-position-kind"], undefined);
   assert.equal(titleHeading.attributes["data-source-start"], undefined);
-  assert.equal(textProgress.textContent, initialProgress);
+  assert.equal(pageProgress.textContent, initialProgress);
   assert.equal(sessionState().sourceOffset, initialState.sourceOffset);
   assert.equal(sessionState().position.kind, initialState.position.kind);
   assert.equal(sessionState().position.sourceOffset, initialState.position.sourceOffset);
 
-  findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
+  findElementByText(pageShell, "Spots").dispatchEvent({ type: "click" });
   assert.equal(sessionState().sourceOffset, initialState.sourceOffset);
   assert.equal(sessionState().position.kind, initialState.position.kind);
   assert.equal(sessionState().position.sourceOffset, initialState.position.sourceOffset);
   assert.equal(findElement(overlay, (element) => element.attributes["data-reader-progress"] === "true").textContent, initialProgress);
 });
 
-test("reader preserves an article-leading figure through a text round trip", () => {
+test("reader preserves an article-leading figure through a Page round trip", () => {
   const { document, messageListener, sessionState } = createFigureReaderHarness();
   const text = "図A\n本文です。";
   const readingContext = {
@@ -3423,46 +3433,46 @@ test("reader preserves an article-leading figure through a text round trip", () 
       sourceEnd: 2,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "leading-figure-round-trip" });
-  messageListener({ type: "START_RSVP", text, requestId: "leading-figure-round-trip", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "leading-figure-round-trip" });
+  messageListener({ type: "START_READER", text, requestId: "leading-figure-round-trip", readingContext });
 
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const initialFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   assert.ok(initialFigure);
   assert.equal(initialFigure.dataset.figureIndex, "0");
   assert.equal(sessionState()?.position.kind, "figure");
   assert.equal(sessionState()?.position.sourceOffset, 0);
 
-  const restoreGeometry = installTextFigureGeometry();
+  const restoreGeometry = installPageFigureGeometry();
   try {
-    findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-    const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-    const textFigure = findElement(textShell, (element) => element.attributes["data-reader-text-figure"] === "true");
-    const textScroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
-    assert.ok(textFigure && textScroller);
-    assert.equal(textFigure.dataset.figureIndex, "0");
-    assert.equal(textFigure.dataset.sourceStart, "0");
-    const firstGeometry = textFigure.getBoundingClientRect();
-    const firstScrollerGeometry = textScroller.getBoundingClientRect();
-    assert.equal(textScroller.scrollTop, 348);
+    findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+    const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+    const pageFigure = findElement(pageShell, (element) => element.attributes["data-reader-page-figure"] === "true");
+    const pageScroller = findElement(pageShell, (element) => element.attributes["data-reader-page-scroller"] === "true");
+    assert.ok(pageFigure && pageScroller);
+    assert.equal(pageFigure.dataset.figureIndex, "0");
+    assert.equal(pageFigure.dataset.sourceStart, "0");
+    const firstGeometry = pageFigure.getBoundingClientRect();
+    const firstScrollerGeometry = pageScroller.getBoundingClientRect();
+    assert.equal(pageScroller.scrollTop, 348);
     assert.equal(firstGeometry.top, firstScrollerGeometry.top + 72);
     assert.equal(firstGeometry.bottom, firstGeometry.top + 120);
 
-    findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
+    findElementByText(pageShell, "Spots").dispatchEvent({ type: "click" });
     const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
     assert.ok(restoredFigure);
     assert.equal(restoredFigure.dataset.figureIndex, "0");
     assert.equal(sessionState()?.currentKind, "figure");
     assert.equal(sessionState()?.playback, "paused");
 
-    findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-    const restoredTextShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-    const restoredTextFigure = findElement(restoredTextShell, (element) => element.attributes["data-reader-text-figure"] === "true");
-    const restoredTextScroller = findElement(restoredTextShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
-    assert.ok(restoredTextFigure && restoredTextScroller);
-    const restoredGeometry = restoredTextFigure.getBoundingClientRect();
-    const restoredScrollerGeometry = restoredTextScroller.getBoundingClientRect();
-    assert.equal(restoredTextScroller.scrollTop, 348);
+    findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+    const restoredPageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+    const restoredPageFigure = findElement(restoredPageShell, (element) => element.attributes["data-reader-page-figure"] === "true");
+    const restoredPageScroller = findElement(restoredPageShell, (element) => element.attributes["data-reader-page-scroller"] === "true");
+    assert.ok(restoredPageFigure && restoredPageScroller);
+    const restoredGeometry = restoredPageFigure.getBoundingClientRect();
+    const restoredScrollerGeometry = restoredPageScroller.getBoundingClientRect();
+    assert.equal(restoredPageScroller.scrollTop, 348);
     assert.equal(restoredGeometry.top, restoredScrollerGeometry.top + 72);
     assert.equal(restoredGeometry.bottom, restoredGeometry.top + 120);
   } finally {
@@ -3470,7 +3480,7 @@ test("reader preserves an article-leading figure through a text round trip", () 
   }
 });
 
-test("reader preserves an article-ending figure through a text round trip", () => {
+test("reader preserves an article-ending figure through a Page round trip", () => {
   const { document, messageListener, timers, sessionState } = createFigureReaderHarness();
   const leadingText = "本文です。";
   const figureOffset = leadingText.length + 1;
@@ -3491,8 +3501,8 @@ test("reader preserves an article-ending figure through a text round trip", () =
       sourceEnd: text.length,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "ending-figure-round-trip" });
-  messageListener({ type: "START_RSVP", text, requestId: "ending-figure-round-trip", readingContext });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "ending-figure-round-trip" });
+  messageListener({ type: "START_READER", text, requestId: "ending-figure-round-trip", readingContext });
 
   while (sessionState()?.currentKind !== "figure") {
     const entry = [...timers.entries()][0];
@@ -3500,42 +3510,42 @@ test("reader preserves an article-ending figure through a text round trip", () =
     timers.delete(entry[0]);
     entry[1].callback();
   }
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const initialFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   assert.ok(initialFigure);
   assert.equal(initialFigure.dataset.figureIndex, "0");
   assert.equal(initialFigure.dataset.sourceStart, String(figureOffset));
 
-  const restoreGeometry = installTextFigureGeometry();
+  const restoreGeometry = installPageFigureGeometry();
   try {
-    findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-    const textShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-    const textFigure = findElement(textShell, (element) => element.attributes["data-reader-text-figure"] === "true");
-    const textScroller = findElement(textShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
-    assert.ok(textFigure && textScroller);
-    assert.equal(textFigure.dataset.figureIndex, "0");
-    assert.equal(textFigure.dataset.sourceStart, String(figureOffset));
-    const firstGeometry = textFigure.getBoundingClientRect();
-    const firstScrollerGeometry = textScroller.getBoundingClientRect();
-    assert.equal(textScroller.scrollTop, 348);
+    findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+    const pageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+    const pageFigure = findElement(pageShell, (element) => element.attributes["data-reader-page-figure"] === "true");
+    const pageScroller = findElement(pageShell, (element) => element.attributes["data-reader-page-scroller"] === "true");
+    assert.ok(pageFigure && pageScroller);
+    assert.equal(pageFigure.dataset.figureIndex, "0");
+    assert.equal(pageFigure.dataset.sourceStart, String(figureOffset));
+    const firstGeometry = pageFigure.getBoundingClientRect();
+    const firstScrollerGeometry = pageScroller.getBoundingClientRect();
+    assert.equal(pageScroller.scrollTop, 348);
     assert.equal(firstGeometry.top, firstScrollerGeometry.top + 72);
     assert.equal(firstGeometry.bottom, firstGeometry.top + 120);
 
-    findElementByText(textShell, "RSVPで読む").dispatchEvent({ type: "click" });
+    findElementByText(pageShell, "Spots").dispatchEvent({ type: "click" });
     const restoredFigure = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
     assert.ok(restoredFigure);
     assert.equal(restoredFigure.dataset.figureIndex, "0");
     assert.equal(sessionState()?.currentKind, "figure");
     assert.equal(sessionState()?.playback, "paused");
 
-    findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-    const restoredTextShell = findElement(overlay, (element) => element.attributes["data-reader-text-shell"] === "true");
-    const restoredTextFigure = findElement(restoredTextShell, (element) => element.attributes["data-reader-text-figure"] === "true");
-    const restoredTextScroller = findElement(restoredTextShell, (element) => element.attributes["data-reader-text-scroller"] === "true");
-    assert.ok(restoredTextFigure && restoredTextScroller);
-    const restoredGeometry = restoredTextFigure.getBoundingClientRect();
-    const restoredScrollerGeometry = restoredTextScroller.getBoundingClientRect();
-    assert.equal(restoredTextScroller.scrollTop, 348);
+    findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+    const restoredPageShell = findElement(overlay, (element) => element.attributes["data-reader-page-shell"] === "true");
+    const restoredPageFigure = findElement(restoredPageShell, (element) => element.attributes["data-reader-page-figure"] === "true");
+    const restoredPageScroller = findElement(restoredPageShell, (element) => element.attributes["data-reader-page-scroller"] === "true");
+    assert.ok(restoredPageFigure && restoredPageScroller);
+    const restoredGeometry = restoredPageFigure.getBoundingClientRect();
+    const restoredScrollerGeometry = restoredPageScroller.getBoundingClientRect();
+    assert.equal(restoredPageScroller.scrollTop, 348);
     assert.equal(restoredGeometry.top, restoredScrollerGeometry.top + 72);
     assert.equal(restoredGeometry.bottom, restoredGeometry.top + 120);
   } finally {
@@ -3564,17 +3574,17 @@ test("reader returns from an image to the previous sentence and stays paused", a
       },
     ],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-navigation-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "figure-navigation-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "結果を図1に示します。\n図1 処理時間\n次の説明です。",
     requestId: "figure-navigation-request",
     readingContext,
   });
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
   const display = findElement(
     overlay,
-    isRsvpDisplay,
+    isSpotsDisplay,
   );
   const [firstTimerId, firstTimer] = [...timers.entries()][0];
   timers.delete(firstTimerId);
@@ -3624,7 +3634,7 @@ test("reader returns from an image to the previous sentence and stays paused", a
   assert.ok(timers.size > 0);
 });
 
-test("reader shows the article image on a light surface in text mode", () => {
+test("reader shows the article image on a light surface in Page mode", () => {
   const { document, messageListener } = createFigureReaderHarness();
   const readingContext = {
     blocks: [
@@ -3645,37 +3655,37 @@ test("reader shows the article image on a light surface in text mode", () => {
       },
     ],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "figure-text-request" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "figure-text-request" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "結果を図1に示します。\n図1 処理時間\n次の説明です。",
     requestId: "figure-text-request",
     readingContext,
   });
-  const overlay = document.getElementById("__rsvp-reader-root");
+  const overlay = document.getElementById("__reader-root");
 
-  const textModeButton = findElementByText(overlay, "文章で読む");
-  textModeButton.dispatchEvent({ type: "click" });
-  const textFigure = findElement(
+  const pageModeButton = findElementByText(overlay, "Page");
+  pageModeButton.dispatchEvent({ type: "click" });
+  const pageFigure = findElement(
     overlay,
-    (element) => element.attributes["data-reader-text-figure"] === "true",
+    (element) => element.attributes["data-reader-page-figure"] === "true",
   );
-  const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
+  const pageImage = findElement(pageFigure, (element) => element.tagName === "IMG");
   const textVeil = findElement(
-    textFigure,
+    pageFigure,
     (element) => element.attributes["data-reader-image-veil"] === "true",
   );
   const textSurface = findElement(
-    textFigure,
+    pageFigure,
     (element) => element.attributes["data-reader-image-surface"] === "true",
   );
-  assert.equal(textImage.src, "https://example.com/chart.png");
+  assert.equal(pageImage.src, "https://example.com/chart.png");
   assert.equal(textSurface.style.background, "#fff");
   assert.equal(textVeil.style.opacity, "0");
-  assert.ok(findElementByText(textFigure, "図1 処理時間"));
+  assert.ok(findElementByText(pageFigure, "図1 処理時間"));
 });
 
-test("reader preserves the text marker when an earlier responsive text image changes layout", () => {
+test("reader preserves the text marker when an earlier responsive Page image changes layout", () => {
   const { document, messageListener, timers } = createFigureReaderHarness();
   const text = "前の文です。\n図1\n後の文です。";
   const readingContext = {
@@ -3697,9 +3707,9 @@ test("reader preserves the text marker when an earlier responsive text image cha
       sourceEnd: 9,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-correction-before" });
-  messageListener({ type: "START_RSVP", text, requestId: "text-correction-before", readingContext });
-  const overlay = document.getElementById("__rsvp-reader-root");
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "text-correction-before" });
+  messageListener({ type: "START_READER", text, requestId: "text-correction-before", readingContext });
+  const overlay = document.getElementById("__reader-root");
   let figurePanel = findElement(overlay, (element) => element.attributes["aria-label"] === "本文画像");
   while (!figurePanel) {
     const entry = [...timers.entries()][0];
@@ -3711,19 +3721,19 @@ test("reader preserves the text marker when an earlier responsive text image cha
   const figureImage = findElement(figurePanel, (element) => element.tagName === "IMG");
   figureImage.dispatchEvent({ type: "error" });
   findElement(overlay, (element) => element.attributes["aria-label"] === "続きを読む").dispatchEvent({ type: "click" });
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
 
-  const scroller = findElement(overlay, (element) => element.attributes["data-reader-text-scroller"] === "true");
+  const scroller = findElement(overlay, (element) => element.attributes["data-reader-page-scroller"] === "true");
   const afterImageMarker = findElement(
     scroller,
     (element) => element.dataset.readerPositionKind === "text"
       && Number(element.dataset.sourceStart) > 7,
   );
-  const textFigure = findElement(scroller, (element) => element.attributes["data-reader-text-figure"] === "true");
-  const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
-  assert.ok(scroller && afterImageMarker && textImage);
-  assert.equal(textImage.srcset, "https://example.com/delayed-text@1x.png 1x, https://example.com/delayed-text@2x.png 2x");
-  assert.equal(textImage.sizes, "100vw");
+  const pageFigure = findElement(scroller, (element) => element.attributes["data-reader-page-figure"] === "true");
+  const pageImage = findElement(pageFigure, (element) => element.tagName === "IMG");
+  assert.ok(scroller && afterImageMarker && pageImage);
+  assert.equal(pageImage.srcset, "https://example.com/delayed-text@1x.png 1x, https://example.com/delayed-text@2x.png 2x");
+  assert.equal(pageImage.sizes, "100vw");
   const initialScrollTop = scroller.scrollTop;
   let adjustedScrollTop = initialScrollTop;
   Object.defineProperty(scroller, "scrollTop", {
@@ -3743,13 +3753,13 @@ test("reader preserves the text marker when an earlier responsive text image cha
     },
   });
   afterImageMarker.rect = { top: 100, bottom: 200, left: 0, right: 390, width: 390, height: 100 };
-  textImage.dispatchEvent({ type: "load" });
+  pageImage.dispatchEvent({ type: "load" });
 
   assert.equal(afterImageMarker.getBoundingClientRect().top, 0);
   assert.equal(scroller.scrollTop, initialScrollTop + 100);
 });
 
-test("reader leaves scroll position unchanged for a text image below the marker", () => {
+test("reader leaves scroll position unchanged for a Page image below the marker", () => {
   const { document, messageListener } = createFigureReaderHarness();
   const text = "前の文です。\n図1\n後の文です。";
   const readingContext = {
@@ -3769,48 +3779,48 @@ test("reader leaves scroll position unchanged for a text image below the marker"
       sourceEnd: 9,
     }],
   };
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "text-correction-after" });
-  messageListener({ type: "START_RSVP", text, requestId: "text-correction-after", readingContext });
-  const overlay = document.getElementById("__rsvp-reader-root");
-  findElementByText(overlay, "文章で読む").dispatchEvent({ type: "click" });
-  const scroller = findElement(overlay, (element) => element.attributes["data-reader-text-scroller"] === "true");
-  const textFigure = findElement(scroller, (element) => element.attributes["data-reader-text-figure"] === "true");
-  const textImage = findElement(textFigure, (element) => element.tagName === "IMG");
-  assert.ok(scroller && textImage);
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "text-correction-after" });
+  messageListener({ type: "START_READER", text, requestId: "text-correction-after", readingContext });
+  const overlay = document.getElementById("__reader-root");
+  findElementByText(overlay, "Page").dispatchEvent({ type: "click" });
+  const scroller = findElement(overlay, (element) => element.attributes["data-reader-page-scroller"] === "true");
+  const pageFigure = findElement(scroller, (element) => element.attributes["data-reader-page-figure"] === "true");
+  const pageImage = findElement(pageFigure, (element) => element.tagName === "IMG");
+  assert.ok(scroller && pageImage);
   const initialScrollTop = scroller.scrollTop;
-  textImage.dispatchEvent({ type: "load" });
+  pageImage.dispatchEvent({ type: "load" });
   assert.equal(scroller.scrollTop, initialScrollTop);
 });
 
 test("reader removes closed content, ignores a saved timer, and reopens fresh content", () => {
   const harness = createOutlineReaderHarness();
   const { document, messageListener, timers } = harness;
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "cleanup-first" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "cleanup-first" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "最初の本文です。次の文です。",
     requestId: "cleanup-first",
   });
 
-  const firstOverlay = document.getElementById("__rsvp-reader-root");
+  const firstOverlay = document.getElementById("__reader-root");
   const savedTimerCallback = [...timers.values()][0].callback;
   const closeButton = findElement(firstOverlay, (element) => element.attributes["aria-label"] === "readerを閉じる");
   closeButton.dispatchEvent({ type: "click" });
-  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(document.getElementById("__reader-root"), null);
 
   savedTimerCallback();
-  assert.equal(document.getElementById("__rsvp-reader-root"), null);
+  assert.equal(document.getElementById("__reader-root"), null);
 
-  messageListener({ type: "SHOW_RSVP_LOADING", requestId: "cleanup-second" });
+  messageListener({ type: "SHOW_READER_LOADING", requestId: "cleanup-second" });
   messageListener({
-    type: "START_RSVP",
+    type: "START_READER",
     text: "新しい本文です。",
     requestId: "cleanup-second",
   });
-  const secondOverlay = document.getElementById("__rsvp-reader-root");
+  const secondOverlay = document.getElementById("__reader-root");
   const secondDisplay = findElement(
     secondOverlay,
-    isRsvpDisplay,
+    isSpotsDisplay,
   );
   assert.match(secondDisplay.textContent, /新しい本文/u);
   assert.equal(findElementContainingText(secondOverlay, "最初の本文"), null);

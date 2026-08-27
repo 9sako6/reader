@@ -1,6 +1,6 @@
 # Chrome拡張
 
-Chrome 116以降でページ本文を読み取ります。Desktop Viewerでは、記事の構成を見ながら文章表示とRSVPを切り替えられます。
+Chrome 116以降でページ本文を読み取ります。Desktop Viewerでは、記事の構成を見ながらPageとSpotsを切り替えられます。
 
 ## ビルド
 

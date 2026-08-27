@@ -10,6 +10,6 @@ pub use command::ReaderSessionCommand;
 pub use effect::ReaderSessionEffect;
 pub use state::{
     Figure, FlowItem, Mode, ObservableState, Playback, Position, PreparationFailure,
-    PreparationInput, ReaderSessionState, ReaderUnit, ReaderUnitKind,
+    PreparationInput, ReaderSessionState, Spot, SpotKind,
 };
 pub use transition::{Transition, initial_state, reduce};
