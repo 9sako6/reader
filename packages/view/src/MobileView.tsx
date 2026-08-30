@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactElement } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, type ReactElement } from "react";
 import { ErrorView } from "./ErrorView";
 import { Figure } from "./Figure";
 import { LoadingView } from "./LoadingView";
@@ -23,9 +23,18 @@ function MobileContext({ position, text, reducedMotion }: { position: "previous"
 }
 
 export function MobileView({ screen, handlers }: { screen: ReaderScreen; handlers: MobileReaderViewHandlers }): ReactElement {
+  const deferredScreen = useDeferredValue(screen);
+  const cachedPageScreen = useRef<Extract<ReaderScreen, { kind: "page" }> | null>(null);
+  if (deferredScreen.kind === "page") cachedPageScreen.current = deferredScreen;
+  const pageScreen = cachedPageScreen.current;
+  const pageChildren = useMemo(
+    () => pageScreen ? orderedPageChildren(pageScreen, handlers) : [],
+    [pageScreen?.blocks, pageScreen?.figures, pageScreen?.title],
+  );
   if (screen.kind === "loading") return <LoadingView layout="mobile" screen={screen} handlers={handlers} />;
   if (screen.kind === "error") return <ErrorView layout="mobile" screen={screen} handlers={handlers} />;
   const spots = screen.kind !== "page";
+  const pageVisible = !spots && deferredScreen.kind === "page";
   const spotScreen = screen.kind === "spot" ? screen : null;
   const figureScreen = screen.kind === "spot-figure" ? screen : null;
   return (
@@ -66,14 +75,16 @@ export function MobileView({ screen, handlers }: { screen: ReaderScreen; handler
             </div>
             {screen.rewindFeedback ? <RewindFeedback key={`rewind-${screen.rewindFeedback.id}`} feedback={screen.rewindFeedback} reducedMotion={screen.reducedMotion} animate={handlers.rewindAnimation} onDone={handlers.rewindFeedbackDone} /> : null}
           </>
-        ) : (
-          <PageScroller tagName="div" className="page-view" handlers={handlers}>
+        ) : null}
+        {!spots && !pageVisible ? <div className="page-view" data-reader-page-pending="true" /> : null}
+        {pageScreen ? (
+          <PageScroller tagName="div" className="page-view" handlers={handlers} hidden={!pageVisible}>
             <article className="article">
-              {screen.title ? <h1 className="article-title">{screen.title}</h1> : null}
-              {orderedPageChildren(screen, handlers)}
+              {pageScreen.title ? <h1 className="article-title">{pageScreen.title}</h1> : null}
+              {pageChildren}
             </article>
           </PageScroller>
-        )}
+        ) : null}
       </main>
     </section>
   );

@@ -213,6 +213,12 @@ function fireTimerWithDelay(timers, delay) {
   entry[1].callback();
 }
 
+async function finishDeferredPageRender() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 test("Safari extension loads reader resources in dependency order", () => {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   assert.equal(manifest.manifest_version, 3);
@@ -1515,6 +1521,7 @@ test("Safari reader maps Page viewport positions back to Spots content", async (
   ));
 
   pageModeButton.dispatchEvent({ type: "click" });
+  await finishDeferredPageRender();
   const scroller = findElement(documentElement, (element) => element.className === "page-view");
   const anchors = findElements(
     scroller,
@@ -1624,6 +1631,7 @@ test("Safari reader uses shared Page and figure position markers", async () => {
   const pageModeButton = findElement(documentElement, (element) => element.textContent === "Page");
   const spotsModeButton = findElement(documentElement, (element) => element.textContent === "Spots");
   pageModeButton.dispatchEvent({ type: "click" });
+  await finishDeferredPageRender();
 
   const scroller = findElement(documentElement, (element) => element.className === "page-view");
   const anchors = findElements(scroller, (element) => element.attributes["data-reader-text-anchor"] === "true");
@@ -1642,7 +1650,7 @@ test("Safari reader uses shared Page and figure position markers", async () => {
   scroller.dispatchEvent({ type: "scroll" });
   spotsModeButton.dispatchEvent({ type: "click" });
 
-  const figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
+  const figurePanel = findElement(documentElement, (element) => element.className === "spot-figure");
   assert.ok(figurePanel);
   assert.equal(figurePanel.dataset.figureIndex, "0");
   assert.equal(figurePanel.dataset.sourceStart, "27");
@@ -1660,6 +1668,7 @@ test("Safari reader preserves the text marker when an earlier responsive Page im
   figureImage.dispatchEvent({ type: "error" });
   findElement(documentElement, (element) => element.attributes["aria-label"] === "続きを読む").dispatchEvent({ type: "click" });
   findElement(documentElement, (element) => element.textContent === "Page").dispatchEvent({ type: "click" });
+  await finishDeferredPageRender();
 
   const scroller = findElement(documentElement, (element) => element.className === "page-view");
   const afterImageMarker = findElement(
@@ -1701,6 +1710,7 @@ test("Safari reader leaves scroll position unchanged for a Page image below the 
   const { context, documentElement } = createSafariReaderHarness();
   await context.MobileViewer.open();
   findElement(documentElement, (element) => element.textContent === "Page").dispatchEvent({ type: "click" });
+  await finishDeferredPageRender();
   const scroller = findElement(documentElement, (element) => element.className === "page-view");
   const pageFigure = findElement(scroller, (element) => element.className === "article-figure");
   const pageImage = findElement(pageFigure, (element) => element.tagName === "IMG");
@@ -1716,6 +1726,7 @@ test("Safari reader ignores a clipped figure even when its center is readable", 
   const pageModeButton = findElement(documentElement, (element) => element.textContent === "Page");
   const spotsModeButton = findElement(documentElement, (element) => element.textContent === "Spots");
   pageModeButton.dispatchEvent({ type: "click" });
+  await finishDeferredPageRender();
 
   const scroller = findElement(documentElement, (element) => element.className === "page-view");
   const anchors = findElements(scroller, (element) => element.attributes["data-reader-text-anchor"] === "true");
@@ -1729,7 +1740,7 @@ test("Safari reader ignores a clipped figure even when its center is readable", 
   scroller.dispatchEvent({ type: "scroll" });
   spotsModeButton.dispatchEvent({ type: "click" });
 
-  const figurePanel = findElement(documentElement, (element) => element.attributes["aria-label"] === "本文画像");
+  const figurePanel = findElement(documentElement, (element) => element.className === "spot-figure");
   const unit = findElement(documentElement, (element) => element.attributes["data-reader-spot"] === "true");
   assert.equal(Boolean(figurePanel), false);
   assert.equal(unit.dataset.readerPositionKind, "text");

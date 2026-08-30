@@ -20,6 +20,20 @@ const figures = [
   { sourceOffset: 120, sourceEnd: 120 },
   { sourceOffset: 420, sourceEnd: 420 },
 ];
+const contextUnits = Array.from({ length: 400 }, (_, sentenceIndex) => ({
+  text: `文${sentenceIndex}。`,
+  sentenceIndex,
+  kind: "body",
+  start: sentenceIndex * 8,
+  end: sentenceIndex * 8 + 4,
+}));
+const spotUnits = Array.from({ length: 400 }, (_, sentenceIndex) => ({
+  text: "高速な表示を継続して検証します。",
+  sentenceIndex,
+  kind: "body",
+  start: sentenceIndex * 16,
+  end: sentenceIndex * 16 + 16,
+}));
 
 function loadEngine(root) {
   const modulePath = resolve(root, ".build/packages/engine/src/engine.js");
@@ -54,9 +68,26 @@ function flow(engine) {
   }
 }
 
+function contexts(engine) {
+  const values = typeof engine.buildSurroundingSentenceContexts === "function"
+    ? engine.buildSurroundingSentenceContexts(contextUnits)
+    : contextUnits.map((_, index) => engine.surroundingSentences(contextUnits, index));
+  consume(values);
+}
+
+function spots(engine) {
+  consume(engine.buildSpots(spotUnits, {
+    locale: "ja",
+    maxWidth: 8,
+    measureText: (text) => text.length,
+  }));
+}
+
 const fixtures = [
   ["segment", segment],
   ["flow", flow],
+  ["contexts", contexts],
+  ["spots", spots],
 ];
 
 for (const [fixtureName, runFixture] of fixtures) {

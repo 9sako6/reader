@@ -148,7 +148,7 @@ export function reflowReaderDocument(
   return {
     ...document,
     spots,
-    spotContexts: spots.map((_spot, index) => engine.surroundingSentences(spots, index)),
+    spotContexts: engine.buildSurroundingSentenceContexts(spots),
     flow: engine.buildReadingFlow(spots, document.figures),
   };
 }

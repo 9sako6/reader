@@ -58,6 +58,7 @@ export interface ReaderEngine {
   findActiveHeadingIndex(transitions: ReaderSectionTransition[], currentOffset: number, fallbackIndex?: number): number;
   calculateReadingProgress(currentEnd: number, sourceLength: number): number;
   findUnitIndex(units: ReaderUnit[], offset: number): number;
+  buildSurroundingSentenceContexts(units: ReaderUnit[]): Array<{ previous: string; next: string }>;
   surroundingSentences(units: ReaderUnit[], currentIndex: number): { previous: string; next: string };
   displayDuration(
     unit: Pick<ReaderUnit, "text" | "sentenceIndex">,

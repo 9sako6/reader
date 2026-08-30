@@ -8,7 +8,7 @@ const { spawnSync } = require("node:child_process");
 
 function regressingVitestReport({ sampleCount = 10, candidateMedian = 20 } = {}) {
   const benchmarks = [];
-  for (const fixture of ["segment", "flow"]) {
+  for (const fixture of ["segment", "flow", "contexts", "spots"]) {
     for (let run = 0; run < 20; run += 1) {
       const first = run % 2 === 0 ? "main" : "candidate";
       const second = first === "main" ? "candidate" : "main";

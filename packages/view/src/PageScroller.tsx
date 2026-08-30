@@ -5,11 +5,13 @@ export function PageScroller({
   tagName,
   className,
   handlers,
+  hidden = false,
   children,
 }: {
   tagName: "main" | "div";
   className: string;
   handlers: ReaderViewHandlers;
+  hidden?: boolean;
   children: ReactNode;
 }): ReactElement {
   const pageScrollHandler = useRef(handlers.pageScroll);
@@ -22,16 +24,16 @@ export function PageScroller({
   }, []);
   useLayoutEffect(() => {
     const element = elementRef.current;
-    if (!element) return;
+    if (!element || hidden) return;
     pageScrollHandler.current(element);
     return () => pageScrollHandler.current(null);
-  }, []);
+  }, [hidden]);
   const onScroll = useCallback((event: { currentTarget: EventTarget | null }) => {
     if (event.currentTarget) pagePositionHandler.current(event.currentTarget as HTMLElement);
   }, []);
   const Tag = tagName;
   return (
-    <Tag className={className} data-reader-page-scroller="true" ref={ref} onScroll={onScroll}>
+    <Tag className={className} data-reader-page-scroller="true" ref={ref} onScroll={onScroll} hidden={hidden}>
       {children}
     </Tag>
   );

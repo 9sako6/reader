@@ -78,6 +78,33 @@ test("reflow changes final spots without changing the extracted document or fixe
   assert.ok(wide.spots.length < narrow.spots.length);
 });
 
+test("reflow builds every Spot context through the bulk engine operation", () => {
+  const source = "一文目です。二文目です。三文目です。";
+  let bulkContextBuilds = 0;
+  const engine = {
+    ...Engine,
+    buildSurroundingSentenceContexts(spots: unknown[]) {
+      bulkContextBuilds += 1;
+      return Engine.buildSurroundingSentenceContexts(spots);
+    },
+    surroundingSentences() {
+      throw new Error("reflow must not rebuild the document context for each Spot");
+    },
+  };
+
+  const document = prepareReaderDocument(content(source), engine, {
+    maxWidth: 20,
+    measureText: graphemeCount,
+  });
+
+  assert.equal(bulkContextBuilds, 1);
+  assert.deepEqual(document.spotContexts, [
+    { previous: "", next: "二文目です。" },
+    { previous: "一文目です。", next: "三文目です。" },
+    { previous: "二文目です。", next: "" },
+  ]);
+});
+
 test("presentReader selects the spot and progress only from ReaderSession state", () => {
   const source = "一文目です。二文目です。三文目です。";
   const document = prepareReaderDocument(content(source), Engine, {

@@ -3,6 +3,7 @@ export {};
 const assert = require("node:assert/strict");
 const {
   findUnitIndex,
+  buildSurroundingSentenceContexts,
   surroundingSentences,
   displayDuration,
   segmentText,
@@ -35,6 +36,15 @@ test("surrounding sentence context stays stable within a sentence", () => {
     next: "最後です。",
   });
   assert.deepEqual(surroundingSentences(units, 0), { previous: "", next: "次の文章です。" });
+});
+
+test("all surrounding sentence contexts are built in one document pass", () => {
+  assert.deepEqual(buildSurroundingSentenceContexts(units), [
+    { previous: "", next: "次の文章です。" },
+    { previous: "最初です。", next: "最後です。" },
+    { previous: "最初です。", next: "最後です。" },
+    { previous: "次の文章です。", next: "" },
+  ]);
 });
 
 test("surrounding sentence context keeps a quote and its following sentence separate", () => {

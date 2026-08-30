@@ -26,14 +26,24 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     sectionPauseMs: 240,
     speedMultiplier: 1,
   });
+  const segmenters = new Map<string, Intl.Segmenter>();
+
+  function segmenter(locale: string, granularity: "grapheme" | "word" | "sentence"): Intl.Segmenter {
+    const key = `${locale}:${granularity}`;
+    const existing = segmenters.get(key);
+    if (existing) return existing;
+    const created = new Intl.Segmenter(locale, { granularity });
+    segmenters.set(key, created);
+    return created;
+  }
 
   function graphemeCount(text: string, locale = "ja"): number {
-    return [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(text)].length;
+    return [...segmenter(locale, "grapheme").segment(text)].length;
   }
 
   function splitSentenceSpans(text: string, locale = "ja"): SentenceSpan[] {
     if (!text) return [];
-    const sentenceSegments = [...new Intl.Segmenter(locale, { granularity: "sentence" }).segment(text)];
+    const sentenceSegments = [...segmenter(locale, "sentence").segment(text)];
     const boundaries = new Set<number>();
     for (const segment of sentenceSegments) boundaries.add(segment.index + segment.segment.length);
     for (let index = 0; index < text.length; index += 1) {
@@ -98,7 +108,7 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     kind: ReaderUnitKind,
   ): ReaderUnit[] {
     if (!text) return [];
-    const pieces = [...new Intl.Segmenter(locale, { granularity: "word" }).segment(text)];
+    const pieces = [...segmenter(locale, "word").segment(text)];
     const units: ReaderUnit[] = [];
     let unitText = "";
     let unitStart = absoluteStart;
@@ -170,8 +180,8 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     measureText: SpotOptions["measureText"],
   ): ReaderUnit[] {
     if (unit.kind === "code" || measureText(unit.text, unit.kind) <= maxWidth) return [{ ...unit }];
-    const graphemes = [...new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(unit.text)];
-    const wordPieces = [...new Intl.Segmenter(locale, { granularity: "word" }).segment(unit.text)];
+    const graphemes = [...segmenter(locale, "grapheme").segment(unit.text)];
+    const wordPieces = [...segmenter(locale, "word").segment(unit.text)];
     const wordBoundaries = new Set<number>();
     for (const piece of wordPieces) {
       if (piece.index > 0) wordBoundaries.add(piece.index);
@@ -180,23 +190,35 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     }
 
     const boundaries = [...graphemes.map((piece) => piece.index), unit.text.length];
+    const boundaryIndices = new Map(boundaries.map((offset, index) => [offset, index]));
+    const sortedWordBoundaries = [...wordBoundaries].sort((left, right) => left - right);
     const partRanges: Array<{ start: number; end: number }> = [];
     let startIndex = 0;
     while (startIndex < graphemes.length) {
       const start = boundaries[startIndex] ?? unit.text.length;
       let fittingEndIndex = startIndex + 1;
-      for (let endIndex = startIndex + 1; endIndex <= graphemes.length; endIndex += 1) {
-        const end = boundaries[endIndex] ?? unit.text.length;
-        if (measureText(unit.text.slice(start, end), unit.kind) > maxWidth) break;
-        fittingEndIndex = endIndex;
+      let lowerEndIndex = startIndex + 1;
+      let upperEndIndex = graphemes.length;
+      while (lowerEndIndex <= upperEndIndex) {
+        const candidateEndIndex = Math.floor((lowerEndIndex + upperEndIndex) / 2);
+        const end = boundaries[candidateEndIndex] ?? unit.text.length;
+        if (measureText(unit.text.slice(start, end), unit.kind) <= maxWidth) {
+          fittingEndIndex = candidateEndIndex;
+          lowerEndIndex = candidateEndIndex + 1;
+        } else upperEndIndex = candidateEndIndex - 1;
       }
       let endIndex = fittingEndIndex;
       const fittingEnd = boundaries[fittingEndIndex] ?? unit.text.length;
-      const preferredBoundary = [...wordBoundaries]
-        .filter((offset) => offset > start && offset <= fittingEnd)
-        .sort((left, right) => right - left)[0];
+      let preferredBoundary: number | undefined;
+      for (let index = sortedWordBoundaries.length - 1; index >= 0; index -= 1) {
+        const offset = sortedWordBoundaries[index];
+        if (offset !== undefined && offset <= fittingEnd) {
+          if (offset > start) preferredBoundary = offset;
+          break;
+        }
+      }
       if (preferredBoundary !== undefined) {
-        const preferredIndex = boundaries.indexOf(preferredBoundary);
+        const preferredIndex = boundaryIndices.get(preferredBoundary) ?? -1;
         if (preferredIndex > startIndex) endIndex = preferredIndex;
       }
       if (endIndex < graphemes.length && endIndex - startIndex > 1) {
@@ -252,19 +274,31 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
       next.start = boundary;
     }
     const structuralSpans = splitStructuralSpans(text);
+    let structuralIndex = 0;
     for (const sentenceSpan of sentenceSpans) {
-      for (const structuralSpan of structuralSpans) {
+      while (
+        structuralIndex < structuralSpans.length
+        && (structuralSpans[structuralIndex]?.end ?? 0) <= sentenceSpan.start
+      ) structuralIndex += 1;
+      let candidateIndex = structuralIndex;
+      while (candidateIndex < structuralSpans.length) {
+        const structuralSpan = structuralSpans[candidateIndex];
+        if (!structuralSpan || structuralSpan.start >= sentenceSpan.end) break;
         const start = Math.max(sentenceSpan.start, structuralSpan.start);
         const end = Math.min(sentenceSpan.end, structuralSpan.end);
-        if (start >= end) continue;
-        units.push(...segmentFlowSpan(
-          text.slice(start, end),
-          sentenceSpan.sentenceIndex,
-          start,
-          locale,
-          structuralSpan.kind,
-        ));
+        if (start < end) {
+          units.push(...segmentFlowSpan(
+            text.slice(start, end),
+            sentenceSpan.sentenceIndex,
+            start,
+            locale,
+            structuralSpan.kind,
+          ));
+        }
+        if (structuralSpan.end > sentenceSpan.end) break;
+        candidateIndex += 1;
       }
+      structuralIndex = candidateIndex;
     }
     const segmentedUnits = mergeDanglingPunctuation(units);
     const safeBoundaries = [...new Set(boundaries)]
@@ -304,14 +338,18 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
       splitUnitAtOffsets(unit, sectionOffsets)
         .flatMap((piece) => splitUnitToWidth(piece, locale, maxWidth, measureText))
     ));
+    const timing = normalizeTimingProfile(options?.timingProfile);
+    let sectionIndex = 0;
     return fitted.map((unit, index) => {
       const next = fitted[index + 1];
-      const sectionBreak = Boolean(next) && sectionOffsets.some((offset) => (
-        offset > unit.start && offset <= (next?.start ?? unit.end)
-      ));
+      while ((sectionOffsets[sectionIndex] ?? Number.POSITIVE_INFINITY) <= unit.start) sectionIndex += 1;
+      const sectionOffset = sectionOffsets[sectionIndex];
+      const sectionBreak = Boolean(next)
+        && sectionOffset !== undefined
+        && sectionOffset <= (next?.start ?? unit.end);
       return {
         ...unit,
-        durationMs: displayDuration(unit, next, sectionBreak, options?.timingProfile),
+        durationMs: displayDurationWithTiming(unit, next, sectionBreak, timing),
       };
     });
   }
@@ -384,28 +422,37 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     return 0;
   }
 
-  function surroundingSentences(units: ReaderUnit[], currentIndex: number): { previous: string; next: string } {
-    if (!Array.isArray(units) || units.length === 0) return { previous: "", next: "" };
-    const safeIndex = Math.min(Math.max(Number.isInteger(currentIndex) ? currentIndex : 0, 0), units.length - 1);
+  function buildSurroundingSentenceContexts(units: ReaderUnit[]): Array<{ previous: string; next: string }> {
+    if (!Array.isArray(units) || units.length === 0) return [];
     const sentenceOrder: number[] = [];
-    const sentenceTexts = new Map<number, string>();
+    const sentenceParts = new Map<number, string[]>();
     for (const unit of units) {
-      if (!sentenceTexts.has(unit.sentenceIndex)) sentenceOrder.push(unit.sentenceIndex);
-      sentenceTexts.set(unit.sentenceIndex, `${sentenceTexts.get(unit.sentenceIndex) || ""}${unit.text}`);
+      const parts = sentenceParts.get(unit.sentenceIndex);
+      if (parts) parts.push(unit.text);
+      else {
+        sentenceOrder.push(unit.sentenceIndex);
+        sentenceParts.set(unit.sentenceIndex, [unit.text]);
+      }
     }
-    const currentUnit = units[safeIndex];
-    if (!currentUnit) return { previous: "", next: "" };
-    const sentencePosition = sentenceOrder.indexOf(currentUnit.sentenceIndex);
-    const previousSentenceIndex = sentenceOrder[sentencePosition - 1];
-    const nextSentenceIndex = sentenceOrder[sentencePosition + 1];
-    return {
-      previous: sentencePosition > 0 && previousSentenceIndex !== undefined
-        ? sentenceTexts.get(previousSentenceIndex)?.trim() ?? ""
-        : "",
-      next: sentencePosition >= 0 && nextSentenceIndex !== undefined
-        ? sentenceTexts.get(nextSentenceIndex)?.trim() ?? ""
-        : "",
-    };
+    const sentenceTexts = new Map([...sentenceParts].map(([sentenceIndex, parts]) => (
+      [sentenceIndex, parts.join("").trim()]
+    )));
+    const contexts = new Map(sentenceOrder.map((sentenceIndex, sentencePosition) => {
+      const previousSentenceIndex = sentenceOrder[sentencePosition - 1];
+      const nextSentenceIndex = sentenceOrder[sentencePosition + 1];
+      return [sentenceIndex, {
+        previous: previousSentenceIndex === undefined ? "" : sentenceTexts.get(previousSentenceIndex) ?? "",
+        next: nextSentenceIndex === undefined ? "" : sentenceTexts.get(nextSentenceIndex) ?? "",
+      }];
+    }));
+    return units.map((unit) => contexts.get(unit.sentenceIndex) ?? { previous: "", next: "" });
+  }
+
+  function surroundingSentences(units: ReaderUnit[], currentIndex: number): { previous: string; next: string } {
+    const contexts = buildSurroundingSentenceContexts(units);
+    if (contexts.length === 0) return { previous: "", next: "" };
+    const safeIndex = Math.min(Math.max(Number.isInteger(currentIndex) ? currentIndex : 0, 0), contexts.length - 1);
+    return contexts[safeIndex] ?? { previous: "", next: "" };
   }
 
   function normalizeTimingProfile(profile?: Partial<ReaderTimingProfile>): ReaderTimingProfile {
@@ -447,6 +494,15 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     profile?: ReaderTimingProfile,
   ): number {
     const timing = normalizeTimingProfile(profile);
+    return displayDurationWithTiming(unit, nextUnit, sectionBreak, timing);
+  }
+
+  function displayDurationWithTiming(
+    unit: Pick<ReaderUnit, "text" | "sentenceIndex">,
+    nextUnit: Pick<ReaderUnit, "sentenceIndex"> | undefined,
+    sectionBreak: boolean,
+    timing: ReaderTimingProfile,
+  ): number {
     const graphemes = graphemeCount(unit?.text || "");
     const base = Math.min(
       timing.maxUnitMs,
@@ -472,6 +528,7 @@ type EngineSectionTransition = import("../../extractor/src/types").ReaderSection
     findActiveHeadingIndex,
     calculateReadingProgress,
     findUnitIndex,
+    buildSurroundingSentenceContexts,
     surroundingSentences,
     displayDuration,
   };
