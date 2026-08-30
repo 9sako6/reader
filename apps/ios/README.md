@@ -11,9 +11,25 @@ mise run generate:ios-project
 
 `project.yml`を共有するXcodeプロジェクト設定の管理元とし、`reader.xcodeproj`をそこから生成します。生成済みプロジェクトのVersionやBuildを直接変更せず、共有設定の変更後は生成タスクを実行します。Xcodeでビルドすると、Safari拡張のTypeScriptリソースも更新されます。
 
+## GitHub Release
+
+Apple版のVersionはChrome版と同じ`YYYY.M.RELEASE`形式です。共通バージョンを更新するときは、Chromeのmanifest、`project.yml`、Safari Web Extensionのmanifestをまとめて更新します。
+
+```sh
+mise run bump:release
+```
+
+mainへ反映して実機確認を終えたら、共通のリリースタスクでChromeとAppleのタグを同じコミットへ付けます。
+
+```sh
+mise run release
+```
+
+`apple-v<version>`タグから作るGitHub Releaseには、署名情報を含まないソーススナップショットとSHA-256チェックサムを添付します。署名済みIPAではないため、GitHub ReleaseからiPhoneへ直接インストールはできません。アプリ画面にはビルド元の短いGitコミットハッシュを表示し、未コミット差分を含む場合は末尾に`-dirty`を付けます。
+
 ## 個人用TestFlightビルド
 
-自分の端末だけで使う間は、現在のVersionを区切りが必要になるまで固定し、TestFlightへアップロードするたびにBuildを増やします。シミュレータや一時的な実機ビルドでは増やしません。
+TestFlightへアップロードするたびにBuildを増やします。シミュレータや一時的な実機ビルドでは増やしません。Versionは共通リリースの更新時だけ変更します。
 
 ```sh
 mise run bump:ios-build

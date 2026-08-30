@@ -23,18 +23,18 @@ mise run build:chrome
 
 ## リリース
 
-Chrome版は日本時間を基準にした`YYYY.M.RELEASE`形式のCalVerを使います。`RELEASE`は月内のリリース連番で、最初は`0`、以降は`1`ずつ増やします。
+Chrome版とApple版は、日本時間を基準にした共通の`YYYY.M.RELEASE`形式のCalVerを使います。`RELEASE`は月内のリリース連番で、最初は`0`、以降は`1`ずつ増やします。Apple版のBuild番号はTestFlight用の連番として、共通バージョンとは別に管理します。
 
-次のバージョンを`manifest.json`へ反映し、変更理由を含むコミットとしてmainへ反映します。
-
-```sh
-mise run bump:chrome
-```
-
-mainへの反映後、次のタスクがバージョン、型検査、テスト、zip生成を検証し、タグを作成してpushします。
+次のバージョンをChromeとAppleの設定へ反映し、変更理由を含むコミットとしてmainへ反映します。
 
 ```sh
-mise run release:chrome
+mise run bump:release
 ```
 
-`chrome-v<version>`タグを受け取ったGitHub Actionsが、zipとSHA-256チェックサムをGitHub Releaseへ添付します。Release本文には導入手順と、前回のChromeタグから今回のタグまでのコミット題名、短いコミットハッシュ、コミットへのリンクが時系列で入ります。Pull Requestの作成はリリースノート掲載の条件ではありません。
+mainへの反映後、次のタスクが共通バージョン、型検査、テスト、Chromeのzip、Appleのソーススナップショットを検証します。検証後、同じコミットへ`chrome-v<version>`と`apple-v<version>`を付け、二つのタグをまとめてpushします。
+
+```sh
+mise run release
+```
+
+`chrome-v<version>`タグを受け取ったGitHub Actionsが、zipとSHA-256チェックサムをChrome用のGitHub Releaseへ添付します。`apple-v<version>`タグからは、署名情報を含まないソーススナップショットとSHA-256チェックサムをApple用のGitHub Releaseへ添付します。Release本文には、前回の同じプラットフォームのタグから今回のタグまでのコミット題名、短いコミットハッシュ、コミットへのリンクが時系列で入ります。最初のApple Releaseだけは、直前のChromeタグを変更履歴の起点にします。

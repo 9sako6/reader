@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "reader",
-  "version": "0.0.1",
+  "version": "2026.8.7",
   "description": "閲覧中の文章を読みやすいreaderへ切り替えます。",
   "host_permissions": ["<all_urls>"],
   "content_scripts": [

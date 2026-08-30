@@ -98,26 +98,29 @@ install -d artifacts/chrome
 (cd artifacts/chrome && shasum -a 256 "$archive_name" > SHA256SUMS)
 '''
 
-[tasks."bump:chrome"]
-description = "Set the next monthly Chrome CalVer"
+[tasks."verify:release-version"]
+description = "Verify the shared Chrome and Apple release version"
+run = "node scripts/sync-release-version.mjs --check"
+
+[tasks."bump:release"]
+description = "Set the next shared Chrome and Apple CalVer"
 run = '''
 git fetch origin --tags
-version="$(bash scripts/next-chrome-version.sh)"
-node -e '
-const fs = require("node:fs");
-const manifestPath = "apps/chrome/manifest.json";
-const manifest = fs.readFileSync(manifestPath, "utf8");
-const versionFields = manifest.match(/^\s*"version":\s*"[^"]+",?$/gm) || [];
-if (versionFields.length !== 1) throw new Error("expected one Chrome manifest version");
-fs.writeFileSync(manifestPath, manifest.replace(/^(\s*"version":\s*")[^"]+(".*)$/m, `$1${process.argv[1]}$2`));
-' "$version"
-printf 'Chrome version: %s\n' "$version"
+version="$(bash scripts/next-release-version.sh)"
+node scripts/sync-release-version.mjs "$version"
+mise run generate:ios-project
+printf 'reader version: %s\n' "$version"
 '''
+
+[tasks."bump:chrome"]
+description = "Set the next shared Chrome and Apple CalVer"
+run = "mise run bump:release"
 
 [tasks."verify:chrome-release"]
 description = "Verify the Chrome release tag and package"
 depends = ["package:chrome"]
 run = '''
+mise run verify:release-version
 version="$(jq -er '.version | select(test("^[0-9]{4}\\.([1-9]|1[0-2])\\.(0|[1-9][0-9]*)$"))' apps/chrome/manifest.json)"
 expected_tag="chrome-v${version}"
 release_tag="${RELEASE_TAG:-$expected_tag}"
@@ -125,6 +128,24 @@ test "$release_tag" = "$expected_tag"
 test -f "artifacts/chrome/reader-chrome-${version}.zip"
 test -f artifacts/chrome/SHA256SUMS
 (cd artifacts/chrome && shasum -a 256 -c SHA256SUMS)
+'''
+
+[tasks."package:apple-snapshot"]
+description = "Package the Apple source snapshot"
+run = "bash scripts/package-apple-snapshot.sh \"${RELEASE_REF:-HEAD}\""
+
+[tasks."verify:apple-release"]
+description = "Verify the Apple release tag and source snapshot"
+depends = ["package:apple-snapshot"]
+run = '''
+version="$(node scripts/sync-release-version.mjs --check)"
+expected_tag="apple-v${version}"
+release_tag="${RELEASE_TAG:-$expected_tag}"
+test "$release_tag" = "$expected_tag"
+test -f "artifacts/apple/reader-apple-${version}-source.tar.gz"
+test -f artifacts/apple/SHA256SUMS
+(cd artifacts/apple && shasum -a 256 -c SHA256SUMS)
+tar -tzf "artifacts/apple/reader-apple-${version}-source.tar.gz" | grep -Fx "reader-${version}/apps/ios/project.yml" >/dev/null
 '''
 
 [tasks."build:ios"]
@@ -201,6 +222,7 @@ run = "node --experimental-strip-types scripts/report-reader-timing.mjs"
 [tasks.check]
 description = "Run static checks"
 run = [
+  { task = "verify:release-version" },
   { task = "typecheck" },
   { task = "spec:check" },
   "cargo fmt --check",
@@ -231,27 +253,36 @@ description = "Verify generated Safari resources and optional Safari WebDriver r
 depends = ["build:ios"]
 run = "node scripts/test-safari-package-runtime.mjs"
 
-[tasks."release:chrome"]
-description = "Release the current Chrome version"
+[tasks.release]
+description = "Release the current Chrome and Apple version"
 run = '''
 test "$(git branch --show-current)" = "main"
 test -z "$(git status --porcelain)"
 git fetch origin main --tags
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-version="$(jq -er '.version' apps/chrome/manifest.json)"
-next_version="$(bash scripts/next-chrome-version.sh)"
+version="$(node scripts/sync-release-version.mjs --check)"
+next_version="$(bash scripts/next-release-version.sh)"
 if [[ "$version" != "$next_version" ]]; then
-  printf 'Chrome version must be %s, got %s\n' "$next_version" "$version" >&2
+  printf 'reader version must be %s, got %s\n' "$next_version" "$version" >&2
   exit 1
 fi
-tag="chrome-v${version}"
-if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-  echo "$tag already exists" >&2
-  exit 1
-fi
+chrome_tag="chrome-v${version}"
+apple_tag="apple-v${version}"
+for tag in "$chrome_tag" "$apple_tag"; do
+  if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+    echo "$tag already exists" >&2
+    exit 1
+  fi
+done
 mise run check
 mise run test
-mise run verify:chrome-release
-git tag -a "$tag" -m "reader Chrome ${version}"
-git push origin "$tag"
+RELEASE_TAG="$chrome_tag" mise run verify:chrome-release
+RELEASE_TAG="$apple_tag" RELEASE_REF=HEAD mise run verify:apple-release
+git tag -a "$chrome_tag" -m "reader Chrome ${version}"
+git tag -a "$apple_tag" -m "reader Apple ${version}"
+git push --atomic origin "$chrome_tag" "$apple_tag"
 '''
+
+[tasks."release:chrome"]
+description = "Release the current Chrome and Apple version"
+run = "mise run release"

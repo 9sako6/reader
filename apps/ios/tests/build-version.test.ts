@@ -15,7 +15,7 @@ test("bumping an iOS build changes only the build number in the project spec", (
     "settings:",
     "  base:",
     "    CURRENT_PROJECT_VERSION: 2",
-    "    MARKETING_VERSION: 0.0.1",
+    "    MARKETING_VERSION: 2026.8.7",
     "",
   ].join("\n"));
 
@@ -26,7 +26,7 @@ test("bumping an iOS build changes only the build number in the project spec", (
     "settings:",
     "  base:",
     "    CURRENT_PROJECT_VERSION: 3",
-    "    MARKETING_VERSION: 0.0.1",
+    "    MARKETING_VERSION: 2026.8.7",
     "",
   ].join("\n"));
 });

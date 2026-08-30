@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
-const script = path.join(__dirname, "..", "..", "..", "scripts", "next-chrome-version.sh");
+const script = path.join(__dirname, "..", "..", "..", "scripts", "next-release-version.sh");
 
 function git(repository, ...commandArguments) {
   return execFileSync("git", commandArguments, { cwd: repository, encoding: "utf8" });
@@ -27,27 +27,35 @@ function nextVersion(repository, releaseDate) {
   return execFileSync("bash", [script], {
     cwd: repository,
     encoding: "utf8",
-    env: { ...process.env, CHROME_RELEASE_DATE: releaseDate },
+    env: { ...process.env, READER_RELEASE_DATE: releaseDate },
   }).trim();
 }
 
-test("the first Chrome release in a month starts at release zero", () => {
+test("the first shared release in a month starts at release zero", () => {
   const repository = initializeRepository();
   git(repository, "tag", "chrome-v0.0.10");
 
   assert.equal(nextVersion(repository, "2026-08-24"), "2026.8.0");
 });
 
-test("the next Chrome release increments the highest release in the same month", () => {
+test("the next shared release follows the highest Chrome or Apple release in the same month", () => {
   const repository = initializeRepository();
   git(repository, "tag", "chrome-v2026.8.0");
-  git(repository, "tag", "chrome-v2026.8.2");
+  git(repository, "tag", "apple-v2026.8.2");
   git(repository, "tag", "chrome-v2026.7.9");
 
   assert.equal(nextVersion(repository, "2026-08-24"), "2026.8.3");
 });
 
-test("the Chrome release sequence returns to zero in a new month", () => {
+test("paired Chrome and Apple tags count as one shared release", () => {
+  const repository = initializeRepository();
+  git(repository, "tag", "chrome-v2026.8.4");
+  git(repository, "tag", "apple-v2026.8.4");
+
+  assert.equal(nextVersion(repository, "2026-08-24"), "2026.8.5");
+});
+
+test("the shared release sequence returns to zero in a new month", () => {
   const repository = initializeRepository();
   git(repository, "tag", "chrome-v2026.8.4");
 
