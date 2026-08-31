@@ -200,6 +200,43 @@ test("Chrome mode selector keeps Spots on the left and marks the current mode", 
   await expect(pageMode).toHaveAttribute("aria-pressed", "true");
 });
 
+test("Chrome mode hover uses text-only feedback like the mobile selector", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const pageMode = dialog.getByRole("button", { name: "Page、文章全体で読む" });
+  await expect(pageMode).toHaveAttribute("aria-pressed", "false");
+  await expect(pageMode).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+
+  await pageMode.hover();
+
+  await expect(pageMode).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(pageMode).toHaveCSS("color", "rgba(255, 255, 255, 0.94)");
+});
+
+test("Chrome close icon stays centered inside its touch target", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true });
+
+  const closeButton = page.getByRole("dialog", { name: "reader" })
+    .getByRole("button", { name: "readerを閉じる" });
+  const centerDelta = await closeButton.evaluate((button) => {
+    const icon = button.querySelector("svg");
+    if (!icon) throw new Error("close icon is missing");
+    const buttonBox = button.getBoundingClientRect();
+    const iconBox = icon.getBoundingClientRect();
+    return {
+      x: Math.abs(iconBox.left + iconBox.width / 2 - (buttonBox.left + buttonBox.width / 2)),
+      y: Math.abs(iconBox.top + iconBox.height / 2 - (buttonBox.top + buttonBox.height / 2)),
+    };
+  });
+  expect(centerDelta.x).toBeLessThanOrEqual(0.5);
+  expect(centerDelta.y).toBeLessThanOrEqual(0.5);
+});
+
 test("mobile mode selector keeps Spots on the left and marks the current mode", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await loadViewer(page, "mobile");
@@ -2429,6 +2466,26 @@ test("Chrome desktop keeps the reading surface and controls fixed across modes",
   expect(articleBox).not.toBeNull();
   expect(Math.abs(articleBox!.x + articleBox!.width / 2 - 720)).toBeLessThanOrEqual(1);
   expect(spotsGeometry.minimap.left + spotsGeometry.minimap.width).toBeLessThanOrEqual(articleBox!.x - 32);
+});
+
+test("Chrome desktop keeps space between the outline and reading content at narrow desktop widths", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  await openChrome(page, { paused: true, outline: "two" });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const minimap = dialog.getByRole("complementary", { name: "読書位置" });
+  const minimapBox = await minimap.boundingBox();
+  const spotBox = await dialog.locator('[data-reader-position-kind="text"].reader-spot').boundingBox();
+  expect(minimapBox).not.toBeNull();
+  expect(spotBox).not.toBeNull();
+  expect(spotBox!.x - (minimapBox!.x + minimapBox!.width)).toBeGreaterThanOrEqual(24);
+
+  await dialog.getByRole("button", { name: "Page、文章全体で読む" }).click();
+
+  const articleBox = await dialog.locator("article.reader-article").boundingBox();
+  expect(articleBox).not.toBeNull();
+  expect(articleBox!.x - (minimapBox!.x + minimapBox!.width)).toBeGreaterThanOrEqual(24);
 });
 
 test("Chrome desktop hides the outline when there is no room beside the centered reading surface", async ({ page }) => {
