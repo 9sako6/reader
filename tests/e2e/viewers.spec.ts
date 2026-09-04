@@ -2233,6 +2233,52 @@ for (const viewer of ["chrome", "mobile"] as const) {
   }
 }
 
+test("Chrome desktop keeps a paused code block from overlapping the outline", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await loadViewer(page, "chrome");
+  const code = "const result = await client.readFully('https://example.com/a/very/long/path/that/stays/on/one/line/inside/the/code/block');";
+  const text = `${code}\nAfter.`;
+  await openChrome(page, {
+    text,
+    readingContext: {
+      language: "en",
+      blocks: [
+        { text: code, kind: "preformatted", level: null, start: 0, end: code.length },
+        { text: "After.", kind: "paragraph", level: null, start: code.length + 1, end: text.length },
+      ],
+      headings: [{ text: "Code", level: 1 }, { text: "After", level: 2 }],
+      sectionOffsets: [],
+      sectionTransitions: [{ offset: 0, headingIndex: 0 }, { offset: code.length + 1, headingIndex: 1 }],
+      initialHeadingIndex: 0,
+      figures: [{
+        kind: "code",
+        alt: "コードブロック",
+        caption: "",
+        code,
+        language: "typescript",
+        sourceOffset: 0,
+        sourceEnd: code.length,
+      }],
+    },
+  });
+
+  const dialog = page.getByRole("dialog", { name: "reader" });
+  const minimap = dialog.getByRole("complementary", { name: "読書位置" });
+  const spotsCodeBlock = dialog.getByRole("figure", { name: "コードブロック" })
+    .locator('[data-reader-code-block="true"]');
+  await expect(minimap).toBeVisible();
+  await expect(spotsCodeBlock).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "続きを読む" })).toBeVisible();
+
+  const minimapBox = await minimap.boundingBox();
+  const spotsCodeBox = await spotsCodeBlock.boundingBox();
+  expect(minimapBox).not.toBeNull();
+  expect(spotsCodeBox).not.toBeNull();
+  expect(spotsCodeBox!.x - (minimapBox!.x + minimapBox!.width)).toBeGreaterThanOrEqual(24);
+  await expect.poll(() => spotsCodeBlock.evaluate((element) => element.scrollWidth - element.clientWidth))
+    .toBeGreaterThan(0);
+});
+
 test("mobile Spots gives a code block nearly the full phone width", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await loadViewer(page, "mobile");
